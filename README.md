@@ -87,3 +87,4 @@ update settings     set user_id = 'user_NEW' where user_id = 'user_OLD';
 
 New accounts start empty (default spending categories only) and get a two-step
 onboarding: language + profile, then tips.
+# SteerMoney
