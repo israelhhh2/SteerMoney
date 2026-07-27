@@ -1,0 +1,15 @@
+node_modules/
+.next/
+out/
+.env*.local
+.DS_Store
+
+# clerk configuration (can include secrets)
+/.clerk/
+
+# vercel
+.vercel
+
+# real personal statement data, never publish
+/src/seed.json
+/supabase/seed.sql
