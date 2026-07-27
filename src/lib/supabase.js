@@ -8,7 +8,8 @@ import { createClient } from '@supabase/supabase-js'
 export function createClerkSupabaseClient(session) {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    // either env name works: ANON_KEY (legacy) or PUBLISHABLE_KEY (Supabase's new naming)
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
     { accessToken: async () => (session ? await session.getToken() : null) }
   )
 }

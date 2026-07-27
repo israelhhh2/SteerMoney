@@ -8,9 +8,10 @@ export async function GET() {
   if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 })
 
   const token = await getToken()
+  const apikey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
   const check = await fetch(
     `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/admins?select=user_id&user_id=eq.${userId}`,
-    { headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` }, cache: 'no-store' }
+    { headers: { apikey, Authorization: `Bearer ${token}` }, cache: 'no-store' }
   )
   const rows = check.ok ? await check.json() : []
   if (!rows.length) return Response.json({ error: 'forbidden' }, { status: 403 })
