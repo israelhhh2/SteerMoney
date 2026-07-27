@@ -130,7 +130,25 @@ export function AppProvider({ children }) {
       else if (v) sessionStorage.removeItem(VIEW_AS_KEY)
     } catch {}
   }, [user?.id])
-  const userId = viewAs?.id || user?.id
+
+  // Shared spaces (collab): when a space is active, its ws_... id is the
+  // effective owner id — load, sync, and cache all point at the shared rows.
+  const SPACE_KEY = (uid) => 'fin-space-' + uid
+  const [space, setSpaceState] = useState(null)
+  const [spaces, setSpaces] = useState([])
+  useEffect(() => {
+    if (!user?.id) return
+    try { const s = JSON.parse(localStorage.getItem(SPACE_KEY(user.id))); if (s?.id) setSpaceState(s) } catch {}
+  }, [user?.id])
+  useEffect(() => {
+    if (!supabase || !user?.id) return
+    let on = true
+    supabase.from('workspace_members').select('workspace_id, workspaces(name)').eq('user_id', user.id)
+      .then(({ data }) => { if (on && data) setSpaces(data.map((r) => ({ id: r.workspace_id, name: r.workspaces?.name || 'Shared finances' }))) })
+    return () => { on = false }
+  }, [supabase, user?.id, space?.id])
+
+  const userId = viewAs?.id || space?.id || user?.id
 
   const [state, setState] = useState(null)
   const [syncError, setSyncError] = useState(null)
@@ -262,12 +280,59 @@ export function AppProvider({ children }) {
     setViewAsState(v)
   }
 
+  // switch between personal (null) and a shared space ({id, name})
+  const setSpace = (info) => {
+    try { info ? localStorage.setItem(SPACE_KEY(user.id), JSON.stringify(info)) : localStorage.removeItem(SPACE_KEY(user.id)) } catch {}
+    synced.current = null
+    freshFor.current = null
+    dirty.current = false
+    setState(null)
+    setSyncError(null)
+    setSpaceState(info)
+  }
+
+  const createSpace = async (name) => {
+    const id = 'ws_' + Math.random().toString(36).slice(2, 12)
+    const { error } = await supabase.from('workspaces').insert({ id, name, owner_id: user.id })
+    if (error) return { error: error.message }
+    const { error: e2 } = await supabase.from('workspace_members').insert({ workspace_id: id, user_id: user.id })
+    if (e2) return { error: e2.message }
+    const info = { id, name }
+    setSpaces((s) => [...s, info])
+    setSpace(info)
+    return { ok: true }
+  }
+
+  const createInvite = async () => {
+    if (!space) return { error: 'Open a shared space first' }
+    const token = 'inv' + crypto.randomUUID().replaceAll('-', '')
+    const { error } = await supabase.from('workspace_invites').insert({ token, workspace_id: space.id, created_by: user.id })
+    if (error) return { error: error.message }
+    return { url: `${window.location.origin}/join/${token}` }
+  }
+
+  const joinSpace = async (token) => {
+    const { data, error } = await supabase.rpc('join_workspace', { invite_token: token })
+    if (error || !data) return { error: error?.message || 'This invite link is invalid or expired.' }
+    const [id, ...rest] = data.split('|')
+    const info = { id, name: rest.join('|') || 'Shared finances' }
+    setSpaces((s) => (s.some((x) => x.id === id) ? s : [...s, info]))
+    setSpace(info)
+    return { ok: true }
+  }
+
   const api = useMemo(() => ({
     state,
     syncError,
     viewingAs: viewAs,                     // {id, name} while impersonating, else null
     setViewAs,
     exitViewAs: () => setViewAs(null),
+    space,                                 // {id, name} while in a shared space, else null
+    spaces,                                // shared spaces this user belongs to
+    setSpace,
+    createSpace,
+    createInvite,
+    joinSpace,
     // update(fn): fn receives a deep clone, mutates freely, returns nothing
     // no-op while viewing another customer — support mode is strictly read-only
     update: viewAs
@@ -275,7 +340,7 @@ export function AppProvider({ children }) {
       : (fn) => { dirty.current = true; setState((s) => { const c = JSON.parse(JSON.stringify(s)); fn(c); normalize(c); return c }) },
     catInfo: (id) => state?.budgets.find((b) => b.id === id) || ({ debt: { name: 'Debt Payment' }, income: { name: 'Income' }, transfer: { name: 'Transfer' } }[id]) || { name: id || 'Other' },
     uid,
-  }), [state, syncError, viewAs])
+  }), [state, syncError, viewAs, space, spaces])
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>
 }

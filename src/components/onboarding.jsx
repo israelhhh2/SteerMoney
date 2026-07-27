@@ -80,7 +80,7 @@ const T = {
 // First-run flow: language + profile, then quick tips.
 // Shows once per account (persisted via settings.sim.onboarded).
 export function Onboarding() {
-  const { state, update, viewingAs } = useApp()
+  const { state, update, viewingAs, space } = useApp()
   const { user } = useUser()
   const router = useRouter()
   const [step, setStep] = useState(0)
@@ -88,7 +88,7 @@ export function Onboarding() {
   const [f, setF] = useState({ firstName: user?.firstName || '', lastName: user?.lastName || '', dob: '', occupation: '' })
   const [err, setErr] = useState(null)
   const [saving, setSaving] = useState(false)
-  if (!state || viewingAs || state.sim.onboarded) return null
+  if (!state || viewingAs || space || state.sim.onboarded) return null
 
   const t = T[lang]
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })

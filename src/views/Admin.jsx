@@ -40,16 +40,17 @@ export default function Admin() {
     ;(async () => {
       try {
         const sb = createClerkSupabaseClient(session)
-        const [de, bu, re, tx, dir] = await Promise.all([
+        const [de, bu, re, tx, dir, ws] = await Promise.all([
           sb.from('debts').select('user_id,name,balance,min_payment,credit_limit'),
           sb.from('budgets').select('user_id,name,monthly_limit'),
           sb.from('recurring').select('user_id,description,amount,active,every_n_months'),
           sb.from('transactions').select('user_id,date,description,amount,type,category').order('date', { ascending: false }),
           fetch('/api/admin/users').then((r) => (r.ok ? r.json() : { users: [] })),
+          sb.from('workspaces').select('id,name'), // tolerated if collab.sql isn't applied yet
         ])
         const bad = [de, bu, re, tx].find((r) => r.error)
         if (bad) throw new Error(bad.error.message)
-        if (on) setData({ debts: de.data, budgets: bu.data, recurring: re.data, transactions: tx.data, dir: dir.users || [] })
+        if (on) setData({ debts: de.data, budgets: bu.data, recurring: re.data, transactions: tx.data, dir: dir.users || [], workspaces: ws.data || [] })
       } catch (e) { if (on) setErr(String(e?.message || e)) }
     })()
     return () => { on = false }
@@ -64,12 +65,13 @@ export default function Admin() {
     ])
     return [...ids].map((id) => {
       const info = data.dir.find((u) => u.id === id)
+      const ws = data.workspaces.find((w) => w.id === id)
       const debts = data.debts.filter((r) => r.user_id === id)
       const budgets = data.budgets.filter((r) => r.user_id === id)
       const recurring = data.recurring.filter((r) => r.user_id === id)
       const tx = data.transactions.filter((r) => r.user_id === id)
       return {
-        id, info, debts, budgets, recurring, tx,
+        id, info, ws, debts, budgets, recurring, tx,
         debtTotal: debts.reduce((s, d) => s + Number(d.balance), 0),
         budgetTotal: budgets.reduce((s, b) => s + Number(b.monthly_limit), 0),
         income: avgIncome(tx),
@@ -118,10 +120,11 @@ export default function Admin() {
                   : <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary text-[11px] font-bold">{(c.info?.name || c.id).slice(0, 1).toUpperCase()}</span>}
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[13px] font-medium">
-                    {c.info?.name || 'Unknown user'}
+                    {c.info?.name || c.ws?.name || 'Unknown user'}
                     {c.id === user?.id && <Badge className="ml-2">you</Badge>}
+                    {c.ws && <Badge className="ml-2">shared space</Badge>}
                   </div>
-                  <div className="truncate text-[11px] text-muted-foreground">{c.info?.email || c.id}</div>
+                  <div className="truncate text-[11px] text-muted-foreground">{c.info?.email || (c.ws ? 'Collaborative finances' : c.id)}</div>
                 </div>
                 <span className="hidden shrink-0 text-[11px] text-muted-foreground md:inline">{c.tx.length} txns{c.lastTx ? ` · last ${prettyDate(c.lastTx)}` : ''}</span>
                 <span className="shrink-0 text-right">

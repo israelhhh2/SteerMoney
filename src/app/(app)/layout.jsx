@@ -2,10 +2,12 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { UserButton } from '@clerk/nextjs'
-import { Eye, LayoutDashboard, CreditCard, Repeat, Target, BarChart3, FlaskConical, Receipt, CloudOff, Loader2, ShieldCheck } from 'lucide-react'
+import { Eye, LayoutDashboard, CreditCard, Repeat, Target, BarChart3, FlaskConical, Receipt, CloudOff, Loader2, ShieldCheck, Link2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Select } from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
 import { AppProvider, useApp } from '@/store'
-import { ToastProvider } from '@/components/toast'
+import { ToastProvider, useToast } from '@/components/toast'
 import { RemindersBell } from '@/components/reminders'
 import { Onboarding } from '@/components/onboarding'
 import { Logo, Wordmark } from '@/components/logo'
@@ -29,9 +31,35 @@ const TITLES = {
 function Frame({ children }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { state, syncError, viewingAs, exitViewAs } = useApp()
+  const toast = useToast()
+  const { state, syncError, viewingAs, exitViewAs, space, spaces, setSpace, createSpace, createInvite } = useApp()
   const isAdmin = useIsAdmin()
   const nav = isAdmin ? [...NAV, ['/admin', ShieldCheck, 'Admin']] : NAV
+
+  const switchSpace = async (v) => {
+    if (v === 'personal') return setSpace(null)
+    if (v === '__new') {
+      const name = prompt('Name your shared space', 'Our finances')
+      if (!name?.trim()) return
+      const r = await createSpace(name.trim())
+      if (r.error) toast("Couldn't create the space: " + r.error)
+      else toast(`"${name.trim()}" created. Tap Invite to share it.`)
+      return
+    }
+    const s = spaces.find((x) => x.id === v)
+    if (s) setSpace(s)
+  }
+
+  const invite = async () => {
+    const r = await createInvite()
+    if (r.error) return toast(r.error)
+    try {
+      await navigator.clipboard.writeText(r.url)
+      toast('Invite link copied. It works for 7 days.')
+    } catch {
+      prompt('Copy this invite link:', r.url)
+    }
+  }
 
   return (
     <div className="flex min-h-screen">
@@ -80,6 +108,23 @@ function Frame({ children }) {
               <span className="flex items-center gap-1.5 rounded-md border border-red-400/25 bg-red-400/10 px-2 py-1 text-[11px] font-medium text-red-400" title={syncError}>
                 <CloudOff className="h-3.5 w-3.5" /> Sync failed
               </span>
+            ) : null}
+            {!viewingAs && (
+              <Select
+                title="Switch between your personal finances and shared spaces"
+                className="!h-8 max-w-32 text-xs sm:max-w-44"
+                value={space?.id || 'personal'}
+                onChange={(e) => switchSpace(e.target.value)}
+              >
+                <option value="personal">Personal</option>
+                {spaces.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                <option value="__new">+ New shared space…</option>
+              </Select>
+            )}
+            {space && !viewingAs ? (
+              <Button variant="outline" size="xs" onClick={invite} title="Copy an invite link for this shared space">
+                <Link2 /><span className="hidden sm:inline">Invite</span>
+              </Button>
             ) : null}
             {state ? <RemindersBell /> : null}
             <UserButton afterSignOutUrl="/sign-in" />
