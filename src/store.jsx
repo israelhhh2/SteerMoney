@@ -51,16 +51,33 @@ const mappers = {
     }),
     fromRow: (r) => ({ id: r.id, date: r.date, desc: r.description, amount: Number(r.amount), type: r.type, cat: r.category }),
   },
+  goals: {
+    toRow: (g, userId) => ({
+      user_id: userId, id: g.id, name: g.name, icon: g.icon ?? null, target: g.target ?? 0,
+      target_date: g.targetDate ?? null, status: g.status || 'active', txs: g.txs || [], position: g.position ?? 0,
+    }),
+    fromRow: (r) => ({
+      id: r.id, name: r.name, icon: r.icon, target: Number(r.target), targetDate: r.target_date,
+      status: r.status, txs: r.txs || [], position: r.position ?? 0,
+    }),
+  },
+  accounts: {
+    toRow: (a, userId) => ({
+      user_id: userId, id: a.id, name: a.name, type: a.type || 'depository', institution: a.institution ?? null,
+      mask: a.mask ?? null, balance: a.balance ?? 0, history: a.history || [], position: a.position ?? 0,
+    }),
+    fromRow: (r) => ({
+      id: r.id, name: r.name, type: r.type, institution: r.institution ?? '', mask: r.mask ?? '',
+      balance: Number(r.balance), history: r.history || [], position: r.position ?? 0,
+    }),
+  },
 }
 
-// Every new account starts fresh: no data, just the default category list
-// (0 = no limit) so transaction categorization and imports work out of the box.
+// Every new account starts fresh: no data, just a small starter category list
+// (0 = no limit) so new users aren't buried in categories. They add more as needed.
 const DEFAULT_CATEGORIES = [
-  ['housing', 'Housing / Rent'], ['auto', 'Car & Gas'], ['groceries', 'Groceries'],
-  ['dining', 'Dining Out'], ['shopping', 'Shopping'], ['utilities', 'Utilities & Phone'],
-  ['subscriptions', 'Subscriptions'], ['entertainment', 'Entertainment'], ['kids', 'Kids'],
-  ['family', 'Family & Zelle'], ['personal', 'Personal Care'], ['household', 'House Things'],
-  ['cash', 'Cash & ATM'], ['other', 'Other'],
+  ['housing', 'Housing / Rent'], ['groceries', 'Groceries'], ['dining', 'Dining Out'],
+  ['auto', 'Car & Gas'], ['utilities', 'Utilities & Phone'], ['other', 'Other'],
 ]
 
 function freshState() {
@@ -69,6 +86,8 @@ function freshState() {
     budgets: DEFAULT_CATEGORIES.map(([id, name], i) => ({ id, name, limit: 0, position: i })),
     transactions: [],
     recurring: [],
+    goals: [],
+    accounts: [],
     sim: { budget: 0, strategy: 'avalanche', snowExtra: 0 },
     mSim: { income: '', items: [] },
   }
@@ -76,6 +95,8 @@ function freshState() {
 
 // Give every row an id so it can be diffed/synced (pages create items without ids).
 function normalize(s) {
+  if (!s.goals) s.goals = [] // older cached states predate the goals table
+  if (!s.accounts) s.accounts = [] // older cached states predate the accounts table
   s.debts.forEach((d, i) => {
     if (!d.id) d.id = uid('d')
     d.position = i
@@ -85,6 +106,8 @@ function normalize(s) {
   s.budgets.forEach((b, i) => { if (!b.id) b.id = uid('b'); b.position = i })
   s.recurring.forEach((r, i) => { if (!r.id) r.id = uid('r'); r.position = i })
   s.transactions.forEach((t) => { if (!t.id) t.id = uid('tx') })
+  s.goals.forEach((g, i) => { if (!g.id) g.id = uid('g'); g.position = i; if (!g.txs) g.txs = [] })
+  s.accounts.forEach((a, i) => { if (!a.id) a.id = uid('a'); a.position = i; if (!a.history) a.history = [] })
 }
 
 const flatPayments = (s, userId) =>
@@ -97,6 +120,8 @@ function stateRows(s, userId) {
     budgets: s.budgets.map((b) => mappers.budgets.toRow(b, userId)),
     recurring: s.recurring.map((r) => mappers.recurring.toRow(r, userId)),
     transactions: s.transactions.map((t) => mappers.transactions.toRow(t, userId)),
+    goals: s.goals.map((g) => mappers.goals.toRow(g, userId)),
+    accounts: s.accounts.map((a) => mappers.accounts.toRow(a, userId)),
   }
 }
 
@@ -143,8 +168,22 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!supabase || !user?.id) return
     let on = true
-    supabase.from('workspace_members').select('workspace_id, workspaces(name)').eq('user_id', user.id)
-      .then(({ data }) => { if (on && data) setSpaces(data.map((r) => ({ id: r.workspace_id, name: r.workspaces?.name || 'Shared finances' }))) })
+    supabase.from('workspace_members').select('workspace_id, workspaces(name, owner_id)').eq('user_id', user.id)
+      .then(({ data }) => {
+        if (!on || !data) return
+        const list = data.map((r) => ({ id: r.workspace_id, name: r.workspaces?.name || 'Shared finances', ownerId: r.workspaces?.owner_id }))
+        setSpaces(list)
+        // the currently selected space is gone (the user was removed from it): fall back to personal
+        if (space?.id && !list.some((s) => s.id === space.id)) {
+          try { localStorage.removeItem(SPACE_KEY(user.id)) } catch {}
+          setSpaceState(null)
+        }
+        // backfill name/email on this user's own membership rows, fire and forget
+        // (covers rows created before this feature existed, and keeps them fresh)
+        const fullName = user.fullName || [user.firstName, user.lastName].filter(Boolean).join(' ') || null
+        const email = user.primaryEmailAddress?.emailAddress || null
+        supabase.from('workspace_members').update({ name: fullName, email }).eq('user_id', user.id)
+      })
     return () => { on = false }
   }, [supabase, user?.id, space?.id])
 
@@ -181,16 +220,22 @@ export function AppProvider({ children }) {
     loadingFor.current = userId
     let cancelled = false
     ;(async () => {
-      const [de, pa, bu, re, tx, se] = await Promise.all([
+      const [de, pa, bu, re, go, tx, se, acc] = await Promise.all([
         supabase.from('debts').select('*').eq('user_id', userId).order('position'),
         supabase.from('payments').select('*').eq('user_id', userId).order('date', { ascending: false }),
         supabase.from('budgets').select('*').eq('user_id', userId).order('position'),
         supabase.from('recurring').select('*').eq('user_id', userId).order('position'),
+        supabase.from('goals').select('*').eq('user_id', userId).order('position'),
         supabase.from('transactions').select('*').eq('user_id', userId).order('date', { ascending: false }),
         supabase.from('settings').select('*').eq('user_id', userId).maybeSingle(),
+        supabase.from('accounts').select('*').eq('user_id', userId).order('position'),
       ])
       const err = [de, pa, bu, re, tx, se].find((r) => r.error)
       if (err) { if (!cancelled) setSyncError(err.error.message); return }
+      // goals shipped after the other tables — if goals.sql hasn't been run yet, keep the app usable
+      if (go.error && !cancelled) setSyncError('Goals need setup: run supabase/goals.sql in the Supabase SQL editor (' + go.error.message + ')')
+      // accounts shipped after the other tables — if accounts.sql hasn't been run yet, keep the app usable
+      if (acc.error && !cancelled) setSyncError('Accounts need setup: run supabase/accounts.sql in the Supabase SQL editor (' + acc.error.message + ')')
 
       let s
       if (!de.data.length && !bu.data.length && !tx.data.length && !re.data.length) {
@@ -214,6 +259,8 @@ export function AppProvider({ children }) {
           budgets: bu.data.map(mappers.budgets.fromRow),
           recurring: re.data.map(mappers.recurring.fromRow),
           transactions: tx.data.map(mappers.transactions.fromRow),
+          goals: go.error ? [] : go.data.map(mappers.goals.fromRow),
+          accounts: acc.error ? [] : acc.data.map(mappers.accounts.fromRow),
           sim: se.data?.sim || { budget: 2100, strategy: 'avalanche', snowExtra: 0 },
           mSim: se.data?.m_sim || { income: '', items: [] },
         }
@@ -240,14 +287,14 @@ export function AppProvider({ children }) {
           const prevRows = stateRows(prev, userId)
           const nextRows = stateRows(next, userId)
           // deletes first for payments (FK), debts last so payment FKs stay valid
-          for (const table of ['payments', 'transactions', 'budgets', 'recurring', 'debts']) {
+          for (const table of ['payments', 'transactions', 'budgets', 'recurring', 'goals', 'accounts', 'debts']) {
             const { deletes } = diffRows(prevRows[table], nextRows[table])
             if (deletes.length) {
               const { error } = await supabase.from(table).delete().eq('user_id', userId).in('id', deletes)
               if (error) throw error
             }
           }
-          for (const table of ['debts', 'payments', 'budgets', 'recurring', 'transactions']) {
+          for (const table of ['debts', 'payments', 'budgets', 'recurring', 'transactions', 'goals', 'accounts']) {
             const { upserts } = diffRows(prevRows[table], nextRows[table])
             if (upserts.length) {
               const { error } = await supabase.from(table).upsert(upserts, { onConflict: 'user_id,id' })
@@ -295,29 +342,70 @@ export function AppProvider({ children }) {
     const id = 'ws_' + Math.random().toString(36).slice(2, 12)
     const { error } = await supabase.from('workspaces').insert({ id, name, owner_id: user.id })
     if (error) return { error: error.message }
-    const { error: e2 } = await supabase.from('workspace_members').insert({ workspace_id: id, user_id: user.id })
+    const fullName = user.fullName || [user.firstName, user.lastName].filter(Boolean).join(' ') || null
+    const email = user.primaryEmailAddress?.emailAddress || null
+    const { error: e2 } = await supabase.from('workspace_members').insert({ workspace_id: id, user_id: user.id, name: fullName, email })
     if (e2) return { error: e2.message }
     const info = { id, name }
-    setSpaces((s) => [...s, info])
+    setSpaces((s) => [...s, { ...info, ownerId: user.id }])
     setSpace(info)
     return { ok: true }
   }
 
-  const createInvite = async () => {
-    if (!space) return { error: 'Open a shared space first' }
-    const token = 'inv' + crypto.randomUUID().replaceAll('-', '')
-    const { error } = await supabase.from('workspace_invites').insert({ token, workspace_id: space.id, created_by: user.id })
+  // sp defaults to the currently selected space so the header's Invite button
+  // keeps working unchanged; Settings passes a specific space to invite to.
+  const createInvite = async (sp = space) => {
+    if (!sp) return { error: 'Open a shared space first' }
+    // crypto.randomUUID only exists on secure origins; phones hitting the LAN IP over http need the fallback
+    const token = 'inv' + (typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID().replaceAll('-', '')
+      : Array.from({ length: 4 }, () => Math.random().toString(36).slice(2)).join(''))
+    const { error } = await supabase.from('workspace_invites').insert({ token, workspace_id: sp.id, created_by: user.id })
     if (error) return { error: error.message }
     return { url: `${window.location.origin}/join/${token}` }
   }
 
+  // Owner-only rename. Updates the local spaces list (and the active space,
+  // if it's the one renamed) without resetting/refetching the app's data.
+  const renameSpace = async (id, name) => {
+    const { error } = await supabase.from('workspaces').update({ name }).eq('id', id)
+    if (error) return { error: error.message }
+    setSpaces((s) => s.map((x) => (x.id === id ? { ...x, name } : x)))
+    if (space?.id === id) {
+      const info = { id, name }
+      try { localStorage.setItem(SPACE_KEY(user.id), JSON.stringify(info)) } catch {}
+      setSpaceState(info)
+    }
+    return { ok: true }
+  }
+
   const joinSpace = async (token) => {
-    const { data, error } = await supabase.rpc('join_workspace', { invite_token: token })
+    const fullName = user.fullName || [user.firstName, user.lastName].filter(Boolean).join(' ') || null
+    const email = user.primaryEmailAddress?.emailAddress || null
+    let { data, error } = await supabase.rpc('join_workspace', { invite_token: token, p_name: fullName, p_email: email })
+    // members.sql not applied yet: only the old 1-arg function exists, so retry without the profile args
+    if (error && /function|parameter|schema cache/i.test(error.message)) {
+      ;({ data, error } = await supabase.rpc('join_workspace', { invite_token: token }))
+    }
     if (error || !data) return { error: error?.message || 'This invite link is invalid or expired.' }
     const [id, ...rest] = data.split('|')
     const info = { id, name: rest.join('|') || 'Shared finances' }
     setSpaces((s) => (s.some((x) => x.id === id) ? s : [...s, info]))
     setSpace(info)
+    return { ok: true }
+  }
+
+  // { user_id, name, email }[] for everyone in a space, or { error }
+  const fetchMembers = async (spaceId) => {
+    const { data, error } = await supabase.from('workspace_members').select('user_id, name, email').eq('workspace_id', spaceId)
+    if (error) return { error: error.message }
+    return { members: data }
+  }
+
+  // Owner-only in practice (RLS also allows removing yourself, i.e. leaving).
+  const removeMember = async (spaceId, memberUserId) => {
+    const { error } = await supabase.from('workspace_members').delete().eq('workspace_id', spaceId).eq('user_id', memberUserId)
+    if (error) return { error: error.message }
     return { ok: true }
   }
 
@@ -332,12 +420,15 @@ export function AppProvider({ children }) {
     setSpace,
     createSpace,
     createInvite,
+    renameSpace,
     joinSpace,
+    fetchMembers,
+    removeMember,
     // update(fn): fn receives a deep clone, mutates freely, returns nothing
     // no-op while viewing another customer — support mode is strictly read-only
     update: viewAs
       ? () => {}
-      : (fn) => { dirty.current = true; setState((s) => { const c = JSON.parse(JSON.stringify(s)); fn(c); normalize(c); return c }) },
+      : (fn) => { dirty.current = true; setState((s) => { const c = JSON.parse(JSON.stringify(s)); if (!c.goals) c.goals = []; if (!c.accounts) c.accounts = []; fn(c); normalize(c); return c }) },
     catInfo: (id) => state?.budgets.find((b) => b.id === id) || ({ debt: { name: 'Debt Payment' }, income: { name: 'Income' }, transfer: { name: 'Transfer' } }[id]) || { name: id || 'Other' },
     uid,
   }), [state, syncError, viewAs, space, spaces])

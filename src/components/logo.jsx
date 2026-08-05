@@ -23,7 +23,7 @@ export function Logo({ className = 'h-8 w-8' }) {
 }
 
 // Wordmark: "Steer" white + "Money" in brand green.
-export function Wordmark({ className = 'text-[15px]' }) {
+export function Wordmark({ className = 'text-[0.9375rem]' }) {
   return (
     <span className={`font-semibold tracking-tight ${className}`}>
       Steer<span className="text-emerald-400">Money</span>

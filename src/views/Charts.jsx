@@ -9,9 +9,9 @@ import { simulatePlan } from '@/lib/finance'
 import { useIsMobile } from '@/lib/useMediaQuery'
 
 const TIP = {
-  contentStyle: { background: 'hsl(240 6% 9%)', border: '1px solid hsl(240 6% 16%)', borderRadius: 8, fontSize: 12 },
-  labelStyle: { color: '#d4d4d8', fontWeight: 600, marginBottom: 2 },
-  itemStyle: { color: '#e4e4e7' },
+  contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 },
+  labelStyle: { color: '#dbe4f5', fontWeight: 700, marginBottom: 2 },
+  itemStyle: { color: '#dbe4f5' },
 }
 const kfmt = (v) => '$' + (Math.abs(v) >= 1000 ? (v / 1000).toFixed(v % 1000 === 0 ? 0 : 1) + 'k' : v)
 
@@ -105,7 +105,7 @@ export default function Charts() {
         <div className="mt-4 h-48 sm:h-64">
           <ResponsiveContainer>
             <PieChart>
-              <Pie data={dd} dataKey="value" nameKey="name" innerRadius="58%" outerRadius="88%" paddingAngle={2} stroke="hsl(240 6% 7%)">
+              <Pie data={dd} dataKey="value" nameKey="name" innerRadius="58%" outerRadius="88%" paddingAngle={2} stroke="hsl(221 55% 8%)">
                 {dd.map((_, i) => <Cell key={i} fill={DCOLORS[i % DCOLORS.length]} />)}
               </Pie>
               <Tooltip {...TIP} formatter={(v) => fmt0(v)} />
@@ -114,7 +114,7 @@ export default function Charts() {
           </ResponsiveContainer>
         </div>
         {isMobile && (
-          <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+          <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[0.6875rem]">
             {dd.map((d, i) => (
               <span key={d.name} className="flex min-w-0 items-center gap-1.5">
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: DCOLORS[i % DCOLORS.length] }} />

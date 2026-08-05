@@ -60,7 +60,10 @@ export default function Home() {
       </main>
 
       <footer className="border-t py-6 text-center text-[11px] text-muted-foreground">
-        SteerMoney · made with ❤️
+        SteerMoney · made with ❤️ ·{' '}
+        <Link href="/privacy" className="underline underline-offset-2 hover:text-foreground">
+          Privacy
+        </Link>
       </footer>
     </div>
   )

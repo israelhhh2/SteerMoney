@@ -21,6 +21,16 @@ export const CAT_COLORS = {
 }
 export const catColor = (id) => CAT_COLORS[id] || '#a1a1aa'
 
+export const CAT_EMOJI = {
+  housing: '🏡', auto: '🚗', shopping: '🛍️', dining: '🍔', groceries: '🥑',
+  other: '📦', family: '👨‍👩‍👧', cash: '💵', utilities: '💡', kids: '🧸',
+  entertainment: '🎬', subscriptions: '📺', household: '🔧', personal: '💇',
+  debt: '💳', income: '💰', transfer: '🔁',
+}
+export const catEmoji = (id) => CAT_EMOJI[id] || '🎯'
+
+export const ordinal = (n) => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]) }
+
 export function srcLabel(desc) {
   if (/Hammr Payroll/i.test(desc)) return 'Hammr Payroll (work)'
   const z = desc.match(/^ZELLE (.+)/i)

@@ -1,18 +1,24 @@
 'use client'
 import { useMemo, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { TrendingUp, TrendingDown, CreditCard, CalendarDays, X, Lightbulb } from 'lucide-react'
+import { TrendingUp, TrendingDown, CreditCard, CalendarDays, X, Lightbulb, Target } from 'lucide-react'
 import { BarChart, Bar as RBar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Segmented } from '@/components/ui/segmented'
-import { SectionHead, Kpi, MoneyTile, CatIcon, Bar } from '@/components/shared'
+import { SectionHead, SectionLabel, Kpi, MoneyTile, CatIcon, Bar, Ring, budgetTone } from '@/components/shared'
 import { useApp, monthTx, rangeTx, incomeIn, expensesIn, spentIn, dataMonths } from '@/store'
-import { fmt, fmt0, today, isoDate, ymLabel, monthLabel, prettyDate, catColor, srcLabel } from '@/lib/utils'
+import { fmt, fmt0, today, isoDate, ymLabel, monthLabel, prettyDate, catColor, srcLabel, ordinal } from '@/lib/utils'
 import { simulatePlan, recMonthly, nextDueDate } from '@/lib/finance'
 import { useIsMobile } from '@/lib/useMediaQuery'
+import { ICONS } from '@/views/Goals'
+
+function GoalIcon({ icon, className = 'h-4 w-4' }) {
+  const I = ICONS[icon] || Target
+  return <I className={className} />
+}
 
 const TIP = {
   contentStyle: { background: 'hsl(240 6% 9%)', border: '1px solid hsl(240 6% 16%)', borderRadius: 8, fontSize: 12 },
@@ -91,16 +97,33 @@ export default function Dashboard() {
   // due in 14 days
   const up = []
   const now0 = new Date(); now0.setHours(0, 0, 0, 0)
-  state.debts.forEach((d) => { if (d.balance > 0 && d.dueDay) { const dt = nextDueDate(d.dueDay); const diff = Math.round((dt - now0) / 864e5); if (diff <= 14) up.push({ name: d.name, amt: d.min, diff, tag: 'debt' }) } })
+  state.debts.forEach((d) => { if (d.balance > 0 && d.dueDay) { const dt = nextDueDate(d.dueDay); const diff = Math.round((dt - now0) / 864e5); if (diff <= 14) up.push({ name: d.name, amt: d.min, diff, tag: 'debt', cat: 'debt' }) } })
   state.recurring.forEach((r) => {
     if (r.active === false) return
     let dt = null
     if ((r.every || 1) > 1) { if (r.nextDate) dt = new Date(r.nextDate + 'T00:00:00') } else if (r.dueDay) dt = nextDueDate(r.dueDay)
     if (!dt) return
     const diff = Math.round((dt - now0) / 864e5)
-    if (diff >= 0 && diff <= 14) up.push({ name: r.desc, amt: r.amount, diff, tag: 'bill' })
+    if (diff >= 0 && diff <= 14) up.push({ name: r.desc, amt: r.amount, diff, tag: 'bill', cat: r.cat })
   })
   up.sort((a, b) => a.diff - b.diff)
+
+  // group upcoming items by due date for the horizontal scroller
+  const upGroups = useMemo(() => {
+    const groups = {}
+    const order = []
+    up.forEach((u) => {
+      if (!(u.diff in groups)) { groups[u.diff] = []; order.push(u.diff) }
+      groups[u.diff].push(u)
+    })
+    return order.map((diff) => {
+      const label = diff === 0 ? 'Today' : (() => {
+        const d = new Date(); d.setDate(d.getDate() + diff)
+        return d.toLocaleDateString('en-US', { month: 'short' }) + ' ' + ordinal(d.getDate())
+      })()
+      return { diff, label, items: groups[diff] }
+    })
+  }, [up])
 
   const cards = state.debts.filter((d) => d.limit)
   const ccLimit = cards.reduce((s, d) => s + d.limit, 0), ccBal = cards.reduce((s, d) => s + d.balance, 0)
@@ -108,8 +131,19 @@ export default function Dashboard() {
 
   const maxSpent = Math.max(1, ...state.budgets.map((b) => spentIn(state, nowYm, b.id)))
 
+  const ringBudgets = state.budgets
+    .filter((b) => b.limit > 0)
+    .map((b) => ({ ...b, spent: spentIn(state, nowYm, b.id) }))
+    .sort((a, b) => (b.spent / b.limit) - (a.spent / a.limit))
+
+  const activeGoals = (state.goals || [])
+    .filter((g) => g.status === 'active')
+    .map((g) => ({ ...g, saved: (g.txs || []).reduce((s, t) => s + t.amount, 0) }))
+    .sort((a, b) => (b.target ? b.saved / b.target : 0) - (a.target ? a.saved / a.target : 0))
+    .slice(0, 4)
+
   return (
-    <div className="fade-in space-y-4">
+    <div className="fade-in space-y-6">
       {firstName && (
         <div>
           <h2 className="text-xl font-bold tracking-tight">{es ? 'Bienvenido' : 'Welcome'}, {firstName} 👋</h2>
@@ -150,11 +184,11 @@ export default function Dashboard() {
             </div>
             <div className="divide-y divide-border/60">
               {breakdown.length ? breakdown.map((r) => (
-                <div key={r.label} className="flex items-center gap-3 py-2 text-[13px]">
+                <div key={r.label} className="flex items-center gap-3 py-2 text-[0.8125rem]">
                   {r.cat && <CatIcon cat={r.cat} className="h-3.5 w-3.5 shrink-0" />}
                   <span className="min-w-0 flex-1 truncate text-foreground/90 sm:w-56 sm:flex-none">{r.label}</span>
                   <div className="track hidden flex-1 sm:block"><div style={{ width: `${Math.round((r.sum / bTot) * 100)}%`, background: r.color }} /></div>
-                  <span className="hidden w-16 shrink-0 text-right text-[11px] text-muted-foreground sm:inline">{r.n}× · {Math.round((r.sum / bTot) * 100)}%</span>
+                  <span className="hidden w-16 shrink-0 text-right text-[0.6875rem] text-muted-foreground sm:inline">{r.n}× · {Math.round((r.sum / bTot) * 100)}%</span>
                   <span className={`w-20 shrink-0 text-right font-semibold ${cfView === 'in' ? 'text-emerald-400' : ''}`}>{fmt0(r.sum)}</span>
                 </div>
               )) : <div className="py-4 text-center text-xs text-muted-foreground">Nothing recorded in this period.</div>}
@@ -171,10 +205,10 @@ export default function Dashboard() {
                 key={m}
                 onClick={() => setRange(on ? { mode: 'month', from: null, to: null } : { mode: 'ym', ym: m })}
                 title={on ? 'Back to this month' : `Show ${ymLabel(m)} in the cards above`}
-                className={`-mx-2 flex w-[calc(100%+1rem)] items-center gap-2 rounded-lg px-2 py-2 text-[11.5px] transition sm:gap-3 sm:text-[13px] ${on ? 'bg-emerald-400/[0.07] ring-1 ring-emerald-400/25' : 'hover:bg-secondary/50'}`}
+                className={`-mx-2 flex w-[calc(100%+1rem)] items-center gap-2 rounded-lg px-2 py-2 text-[0.71875rem] transition sm:gap-3 sm:text-[0.8125rem] ${on ? 'bg-emerald-400/[0.07] ring-1 ring-emerald-400/25' : 'hover:bg-secondary/50'}`}
               >
                 <span className={`w-14 shrink-0 whitespace-nowrap text-left font-medium sm:w-24 ${on ? 'text-emerald-300' : ''}`}>
-                  {ymLabel(m)}{m === nowYm && <span className="hidden text-[10px] text-muted-foreground sm:inline"> · so far</span>}
+                  {ymLabel(m)}{m === nowYm && <span className="hidden text-[0.625rem] text-muted-foreground sm:inline"> · so far</span>}
                 </span>
                 <span className="flex-1 whitespace-nowrap text-right text-emerald-400">+{fmt0(inc)}</span>
                 <span className="flex-1 whitespace-nowrap text-right text-red-400">−{fmt0(ex)}</span>
@@ -182,7 +216,7 @@ export default function Dashboard() {
               </button>
             )
           })}
-          <div className="flex items-center gap-2 pt-2 text-[10px] text-muted-foreground sm:gap-3 sm:text-[11px]">
+          <div className="flex items-center gap-2 pt-2 text-[0.625rem] text-muted-foreground sm:gap-3 sm:text-[0.6875rem]">
             <span className="w-14 shrink-0 sm:w-24">tap a month ↑</span><span className="flex-1 whitespace-nowrap text-right">money in</span><span className="flex-1 whitespace-nowrap text-right">money out</span><span className="w-16 shrink-0 text-right sm:w-28">left over</span>
           </div>
         </div>
@@ -196,6 +230,82 @@ export default function Dashboard() {
         <Kpi label="Fixed Monthly Payments" value={fmt0(mins + recTotal)} icon={CalendarDays} sub={`${fmt0(mins)} debt + ${fmt0(recTotal)} bills`} />
       </div>
 
+      {/* Upcoming — bills/debts grouped by due date, Copilot-style horizontal scroller */}
+      {up.length > 0 && (
+        <div className="space-y-2.5">
+          <SectionLabel title="Upcoming" link="Recurrings" href="/recurring" />
+          <div className="no-scrollbar -mx-4 flex gap-5 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+            {upGroups.map((g) => (
+              <div key={g.diff}>
+                <div className="mb-1.5 whitespace-nowrap text-[0.6875rem] font-bold text-primary/90">{g.label}</div>
+                <div className="flex gap-2">
+                  {g.items.map((u, i) => (
+                    <div key={i} className="flex shrink-0 items-center gap-2 rounded-2xl bg-card border px-3.5 py-2.5">
+                      <CatIcon cat={u.cat} className="h-4 w-4 shrink-0" />
+                      <span className="max-w-32 truncate text-[0.8125rem] font-semibold">{u.name}</span>
+                      <span className="text-[0.8125rem] font-bold text-muted-foreground">{fmt(u.amt || 0)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Budgets — circular progress ring row */}
+      {ringBudgets.length > 0 && (
+        <div className="space-y-2.5">
+          <SectionLabel title="Budgets" link="Categories" href="/budgets" />
+          <div className="no-scrollbar -mx-4 flex gap-5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-1">
+            {ringBudgets.map((b) => {
+              const over = b.spent > b.limit
+              return (
+                <div key={b.id} className="flex w-[4.5rem] shrink-0 flex-col items-center gap-1.5">
+                  <Ring pct={over ? 100 : (b.spent / b.limit) * 100} color={budgetTone(b.spent, b.limit)} size={68} stroke={5.5}>
+                    <CatIcon cat={b.id} className="h-6 w-6" />
+                  </Ring>
+                  <div className="text-center leading-tight">
+                    <div className="text-[0.84375rem] font-bold">{fmt(Math.abs(b.limit - b.spent))}</div>
+                    <div className={`text-[0.6875rem] ${over ? 'text-red-400' : 'text-muted-foreground'}`}>{over ? 'over' : 'left'}</div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Goals — tight progress rows */}
+      {activeGoals.length > 0 && (
+        <div className="space-y-2.5">
+          <SectionLabel title="Goals" link="All goals" href="/goals" />
+          <Card className="p-4">
+            <div className="divide-y divide-border/60">
+              {activeGoals.map((g) => {
+                const reached = g.target > 0 && g.saved >= g.target
+                const pct = g.target ? Math.min(100, (g.saved / g.target) * 100) : 0
+                return (
+                  <div key={g.id} className="flex items-center gap-3 py-2">
+                    <span className="flex w-6 shrink-0 justify-center text-primary"><GoalIcon icon={g.icon} /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2 text-[0.8125rem]">
+                        <span className="truncate font-bold">{g.name}</span>
+                        <span className="shrink-0 text-right">
+                          <span className="font-bold">{fmt0(g.saved)}</span>
+                          <span className="text-muted-foreground"> / {fmt0(g.target)}</span>
+                        </span>
+                      </div>
+                      <div className="mt-1.5"><Bar pct={reached ? 100 : pct} color="#2fbf71" /></div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </Card>
+        </div>
+      )}
+
       {/* charts */}
       <div className="grid gap-3 lg:grid-cols-2">
         <Card className="p-5">
@@ -207,8 +317,8 @@ export default function Dashboard() {
                 <YAxis tick={{ fill: '#52525b', fontSize: 10 }} tickFormatter={(v) => '$' + (v >= 1000 ? v / 1000 + 'k' : v)} axisLine={false} tickLine={false} />
                 <Tooltip {...TIP} cursor={{ fill: '#ffffff08' }} formatter={(v) => fmt0(v)} />
                 <Legend wrapperStyle={{ fontSize: 11 }} formatter={(v) => <span style={{ color: '#a1a1aa' }}>{v}</span>} />
-                <RBar dataKey="Income" fill="#10b981" radius={[5, 5, 0, 0]} maxBarSize={36} />
-                <RBar dataKey="Spending" fill="#3f3f46" radius={[5, 5, 0, 0]} maxBarSize={36} />
+                <RBar dataKey="Income" fill="#34d399" radius={[5, 5, 0, 0]} maxBarSize={36} />
+                <RBar dataKey="Spending" fill="#e0655f" radius={[5, 5, 0, 0]} maxBarSize={36} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -227,7 +337,7 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </div>
           {isMobile && (
-            <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+            <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[0.6875rem]">
               {donut.map((d) => (
                 <span key={d.name} className="flex min-w-0 items-center gap-1.5">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: d.color }} />
@@ -248,15 +358,15 @@ export default function Dashboard() {
           </div>
           <div className="max-h-64 divide-y divide-border/60 overflow-y-auto">
             {up.length ? up.map((u, i) => (
-              <div key={i} className="flex items-center gap-2.5 py-2 text-[13px]">
-                <span className={`w-11 shrink-0 rounded-md px-1 py-1 text-center text-[10px] font-bold ${u.diff <= 3 ? 'bg-red-400/10 text-red-400' : 'bg-secondary text-muted-foreground'}`}>
+              <div key={i} className="flex items-center gap-2.5 py-2 text-[0.8125rem]">
+                <span className={`w-11 shrink-0 rounded-md px-1 py-1 text-center text-[0.625rem] font-bold ${u.diff <= 3 ? 'bg-red-400/10 text-red-400' : 'bg-secondary text-muted-foreground'}`}>
                   {u.diff === 0 ? 'today' : `in ${u.diff}d`}
                 </span>
                 <span className="flex-1 truncate text-foreground/90">{u.name}</span>
                 <Badge variant={u.tag === 'debt' ? 'destructive' : 'info'}>{u.tag}</Badge>
                 <span className="shrink-0 text-xs font-semibold">{u.amt ? fmt(u.amt) : ''}</span>
               </div>
-            )) : <p className="py-2 text-[13px] text-muted-foreground">Nothing due in the next two weeks.</p>}
+            )) : <p className="py-2 text-[0.8125rem] text-muted-foreground">Nothing due in the next two weeks.</p>}
           </div>
         </Card>
         <Card className="p-5">

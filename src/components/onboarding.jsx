@@ -11,7 +11,7 @@ import { Segmented } from '@/components/ui/segmented'
 import { Logo } from '@/components/logo'
 import { useApp } from '@/store'
 
-const OCCUPATIONS = [
+export const OCCUPATIONS = [
   ['accounting', 'Accounting & Finance', 'Contabilidad y finanzas'],
   ['trades', 'Construction & Trades (plumber, electrician…)', 'Construcción y oficios (plomero, electricista…)'],
   ['healthcare', 'Healthcare', 'Salud'],
@@ -159,8 +159,8 @@ export function Onboarding() {
                     <Icon className="h-4 w-4" />
                   </span>
                   <div className="min-w-0">
-                    <div className="text-[13px] font-semibold leading-tight">{title}</div>
-                    <div className="mt-0.5 text-[12px] leading-snug text-muted-foreground">{body}</div>
+                    <div className="text-[0.8125rem] font-semibold leading-tight">{title}</div>
+                    <div className="mt-0.5 text-[0.75rem] leading-snug text-muted-foreground">{body}</div>
                   </div>
                 </div>
               ))}

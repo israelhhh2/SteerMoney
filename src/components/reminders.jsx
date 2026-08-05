@@ -63,7 +63,7 @@ export function RemindersBell() {
       >
         {urgent ? <BellRing className="h-4 w-4 text-amber-400" /> : <Bell className="h-4 w-4" />}
         {items.length > 0 && (
-          <span className={`absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9.5px] font-bold text-white ${urgent ? 'bg-red-500' : 'bg-emerald-500'}`}>
+          <span className={`absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[0.59375rem] font-bold text-white ${urgent ? 'bg-red-500' : 'bg-emerald-500'}`}>
             {items.length}
           </span>
         )}
@@ -73,21 +73,21 @@ export function RemindersBell() {
         <div className="fade-in absolute right-0 top-10 z-50 w-[19rem] rounded-xl border bg-card p-3 shadow-2xl sm:w-80">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-semibold">Due in the next 7 days</span>
-            <span className="text-[11px] text-muted-foreground">{fmt(items.reduce((s, i) => s + (i.amount || 0), 0))}</span>
+            <span className="text-[0.6875rem] text-muted-foreground">{fmt(items.reduce((s, i) => s + (i.amount || 0), 0))}</span>
           </div>
           <div className="max-h-72 divide-y divide-border/60 overflow-y-auto">
             {items.length ? items.map((i) => (
-              <div key={i.key} className="flex items-center gap-2.5 py-2 text-[12.5px]">
+              <div key={i.key} className="flex items-center gap-2.5 py-2 text-[0.78125rem]">
                 <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${i.kind === 'debt' ? 'bg-red-400/10 text-red-400' : 'bg-sky-400/10 text-sky-400'}`}>
                   {i.kind === 'debt' ? <CreditCard className="h-3.5 w-3.5" /> : <Repeat className="h-3.5 w-3.5" />}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{i.name}</div>
-                  <div className={`text-[10.5px] ${i.diff <= 1 ? 'font-semibold text-amber-400' : 'text-muted-foreground'}`}>
+                  <div className={`text-[0.65625rem] ${i.diff <= 1 ? 'font-semibold text-amber-400' : 'text-muted-foreground'}`}>
                     {i.diff === 0 ? 'due today' : i.diff === 1 ? 'due tomorrow' : `in ${i.diff} days`} · {prettyDate(i.due)}
                   </div>
                 </div>
-                <span className="shrink-0 text-[12.5px] font-semibold">{i.amount ? fmt(i.amount) : ''}</span>
+                <span className="shrink-0 text-[0.78125rem] font-semibold">{i.amount ? fmt(i.amount) : ''}</span>
                 <button className="shrink-0 text-muted-foreground transition hover:text-foreground" title="Dismiss until next due date" onClick={() => dismiss(i)}>
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -103,7 +103,7 @@ export function RemindersBell() {
               <BellRing />Enable browser notifications
             </Button>
           )}
-          {canNotify === 'granted' && <p className="mt-2 text-center text-[10px] text-muted-foreground">Browser notifications are on. You'll get pinged the day before anything is due.</p>}
+          {canNotify === 'granted' && <p className="mt-2 text-center text-[0.625rem] text-muted-foreground">Browser notifications are on. You'll get pinged the day before anything is due.</p>}
         </div>
       )}
     </div>

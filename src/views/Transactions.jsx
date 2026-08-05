@@ -28,7 +28,7 @@ export default function Transactions({ preset, clearPreset }) {
     const rd = new FileReader()
     rd.onload = (e) => {
       const parsed = parseWescomCSV(e.target.result)
-      if (!parsed.length) return toast("Couldn't find any transactions — export History as CSV from Wescom online banking")
+      if (!parsed.length) return toast("Couldn't find any transactions — export History as CSV from Wescom online banking", 'error')
       const validCats = new Set([...state.budgets.map((b) => b.id), 'debt', 'income', 'transfer', 'other'])
       const existing = new Set(state.transactions.map((t) => `${t.date}|${t.type}|${t.amount.toFixed(2)}|${t.desc}`))
       setImportRows(parsed.map((r, i) => {
@@ -58,12 +58,12 @@ export default function Transactions({ preset, clearPreset }) {
   const dates = Object.keys(byDate).sort().reverse()
 
   return (
-    <div className="fade-in space-y-3">
+    <div className="fade-in space-y-5">
       <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={(e) => { importFile(e.target.files[0]); e.target.value = '' }} />
       <Card className="flex flex-wrap items-center gap-3 p-3">
         <div className="flex items-center gap-1">
           <Button variant="outline" size="xs" className="px-1.5" onClick={() => shift(-1)}><ChevronLeft /></Button>
-          <span className="w-24 text-center text-[13px] font-semibold">{ymLabel(ym)}</span>
+          <span className="w-24 text-center text-[0.8125rem] font-semibold">{ymLabel(ym)}</span>
           <Button variant="outline" size="xs" className="px-1.5" onClick={() => shift(1)}><ChevronRight /></Button>
         </div>
         <div className="relative">
@@ -87,13 +87,13 @@ export default function Transactions({ preset, clearPreset }) {
       <Card className="overflow-hidden">
         {dates.length ? dates.map((dt) => (
           <div key={dt}>
-            <div className="border-y border-border/60 bg-secondary/40 px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground first:border-t-0">{prettyDate(dt)}</div>
+            <div className="border-y border-border/60 bg-secondary/40 px-4 py-1.5 text-[0.65625rem] font-semibold uppercase tracking-wider text-muted-foreground first:border-t-0">{prettyDate(dt)}</div>
             {byDate[dt].map((t) => (
               <div key={t.id} className="group flex items-center gap-3 px-4 py-2 transition-colors hover:bg-secondary/30">
                 <span className="flex w-6 shrink-0 justify-center"><CatIcon cat={t.cat} /></span>
-                <span className="flex-1 truncate text-[13px] text-foreground/90" title={t.desc}>{t.desc}</span>
+                <span className="flex-1 truncate text-[0.8125rem] text-foreground/90" title={t.desc}>{t.desc}</span>
                 <span className="hidden sm:inline-flex"><CatChip cat={t.cat} /></span>
-                <span className={`w-20 shrink-0 text-right text-[13px] font-semibold sm:w-24 ${t.type === 'income' ? 'text-emerald-400' : t.cat === 'transfer' ? 'text-muted-foreground' : ''}`}>
+                <span className={`w-20 shrink-0 text-right text-[0.8125rem] font-semibold sm:w-24 ${t.type === 'income' ? 'text-emerald-400' : t.cat === 'transfer' ? 'text-muted-foreground' : ''}`}>
                   {t.type === 'income' ? '+' : '−'}{fmt(t.amount)}
                 </span>
                 <span className="flex w-12 shrink-0 justify-end gap-1.5">
@@ -104,12 +104,12 @@ export default function Transactions({ preset, clearPreset }) {
             ))}
           </div>
         )) : (
-          <div className="p-10 text-center text-[13px] text-muted-foreground">
+          <div className="p-10 text-center text-[0.8125rem] text-muted-foreground">
             No transactions in {ymLabel(ym)}{(q || cat !== 'all') && <> matching your filters — <button className="text-primary hover:underline" onClick={() => { setQ(''); setCat('all') }}>clear filters</button></>}.
           </div>
         )}
       </Card>
-      <p className="text-[11px] text-muted-foreground/70">Use Import with a Wescom History CSV. Rows are auto-categorized and duplicates you already have are skipped. Debt payments made on the Debt page also land here.</p>
+      <p className="text-[0.6875rem] text-muted-foreground/70">Use Import with a Wescom History CSV. Rows are auto-categorized and duplicates you already have are skipped. Debt payments made on the Debt page also land here.</p>
 
       {editing !== undefined && <TxDialog id={editing} onClose={() => setEditing(undefined)} />}
       {importRows && <ImportDialog rows={importRows} setRows={setImportRows} onClose={() => setImportRows(null)} />}
@@ -144,13 +144,13 @@ function ImportDialog({ rows, setRows, onClose }) {
           {rows.map((r) => (
             <div key={r.key} className={`flex flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-border/60 px-3 py-1.5 last:border-b-0 ${r.include ? '' : 'opacity-45'}`}>
               <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-emerald-500" checked={r.include} onChange={(e) => setRow(r.key, { include: e.target.checked })} />
-              <span className="w-12 shrink-0 text-[11px] text-muted-foreground">{prettyDate(r.date)}</span>
-              <span className="min-w-0 flex-1 truncate text-[12px]" title={r.desc}>{r.desc}</span>
-              {r.dup && <span className="shrink-0 rounded bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400">dup</span>}
-              <span className={`shrink-0 text-right text-[12px] font-semibold sm:order-last sm:w-20 ${r.type === 'income' ? 'text-emerald-400' : ''}`}>
+              <span className="w-12 shrink-0 text-[0.6875rem] text-muted-foreground">{prettyDate(r.date)}</span>
+              <span className="min-w-0 flex-1 truncate text-[0.75rem]" title={r.desc}>{r.desc}</span>
+              {r.dup && <span className="shrink-0 rounded bg-amber-400/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-amber-400">dup</span>}
+              <span className={`shrink-0 text-right text-[0.75rem] font-semibold sm:order-last sm:w-20 ${r.type === 'income' ? 'text-emerald-400' : ''}`}>
                 {r.type === 'income' ? '+' : '−'}{fmt(r.amount)}
               </span>
-              <Select className="!h-7 ml-6 w-[calc(100%-1.5rem)] text-[11px] sm:ml-0 sm:w-32 sm:shrink-0" value={r.cat} onChange={(e) => setRow(r.key, { cat: e.target.value })}>
+              <Select className="!h-7 ml-6 w-[calc(100%-1.5rem)] text-[0.6875rem] sm:ml-0 sm:w-32 sm:shrink-0" value={r.cat} onChange={(e) => setRow(r.key, { cat: e.target.value })}>
                 {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                 <option value="debt">Debt Payment</option><option value="income">Income</option><option value="transfer">Transfer</option>
               </Select>
@@ -173,9 +173,9 @@ function TxDialog({ id, onClose }) {
   const [f, setF] = useState({ ...t })
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
   const save = () => {
-    if (!String(f.desc).trim()) return toast('Enter a description')
+    if (!String(f.desc).trim()) return toast('Enter a description', 'error')
     const amount = parseFloat(f.amount)
-    if (isNaN(amount)) return toast('Enter an amount')
+    if (isNaN(amount)) return toast('Enter an amount', 'error')
     update((s) => {
       const data = { date: f.date, desc: f.desc.trim(), amount: Math.abs(amount), type: f.type, cat: f.cat }
       if (id) Object.assign(s.transactions.find((x) => x.id === id), data)

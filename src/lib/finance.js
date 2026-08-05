@@ -64,6 +64,76 @@ export function simCardPlan(bal, aprText, pay) {
 export const recEvery = (r) => Math.max(1, r.every || 1)
 export const recMonthly = (r) => r.amount / recEvery(r)
 
+// normalize a description for fuzzy matching: lowercase, strip non-alphanumerics, collapse whitespace
+export function normDesc(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ')
+}
+export const GENERIC_TOKENS = new Set(['payment', 'card', 'check', 'debit', 'online', 'autopay', 'recurring', 'bill', 'com', 'www', 'inc', 'llc'])
+
+// significant tokens for fuzzy matching: same rule findPaidTx uses (len >= 4, not generic)
+const sigTokens = (s) => normDesc(s).split(' ').filter((w) => w.length >= 4 && !GENERIC_TOKENS.has(w))
+
+// Match a recurring bill against a set of transactions from the same month.
+// (a) an explicit rid link (created via "Log this month") always wins.
+// (b) otherwise, an expense within tolerance of the bill's amount whose
+// description overlaps enough to be confident it's the same charge.
+// Callers matching several bills against the same pool should remove a
+// transaction once it's matched so two similar bills can't both claim it.
+export function findPaidTx(r, txs) {
+  const byRid = txs.find((t) => t.rid === r.id)
+  if (byRid) return byRid
+
+  const tol = Math.max(3, r.amount * 0.12)
+  const rNorm = normDesc(r.desc)
+  const rTokens = rNorm.split(' ').filter((w) => w.length >= 4 && !GENERIC_TOKENS.has(w))
+  for (const t of txs) {
+    if (t.type !== 'expense') continue
+    if (Math.abs(t.amount - r.amount) > tol) continue
+    const tNorm = normDesc(t.desc)
+    if (!rNorm || !tNorm) continue
+    if (tNorm.includes(rNorm) || rNorm.includes(tNorm)) return t
+    const tTokens = new Set(tNorm.split(' ').filter((w) => w.length >= 4 && !GENERIC_TOKENS.has(w)))
+    if (rTokens.some((w) => tTokens.has(w))) return t
+  }
+  return null
+}
+
+// Match a debt against the flat list of connected Plaid accounts (each
+// {name, official_name, mask, institution}), so the Debt Tracker can badge
+// "Bank connected" vs "Manual entry" without asking the user.
+// (a) the account's last-4 mask shows up inside the debt name — e.g. a debt
+//     named "Chase Freedom ••1234" matches an account with mask "1234".
+// (b) otherwise, the same normalized-token overlap findPaidTx uses between
+//     the debt name and the account's name / official name / institution.
+// Words too common in account names to prove anything on their own — a lone
+// "loan"/"platinum" overlap must not flag a debt as bank connected.
+const ACCOUNT_FILLER = new Set([
+  'loan', 'loans', 'cash', 'credit', 'bank', 'saving', 'savings', 'checking', 'money', 'market',
+  'account', 'personal', 'active', 'rewards', 'standard', 'interest', 'platinum', 'gold', 'silver',
+  'diamond', 'bronze', 'visa', 'mastercard', 'plaid', 'student', 'mortgage', 'auto',
+])
+
+export function matchesBankAccount(debt, plaidAccounts) {
+  if (!debt || !plaidAccounts || !plaidAccounts.length) return null
+  const dName = String(debt.name || '')
+
+  for (const a of plaidAccounts) {
+    if (a.mask && dName.includes(a.mask)) return a
+  }
+
+  const dTokens = new Set(sigTokens(dName))
+  if (!dTokens.size) return null
+  for (const a of plaidAccounts) {
+    const candidates = [a.name, a.official_name, a.institution].filter(Boolean)
+    const overlap = new Set()
+    candidates.forEach((c) => sigTokens(c).forEach((w) => { if (dTokens.has(w)) overlap.add(w) }))
+    const distinctive = [...overlap].filter((w) => !ACCOUNT_FILLER.has(w))
+    // confident only on a brand-like token (e.g. "wescom") or two overlapping words
+    if (distinctive.length >= 1 || overlap.size >= 2) return a
+  }
+  return null
+}
+
 export function nextDueDate(day) {
   const now = new Date(); now.setHours(0, 0, 0, 0)
   const dim = (y, m) => new Date(y, m + 1, 0).getDate()

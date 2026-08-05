@@ -98,7 +98,7 @@ export default function Admin() {
   }
 
   return (
-    <div className="fade-in space-y-4">
+    <div className="fade-in space-y-6">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Kpi label="Customers" value={customers.length} icon={Users} />
         <Kpi label="Total Debt (all)" value={fmt0(customers.reduce((s, c) => s + c.debtTotal, 0))} icon={CreditCard} tone="text-red-400" />
@@ -107,7 +107,7 @@ export default function Admin() {
       </div>
 
       <Card className="overflow-hidden">
-        <div className="border-b bg-secondary/40 px-4 py-2.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="border-b bg-secondary/40 px-4 py-2.5 text-[0.65625rem] font-semibold uppercase tracking-wider text-muted-foreground">
           Customers · tap a row for details
         </div>
         <div className="divide-y divide-border/60">
@@ -117,27 +117,27 @@ export default function Admin() {
                 <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open === c.id ? 'rotate-90' : ''}`} />
                 {c.info?.image
                   ? <img src={c.info.image} alt="" className="h-7 w-7 shrink-0 rounded-full" />
-                  : <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary text-[11px] font-bold">{(c.info?.name || c.id).slice(0, 1).toUpperCase()}</span>}
+                  : <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary text-[0.6875rem] font-bold">{(c.info?.name || c.id).slice(0, 1).toUpperCase()}</span>}
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] font-medium">
+                  <div className="truncate text-[0.8125rem] font-medium">
                     {c.info?.name || c.ws?.name || 'Unknown user'}
                     {c.id === user?.id && <Badge className="ml-2">you</Badge>}
                     {c.ws && <Badge className="ml-2">shared space</Badge>}
                   </div>
-                  <div className="truncate text-[11px] text-muted-foreground">{c.info?.email || (c.ws ? 'Collaborative finances' : c.id)}</div>
+                  <div className="truncate text-[0.6875rem] text-muted-foreground">{c.info?.email || (c.ws ? 'Collaborative finances' : c.id)}</div>
                 </div>
-                <span className="hidden shrink-0 text-[11px] text-muted-foreground md:inline">{c.tx.length} txns{c.lastTx ? ` · last ${prettyDate(c.lastTx)}` : ''}</span>
+                <span className="hidden shrink-0 text-[0.6875rem] text-muted-foreground md:inline">{c.tx.length} txns{c.lastTx ? ` · last ${prettyDate(c.lastTx)}` : ''}</span>
                 <span className="shrink-0 text-right">
-                  <span className="block text-[13px] font-semibold text-emerald-400">{fmt0(c.income)}<span className="text-[10px] font-normal text-muted-foreground">/mo</span></span>
-                  <span className="block text-[10px] text-muted-foreground">income</span>
+                  <span className="block text-[0.8125rem] font-semibold text-emerald-400">{fmt0(c.income)}<span className="text-[0.625rem] font-normal text-muted-foreground">/mo</span></span>
+                  <span className="block text-[0.625rem] text-muted-foreground">income</span>
                 </span>
                 <span className="shrink-0 text-right">
-                  <span className="block text-[13px] font-semibold text-red-400">{fmt0(c.debtTotal)}</span>
-                  <span className="block text-[10px] text-muted-foreground">{c.debts.length} debts</span>
+                  <span className="block text-[0.8125rem] font-semibold text-red-400">{fmt0(c.debtTotal)}</span>
+                  <span className="block text-[0.625rem] text-muted-foreground">{c.debts.length} debts</span>
                 </span>
                 <span className="w-24 shrink-0 text-right">
-                  <span className="block text-[13px] font-semibold">{fmt0(c.budgetTotal)}<span className="text-[10px] font-normal text-muted-foreground">/mo</span></span>
-                  <span className="block text-[10px] text-muted-foreground">{c.budgets.length} budgets</span>
+                  <span className="block text-[0.8125rem] font-semibold">{fmt0(c.budgetTotal)}<span className="text-[0.625rem] font-normal text-muted-foreground">/mo</span></span>
+                  <span className="block text-[0.625rem] text-muted-foreground">{c.budgets.length} budgets</span>
                 </span>
                 <span
                   role="button"
@@ -152,37 +152,37 @@ export default function Admin() {
               {open === c.id && (
                 <div className="fade-in grid gap-3 border-t border-border/60 bg-secondary/20 px-4 py-4 lg:grid-cols-3">
                   <div>
-                    <div className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">Budgets</div>
+                    <div className="mb-1.5 text-[0.65625rem] font-semibold uppercase tracking-wider text-muted-foreground">Budgets</div>
                     <div className="divide-y divide-border/40">
                       {c.budgets.length ? c.budgets.map((b, i) => (
-                        <div key={i} className="flex justify-between py-1 text-[12px]">
+                        <div key={i} className="flex justify-between py-1 text-[0.75rem]">
                           <span className="truncate text-foreground/85">{b.name}</span>
                           <span className="shrink-0 font-medium">{fmt0(Number(b.monthly_limit))}<span className="text-muted-foreground">/mo</span></span>
                         </div>
-                      )) : <p className="py-1 text-[11px] text-muted-foreground">None</p>}
+                      )) : <p className="py-1 text-[0.6875rem] text-muted-foreground">None</p>}
                     </div>
                   </div>
                   <div>
-                    <div className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">Debts</div>
+                    <div className="mb-1.5 text-[0.65625rem] font-semibold uppercase tracking-wider text-muted-foreground">Debts</div>
                     <div className="divide-y divide-border/40">
                       {c.debts.length ? c.debts.slice().sort((a, b) => b.balance - a.balance).map((d, i) => (
-                        <div key={i} className="flex justify-between py-1 text-[12px]">
+                        <div key={i} className="flex justify-between py-1 text-[0.75rem]">
                           <span className="truncate text-foreground/85">{d.name}</span>
                           <span className="shrink-0 font-medium text-red-400">{fmt0(Number(d.balance))}</span>
                         </div>
-                      )) : <p className="py-1 text-[11px] text-muted-foreground">None</p>}
+                      )) : <p className="py-1 text-[0.6875rem] text-muted-foreground">None</p>}
                     </div>
                   </div>
                   <div>
-                    <div className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">Recent transactions</div>
+                    <div className="mb-1.5 text-[0.65625rem] font-semibold uppercase tracking-wider text-muted-foreground">Recent transactions</div>
                     <div className="divide-y divide-border/40">
                       {c.tx.length ? c.tx.slice(0, 8).map((t, i) => (
-                        <div key={i} className="flex items-center gap-2 py-1 text-[12px]">
-                          <span className="w-10 shrink-0 text-[10px] text-muted-foreground">{prettyDate(t.date)}</span>
+                        <div key={i} className="flex items-center gap-2 py-1 text-[0.75rem]">
+                          <span className="w-10 shrink-0 text-[0.625rem] text-muted-foreground">{prettyDate(t.date)}</span>
                           <span className="min-w-0 flex-1 truncate text-foreground/85">{t.description}</span>
                           <span className={`shrink-0 font-medium ${t.type === 'income' ? 'text-emerald-400' : ''}`}>{t.type === 'income' ? '+' : '−'}{fmt(Number(t.amount))}</span>
                         </div>
-                      )) : <p className="py-1 text-[11px] text-muted-foreground">None</p>}
+                      )) : <p className="py-1 text-[0.6875rem] text-muted-foreground">None</p>}
                     </div>
                   </div>
                 </div>
@@ -191,7 +191,7 @@ export default function Admin() {
           ))}
         </div>
       </Card>
-      <p className="text-[11px] text-muted-foreground/70">
+      <p className="text-[0.6875rem] text-muted-foreground/70">
         Read-only view across all accounts. Admin access is controlled by the <code>admins</code> table in Supabase. Add a row to grant, delete to revoke.
       </p>
     </div>

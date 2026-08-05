@@ -1,17 +1,19 @@
 'use client'
-import { useMemo, useState } from 'react'
-import { Plus, Pencil, X, Search, FlaskConical, CreditCard } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Plus, Pencil, X, Search, FlaskConical, CreditCard, ChevronLeft, ChevronRight, CheckCircle2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { CatIcon } from '@/components/shared'
+import { Ring, Money, SectionLabel, CatIcon, ViewToggle } from '@/components/shared'
 import { useApp, monthTx, incomeIn } from '@/store'
 import { useToast } from '@/components/toast'
-import { fmt, fmt0, today, isoDate, prettyDate, ymLabel, uid } from '@/lib/utils'
-import { recEvery, recMonthly, nextDueDate, simulatePlan, fmtMonths } from '@/lib/finance'
+import { fmt, fmt0, today, isoDate, prettyDate, ymLabel, ordinal, uid } from '@/lib/utils'
+import { recEvery, recMonthly, nextDueDate, simulatePlan, fmtMonths, findPaidTx } from '@/lib/finance'
+
+const VIEW_KEY = 'fin-rec-view'
 
 export default function Recurring() {
   const { state, update, catInfo } = useApp()
@@ -19,6 +21,19 @@ export default function Recurring() {
   const [filter, setFilter] = useState({ cat: 'all', status: 'all', sort: 'due', q: '' })
   const [whatIf, setWhatIf] = useState(new Set())
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
+  const nowYm = today().slice(0, 7)
+  const [ym, setYm] = useState(nowYm)
+  const [view, setView] = useState('cards')
+  useEffect(() => { try { setView(localStorage.getItem(VIEW_KEY) || 'cards') } catch {} }, [])
+  const changeView = (v) => { setView(v); try { localStorage.setItem(VIEW_KEY, v) } catch {} }
+  const isCurrent = ym === nowYm
+  const todayDom = +today().slice(8, 10)
+  const shift = (n) => {
+    const d = new Date(+ym.slice(0, 4), +ym.slice(5, 7) - 1 + n, 1)
+    const next = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+    if (next > nowYm) return
+    setYm(next)
+  }
 
   const act = state.recurring.filter((r) => r.active !== false)
   const total = act.reduce((s, r) => s + recMonthly(r), 0)
@@ -62,21 +77,123 @@ export default function Recurring() {
     toast(`${r.desc} logged`)
   }
 
+  // this month (or the selected past month): what's been paid vs what's still coming.
+  // "Paid" is verified against real transactions (imported or logged), not just t.rid,
+  // so bills paid straight from the bank show up too.
+  const monthly = act.filter((r) => recEvery(r) === 1).slice().sort((a, b) => a.dueDay - b.dueDay)
+  const selTx = monthTx(state, ym)
+  const paidMap = new Map()
+  {
+    let pool = selTx.slice()
+    for (const r of monthly) {
+      const tx = findPaidTx(r, pool)
+      if (tx) { paidMap.set(r.id, tx); pool = pool.filter((t) => t !== tx) }
+    }
+  }
+  const paidSum = monthly.filter((r) => paidMap.has(r.id)).reduce((s, r) => s + r.amount, 0)
+  const dueSum = monthly.reduce((s, r) => s + r.amount, 0)
+  const leftSum = Math.max(0, dueSum - paidSum)
+
   return (
-    <div className="fade-in space-y-3">
-      <Card className="flex flex-wrap items-center gap-3 p-3">
-        <div className="text-[13px] text-muted-foreground">
-          <b className="text-foreground">{act.length}</b> active recurring bills · <b className="text-amber-400">{hasMulti ? '≈' : ''}{fmt(total)}</b>/month
-          {hasMulti && <span className="text-[11px] opacity-70"> (2–3 mo bills averaged out)</span>}
+    <div className="fade-in space-y-6">
+      <div className="flex items-center gap-1">
+        <Button variant="outline" size="xs" className="px-1.5" onClick={() => shift(-1)}><ChevronLeft /></Button>
+        <span className="w-24 text-center text-[0.8125rem] font-semibold">{ymLabel(ym)}</span>
+        <Button variant="outline" size="xs" className="px-1.5" disabled={isCurrent} onClick={() => shift(1)}><ChevronRight /></Button>
+      </div>
+
+      <Card className="p-5">
+        <div className="flex items-center justify-around gap-4">
+          <div className="text-center">
+            <Money value={fmt0(leftSum)} className="text-2xl font-extrabold sm:text-3xl" />
+            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">{isCurrent ? 'left to pay' : 'went unpaid'}</div>
+          </div>
+          <Ring pct={dueSum ? (paidSum / dueSum) * 100 : 0} color="#5b9df9" size={84} stroke={9} />
+          <div className="text-center">
+            <Money value={fmt0(paidSum)} className="text-2xl font-extrabold sm:text-3xl" />
+            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">paid so far</div>
+          </div>
         </div>
-        <Button size="sm" className="ml-auto" onClick={() => setEditing(null)}><Plus />Add recurring</Button>
+        <div className="mt-4 text-center text-[0.71875rem] font-semibold text-muted-foreground">
+          <b className="text-foreground">{act.length}</b> active recurring bills · <b className="text-amber-400">{hasMulti ? '≈' : ''}{fmt(total)}</b>/month
+          {hasMulti && <span className="text-[0.6875rem] opacity-70"> (2–3 mo bills averaged out)</span>}
+        </div>
       </Card>
+
+      {/* this month grid / list */}
+      <div className="space-y-2.5">
+        <div className="flex items-end justify-between">
+          <SectionLabel title={isCurrent ? 'This month' : ymLabel(ym)} />
+          <div className="flex items-center gap-2">
+            <ViewToggle value={view} onChange={changeView} />
+            <Button size="sm" onClick={() => setEditing(null)}><Plus />Add recurring</Button>
+          </div>
+        </div>
+        {monthly.length > 0 && (view === 'cards' ? (
+          <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 lg:grid-cols-6">
+            {monthly.map((r) => {
+              const paidTx = paidMap.get(r.id)
+              const paid = !!paidTx
+              const overdue = isCurrent && !paid && r.dueDay < todayDom
+              return (
+                <button
+                  key={r.id}
+                  onClick={() => setEditing(r.id)}
+                  title="Edit this bill"
+                  className="relative flex flex-col items-center gap-1 rounded-2xl bg-card px-2 py-4 text-center transition hover:bg-accent/60"
+                >
+                  <span className={`absolute right-2 top-2 flex h-[18px] w-[18px] items-center justify-center rounded-full text-[0.625rem] font-black ${paid ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'}`}>✓</span>
+                  <CatIcon cat={r.cat} className="h-6 w-6" />
+                  <span className="mt-1 w-full truncate text-[0.78125rem] font-bold">{r.desc}</span>
+                  <Money value={fmt(r.amount)} className="text-[0.78125rem] font-extrabold" />
+                  <span className={`text-[0.6875rem] font-semibold ${overdue ? 'text-red-400' : 'text-muted-foreground'}`}>{ordinal(r.dueDay)}</span>
+                </button>
+              )
+            })}
+          </div>
+        ) : (
+          <Card className="overflow-hidden">
+            <div className="divide-y divide-border/60">
+              {monthly.map((r, i) => {
+                const paidTx = paidMap.get(r.id)
+                const overdue = isCurrent && !paidTx && r.dueDay < todayDom
+                const unpaid = !paidTx && (overdue || !isCurrent)
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => setEditing(r.id)}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-accent/60"
+                  >
+                    <span className="w-6 shrink-0 text-[0.75rem] font-semibold text-muted-foreground">{i + 1}.</span>
+                    <CatIcon cat={r.cat} className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-bold">{r.desc}</span>
+                    <span className={`shrink-0 text-[0.75rem] font-semibold ${overdue ? 'text-red-400' : 'text-muted-foreground'}`}>{ordinal(r.dueDay)}</span>
+                    <Money value={fmt(r.amount)} className="shrink-0 text-right text-[0.8125rem] font-extrabold" />
+                    <span className="flex w-24 shrink-0 items-center justify-end gap-1 text-[0.6875rem] font-semibold">
+                      {paidTx ? (
+                        <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 className="h-3.5 w-3.5" />{prettyDate(paidTx.date)}</span>
+                      ) : unpaid ? (
+                        <span className="text-red-400">unpaid</span>
+                      ) : (
+                        <span className="text-muted-foreground">upcoming</span>
+                      )}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </Card>
+        ))}
+        {!isCurrent && (
+          <p className="text-[0.6875rem] text-muted-foreground/70">Based on your current recurring list matched against that month's transactions.</p>
+        )}
+      </div>
 
       {/* what-if */}
       <Card className="p-4">
         <div className="mb-2 flex items-center gap-2">
           <FlaskConical className="h-4 w-4 text-muted-foreground" />
-          <span className="text-[13px] font-semibold tracking-tight">What-if simulator</span>
+          <span className="text-[0.8125rem] font-semibold tracking-tight">What-if simulator</span>
           <Badge className="uppercase tracking-wide">nothing is actually changed</Badge>
         </div>
         {!sel.length ? (
@@ -85,10 +202,10 @@ export default function Recurring() {
           <>
             <div className="mb-2.5 text-xs text-muted-foreground">If you cancel <b className="text-foreground">{sel.length}</b> bill{sel.length === 1 ? '' : 's'} ({sel.map((r) => r.desc).join(', ')}):</div>
             <div className="mb-3 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[11px] text-muted-foreground">You free up</div><div className="font-bold tracking-tight text-emerald-400">{fmt(save)}<span className="text-[11px] font-normal text-muted-foreground">/mo</span></div></div>
-              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[11px] text-muted-foreground">Per year</div><div className="font-bold tracking-tight text-emerald-400">{fmt0(save * 12)}</div></div>
-              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[11px] text-muted-foreground">Bills become</div><div className="font-bold tracking-tight">{fmt(total - save)}<span className="text-[11px] font-normal text-muted-foreground">/mo</span></div><div className="text-[10px] text-muted-foreground/70">was {fmt(total)}</div></div>
-              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[11px] text-muted-foreground">Of your income</div><div className="font-bold tracking-tight">{avgIncome ? ((save / avgIncome) * 100).toFixed(1) + '%' : '—'}</div><div className="text-[10px] text-muted-foreground/70">≈{fmt0(avgIncome)}/mo avg</div></div>
+              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[0.6875rem] text-muted-foreground">You free up</div><div className="font-bold tracking-tight text-emerald-400">{fmt(save)}<span className="text-[0.6875rem] font-normal text-muted-foreground">/mo</span></div></div>
+              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[0.6875rem] text-muted-foreground">Per year</div><div className="font-bold tracking-tight text-emerald-400">{fmt0(save * 12)}</div></div>
+              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[0.6875rem] text-muted-foreground">Bills become</div><div className="font-bold tracking-tight">{fmt(total - save)}<span className="text-[0.6875rem] font-normal text-muted-foreground">/mo</span></div><div className="text-[0.625rem] text-muted-foreground/70">was {fmt(total)}</div></div>
+              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[0.6875rem] text-muted-foreground">Of your income</div><div className="font-bold tracking-tight">{avgIncome ? ((save / avgIncome) * 100).toFixed(1) + '%' : '—'}</div><div className="text-[0.625rem] text-muted-foreground/70">≈{fmt0(avgIncome)}/mo avg</div></div>
             </div>
             <div className="rounded-lg border border-primary/25 bg-primary/5 p-3 text-xs">
               <CreditCard className="mr-1 inline h-4 w-4 align-[-3px] text-muted-foreground" />
@@ -139,14 +256,14 @@ export default function Recurring() {
                 <input type="checkbox" className="h-4 w-4 shrink-0 cursor-pointer accent-emerald-400" checked={wi} disabled={off} onChange={() => toggleWhatIf(r.id)} title="What if I cancel this?" />
                 <span className="flex w-6 shrink-0 justify-center"><CatIcon cat={r.cat} /></span>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] font-medium">{r.desc}</div>
-                  <div className="text-[11px] text-muted-foreground">
+                  <div className="truncate text-[0.8125rem] font-bold">{r.desc}</div>
+                  <div className="text-[0.6875rem] text-muted-foreground">
                     {recEvery(r) > 1 ? `every ${recEvery(r)} mo · next ${r.nextDate ? prettyDate(r.nextDate) : 'set a date'}` : `day ${r.dueDay} · monthly`} · {catInfo(r.cat).name}
                   </div>
                 </div>
                 <span className="shrink-0 text-right">
-                  <span className="text-[13px] font-semibold">{fmt(r.amount)}</span>
-                  {recEvery(r) > 1 && <span className="block text-[10px] text-muted-foreground">≈{fmt0(recMonthly(r))}/mo</span>}
+                  <span className="text-[0.8125rem] font-semibold">{fmt(r.amount)}</span>
+                  {recEvery(r) > 1 && <span className="block text-[0.625rem] text-muted-foreground">≈{fmt0(recMonthly(r))}/mo</span>}
                 </span>
                 <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
                   <Button variant={off || logged ? 'outline' : 'secondary'} size="xs" disabled={off || logged} onClick={() => logRecurring(r)} title={logged ? 'Already logged this month' : 'Add this charge to this month’s transactions'}>
@@ -161,13 +278,13 @@ export default function Recurring() {
               </div>
             )
           }) : (
-            <div className="p-10 text-center text-[13px] text-muted-foreground">
+            <div className="p-10 text-center text-[0.8125rem] text-muted-foreground">
               {isFiltered ? <>No bills match your filters — <button className="text-primary hover:underline" onClick={() => setFilter({ cat: 'all', status: 'all', sort: 'due', q: '' })}>clear filters</button>.</> : 'No recurring bills yet.'}
             </div>
           )}
         </div>
       </Card>
-      <p className="text-[11px] text-muted-foreground/70">Recurring items show up in the dashboard's "due soon" list; "Log this month" records the charge as a transaction. Non-monthly bills advance their next date when logged.</p>
+      <p className="text-[0.6875rem] text-muted-foreground/70">Recurring items show up in the dashboard's "due soon" list; "Log this month" records the charge as a transaction. Non-monthly bills advance their next date when logged.</p>
 
       {editing !== undefined && <RecurringDialog id={editing} onClose={() => setEditing(undefined)} />}
     </div>
@@ -182,11 +299,11 @@ function RecurringDialog({ id, onClose }) {
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
   const save = () => {
     const desc = String(f.desc).trim()
-    if (!desc) return toast('Enter a name')
+    if (!desc) return toast('Enter a name', 'error')
     const amount = parseFloat(f.amount)
-    if (isNaN(amount)) return toast('Enter an amount')
+    if (isNaN(amount)) return toast('Enter an amount', 'error')
     const every = parseInt(f.every) || 1
-    if (every > 1 && !f.nextDate) return toast('Pick the next payment date')
+    if (every > 1 && !f.nextDate) return toast('Pick the next payment date', 'error')
     update((s) => {
       const data = { desc, amount, dueDay: Math.min(31, Math.max(1, parseInt(f.dueDay) || 1)), cat: f.cat, every, nextDate: every > 1 ? f.nextDate : null }
       if (id) Object.assign(s.recurring.find((x) => x.id === id), data)

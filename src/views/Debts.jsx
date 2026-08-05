@@ -1,6 +1,6 @@
 'use client'
-import { useMemo, useState } from 'react'
-import { CreditCard, CalendarDays, CheckCircle2, Target, ChevronRight, Pencil, X, Flame, Snowflake, Plus, DollarSign, Search, Lightbulb } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { CreditCard, CalendarDays, CheckCircle2, Target, ChevronRight, Pencil, X, Flame, Snowflake, Plus, DollarSign, Search, Lightbulb, Landmark } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -13,12 +13,12 @@ import { SectionHead, Kpi, StatTile, Bar } from '@/components/shared'
 import { useApp } from '@/store'
 import { useToast } from '@/components/toast'
 import { fmt, fmt0, today, monthLabel, prettyDate, uid } from '@/lib/utils'
-import { simulatePlan, simCardPlan, parseAPR, payoffMonths, fmtMonths } from '@/lib/finance'
+import { simulatePlan, simCardPlan, parseAPR, payoffMonths, fmtMonths, matchesBankAccount } from '@/lib/finance'
 
 const TIP = {
-  contentStyle: { background: 'hsl(240 6% 9%)', border: '1px solid hsl(240 6% 16%)', borderRadius: 8, fontSize: 12 },
-  labelStyle: { color: '#d4d4d8', fontWeight: 600, marginBottom: 2 },
-  itemStyle: { color: '#e4e4e7' },
+  contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 },
+  labelStyle: { color: '#dbe4f5', fontWeight: 700, marginBottom: 2 },
+  itemStyle: { color: '#dbe4f5' },
 }
 
 export default function Debts() {
@@ -29,6 +29,21 @@ export default function Debts() {
   const [openDebt, setOpenDebt] = useState(null)
   const [editIdx, setEditIdx] = useState(undefined) // undefined closed · -1 new · i edit
   const [view, setView] = useState({ sort: 'balance', dir: 'desc', filter: 'all', q: '' })
+  const [plaidAccounts, setPlaidAccounts] = useState([])
+
+  // Silently probe connected banks so debt cards can badge "Bank connected"
+  // vs "Manual entry" — no accounts just means nothing badges.
+  useEffect(() => {
+    let on = true
+    fetch('/api/plaid/items')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!on) return
+        setPlaidAccounts((d.items || []).flatMap((it) => (it.accounts || []).map((a) => ({ ...a, institution: it.institution }))))
+      })
+      .catch(() => {})
+    return () => { on = false }
+  }, [])
 
   const total = state.debts.reduce((s, d) => s + d.balance, 0)
   const mins = state.debts.reduce((s, d) => s + d.min, 0)
@@ -62,7 +77,7 @@ export default function Debts() {
   const setSim = (patch) => update((s) => Object.assign(s.sim, patch))
 
   const submitPayment = (i, amt, date, note) => {
-    if (!amt || amt <= 0) return toast('Enter a payment amount')
+    if (!amt || amt <= 0) return toast('Enter a payment amount', 'error')
     update((s) => {
       const d = s.debts[i]
       d.balance = Math.max(0, +(d.balance - amt).toFixed(2))
@@ -80,7 +95,7 @@ export default function Debts() {
   })
 
   return (
-    <div className="fade-in space-y-4">
+    <div className="fade-in space-y-6">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Kpi label="Total Debt" value={fmt(total)} tone="text-red-400" icon={CreditCard} />
         <button onClick={() => setMinsOpen(!minsOpen)} className="text-left" title="See how this adds up">
@@ -98,14 +113,14 @@ export default function Debts() {
           </div>
           <div className="divide-y divide-border/60">
             {state.debts.slice().sort((a, b) => b.min - a.min).map((d) => (
-              <div key={d.name} className="flex items-center gap-3 py-1.5 text-[13px]">
+              <div key={d.name} className="flex items-center gap-3 py-1.5 text-[0.8125rem]">
                 <span className="flex-1 truncate text-foreground/90">{d.name}</span>
                 {d.balance <= 0 && <Badge variant="success">paid off</Badge>}
-                <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">bal {fmt0(d.balance)}</span>
+                <span className="hidden shrink-0 text-[0.6875rem] text-muted-foreground sm:inline">bal {fmt0(d.balance)}</span>
                 <span className="w-20 shrink-0 text-right font-semibold">{fmt(d.min)}</span>
               </div>
             ))}
-            <div className="flex items-center gap-3 pt-2 text-[13px]">
+            <div className="flex items-center gap-3 pt-2 text-[0.8125rem]">
               <span className="flex-1 font-semibold">Total</span>
               <span className="w-20 shrink-0 text-right font-bold text-amber-400">{fmt(mins)}</span>
             </div>
@@ -129,7 +144,7 @@ export default function Debts() {
             ))}
           </div>
         </div>
-        <div className="mb-4 rounded-lg border bg-secondary/40 px-3.5 py-3 text-[12.5px] leading-relaxed text-foreground/85">
+        <div className="mb-4 rounded-lg border bg-secondary/40 px-3.5 py-3 text-[0.78125rem] leading-relaxed text-foreground/85">
           <Lightbulb className="mr-1 inline h-4 w-4 text-amber-300" /> <b>How to read this:</b> your {state.debts.length} debts require <b className="text-amber-400">{fmt(mins)}/mo</b> in minimum payments combined. The simulator asks: <i>"what if I put <b className="text-emerald-400">{fmt(sim.budget)}</b> toward debt every month instead?"</i> Anything above the minimums gets thrown at one debt at a time until everything is gone.
         </div>
         {belowMin && (
@@ -155,15 +170,15 @@ export default function Debts() {
             </ResponsiveContainer>
           </div>
           <div className="lg:col-span-2">
-            <div className="mb-2 text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">Payoff order ({sim.strategy})</div>
+            <div className="mb-2 text-[0.65625rem] font-medium uppercase tracking-wider text-muted-foreground">Payoff order ({sim.strategy})</div>
             <div className="max-h-52 divide-y divide-border/60 overflow-y-auto pr-1">
               {payoffList.length ? payoffList.map(([n, d], idx) => (
-                <div key={n} className="flex items-center gap-2.5 py-1.5 text-[13px]">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-secondary text-[10.5px] font-bold text-muted-foreground">{idx + 1}</span>
+                <div key={n} className="flex items-center gap-2.5 py-1.5 text-[0.8125rem]">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-secondary text-[0.65625rem] font-bold text-muted-foreground">{idx + 1}</span>
                   <span className="flex-1 truncate text-foreground/90">{n}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">{monthLabel(d)}</span>
                 </div>
-              )) : <p className="text-[13px] text-muted-foreground">Nothing pays off within 50 years at this payment.</p>}
+              )) : <p className="text-[0.8125rem] text-muted-foreground">Nothing pays off within 50 years at this payment.</p>}
             </div>
           </div>
         </div>
@@ -173,13 +188,13 @@ export default function Debts() {
       <Card className={snowOpen ? 'p-5' : 'px-5 py-3.5'}>
         <button onClick={() => setSnowOpen(!snowOpen)} className="flex w-full items-center gap-2.5 text-left">
           <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${snowOpen ? 'rotate-90' : ''}`} />
-          <span className="text-[13px] font-semibold">Snowball Simulator</span>
+          <span className="text-[0.8125rem] font-semibold">Snowball Simulator</span>
           {!snowOpen && (
-            <span className="hidden text-[11px] text-muted-foreground sm:inline">
+            <span className="hidden text-[0.6875rem] text-muted-foreground sm:inline">
               smallest first, payments roll over{extra ? ` · +${fmt0(extra)}/mo extra` : ''} · debt-free {snow.done ? monthLabel(snow.end) : '—'}
             </span>
           )}
-          <span className="ml-auto shrink-0 text-[11px] font-medium text-primary">{snowOpen ? 'Collapse' : 'Open'}</span>
+          <span className="ml-auto shrink-0 text-[0.6875rem] font-medium text-primary">{snowOpen ? 'Collapse' : 'Open'}</span>
         </button>
         {snowOpen && (
           <div className="mt-4 fade-in">
@@ -203,19 +218,19 @@ export default function Debts() {
             </div>
             <div className="divide-y divide-border/60">
               {steps.map((s, ix) => (
-                <div key={s.d.name} className="flex items-center gap-3 py-2.5 text-[13px]">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-emerald-400/10 text-[11px] font-bold text-emerald-300">{ix + 1}</span>
+                <div key={s.d.name} className="flex items-center gap-3 py-2.5 text-[0.8125rem]">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-emerald-400/10 text-[0.6875rem] font-bold text-emerald-300">{ix + 1}</span>
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{s.d.name}</div>
-                    <div className="text-[11px] text-muted-foreground">{fmt0(s.d.balance)} balance · min {fmt0(s.d.min)}</div>
+                    <div className="text-[0.6875rem] text-muted-foreground">{fmt0(s.d.balance)} balance · min {fmt0(s.d.min)}</div>
                   </div>
                   <div className="hidden shrink-0 text-right sm:block">
                     <div className="text-xs font-semibold text-emerald-400">{fmt0(s.pay)}/mo attack</div>
-                    <div className="text-[10.5px] text-muted-foreground">min + {fmt0(s.pay - s.d.min)} rolled in</div>
+                    <div className="text-[0.65625rem] text-muted-foreground">min + {fmt0(s.pay - s.d.min)} rolled in</div>
                   </div>
                   <div className="w-24 shrink-0 text-right">
                     <div className={`text-xs font-semibold ${s.when ? '' : 'text-red-400'}`}>{s.when ? monthLabel(s.when) : '—'}</div>
-                    <div className="text-[10.5px] text-muted-foreground">paid off</div>
+                    <div className="text-[0.65625rem] text-muted-foreground">paid off</div>
                   </div>
                   <span className={`shrink-0 ${ix < steps.length - 1 ? 'text-muted-foreground' : 'text-emerald-400'}`}>{ix < steps.length - 1 ? '↓' : '✓'}</span>
                 </div>
@@ -248,7 +263,7 @@ export default function Debts() {
 
       <div className="grid gap-3 md:grid-cols-2">
         {list.map(({ d, i }) => (
-          <DebtCard key={d.name + i} d={d} i={i} open={openDebt === d.name} plan={plan} total={total}
+          <DebtCard key={d.name + i} d={d} i={i} open={openDebt === d.name} plan={plan} total={total} plaidAccounts={plaidAccounts}
             onToggle={() => setOpenDebt(openDebt === d.name ? null : d.name)}
             onEdit={() => setEditIdx(i)}
             onDelete={() => { if (confirm(`Delete "${d.name}"?`)) { update((s) => { s.debts.splice(i, 1) }); toast('Debt deleted') } }}
@@ -263,12 +278,13 @@ export default function Debts() {
   )
 }
 
-function DebtCard({ d, i, open, plan, total, onToggle, onEdit, onDelete, onPay, onDeletePayment }) {
+function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, onDelete, onPay, onDeletePayment }) {
   const [amt, setAmt] = useState(d.min || '')
   const [date, setDate] = useState(today())
   const [note, setNote] = useState('')
   const util = d.limit ? Math.min(100, Math.round((d.balance / d.limit) * 100)) : null
   const pm = payoffMonths(d.balance, d.apr, d.min)
+  const bankMatch = useMemo(() => matchesBankAccount(d, plaidAccounts), [d, plaidAccounts])
   const planDate = plan.payoffs[d.name]
   const share = total ? ((d.balance / total) * 100).toFixed(1) : 0
   const pays = d.payments || []
@@ -278,10 +294,15 @@ function DebtCard({ d, i, open, plan, total, onToggle, onEdit, onDelete, onPay, 
     <Card className={`${open ? 'md:col-span-2' : ''} transition-colors hover:border-accent`}>
       <div className="cursor-pointer p-5 pb-0" onClick={onToggle}>
         <div className="mb-2 flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-1.5 text-[15px] font-semibold tracking-tight">
-              <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
-              {d.name}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 text-[0.9375rem] font-semibold tracking-tight">
+              <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
+              <span className="truncate">{d.name}</span>
+              {bankMatch ? (
+                <Badge variant="success" className="shrink-0"><Landmark className="h-3 w-3" />Bank connected</Badge>
+              ) : (
+                <Badge className="shrink-0">Manual entry</Badge>
+              )}
             </div>
             <div className="mt-2 flex flex-wrap gap-1.5">
               <Badge>APR {d.apr || '—'}</Badge>
@@ -292,7 +313,7 @@ function DebtCard({ d, i, open, plan, total, onToggle, onEdit, onDelete, onPay, 
           </div>
           <div className="shrink-0 text-right">
             <div className="text-lg font-bold tracking-tight">{fmt(d.balance)}</div>
-            <div className="text-xs font-semibold text-amber-400">min {fmt(d.min)}<span className="text-[10px] font-normal text-muted-foreground">/mo</span></div>
+            <div className="text-xs font-semibold text-amber-400">min {fmt(d.min)}<span className="text-[0.625rem] font-normal text-muted-foreground">/mo</span></div>
           </div>
         </div>
         <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-xs">
@@ -302,7 +323,7 @@ function DebtCard({ d, i, open, plan, total, onToggle, onEdit, onDelete, onPay, 
         </div>
         {util !== null && (
           <div className="mt-3.5">
-            <div className="mb-1.5 flex justify-between text-[11px] text-muted-foreground">
+            <div className="mb-1.5 flex justify-between text-[0.6875rem] text-muted-foreground">
               <span>Utilization <span className="opacity-60">(target &lt;30%)</span></span>
               <span className={`font-semibold ${util > 80 ? 'text-red-400' : util > 30 ? 'text-amber-400' : 'text-emerald-400'}`}>{util}% of {fmt0(d.limit)}</span>
             </div>
@@ -310,7 +331,7 @@ function DebtCard({ d, i, open, plan, total, onToggle, onEdit, onDelete, onPay, 
               <div style={{ width: `${util}%`, background: util > 80 ? '#f87171' : util > 30 ? '#fbbf24' : '#34d399' }} />
               <div className="absolute top-1/2 h-2.5 w-px -translate-y-1/2 bg-zinc-500" style={{ left: '30%' }} title="30% target" />
             </div>
-            <div className={`mt-1.5 text-[11px] ${d.balance - 0.3 * d.limit > 0 ? 'text-amber-400/90' : 'text-emerald-400/90'}`}>
+            <div className={`mt-1.5 text-[0.6875rem] ${d.balance - 0.3 * d.limit > 0 ? 'text-amber-400/90' : 'text-emerald-400/90'}`}>
               {d.balance - 0.3 * d.limit > 0 ? `Pay down ${fmt0(d.balance - 0.3 * d.limit)} to reach 30% (${fmt0(0.3 * d.limit)})` : '✓ Under the 30% target'}
             </div>
           </div>
@@ -325,7 +346,7 @@ function DebtCard({ d, i, open, plan, total, onToggle, onEdit, onDelete, onPay, 
       {open && (
         <div className="grid gap-6 border-t px-5 pb-5 pt-4 lg:grid-cols-2">
           <div>
-            <div className="mb-2.5 text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">Make a payment</div>
+            <div className="mb-2.5 text-[0.65625rem] font-medium uppercase tracking-wider text-muted-foreground">Make a payment</div>
             <div className="flex flex-wrap items-end gap-2">
               <div className="w-32"><Label>Amount ($)</Label><Input type="number" step="0.01" min="0" value={amt} onChange={(e) => setAmt(e.target.value)} /></div>
               <div><Label>Date</Label><Input type="date" className="w-40" value={date} onChange={(e) => setDate(e.target.value)} /></div>
@@ -338,16 +359,16 @@ function DebtCard({ d, i, open, plan, total, onToggle, onEdit, onDelete, onPay, 
               ))}
               <Button variant="outline" size="xs" className="text-emerald-400" onClick={() => setAmt(d.balance.toFixed(2))}>Full balance</Button>
             </div>
-            <p className="mt-2.5 text-[11px] text-muted-foreground">Submitting reduces the balance and logs it to payment history + transactions.</p>
+            <p className="mt-2.5 text-[0.6875rem] text-muted-foreground">Submitting reduces the balance and logs it to payment history + transactions.</p>
           </div>
           <div>
-            <div className="mb-2.5 text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">
+            <div className="mb-2.5 text-[0.65625rem] font-medium uppercase tracking-wider text-muted-foreground">
               Payment history {pays.length ? `· ${pays.length} · ${fmt(paidTotal)} total` : ''}
             </div>
             {pays.length ? (
               <div className="max-h-48 divide-y divide-border/60 overflow-y-auto pr-1">
                 {pays.map((p, pi) => (
-                  <div key={pi} className="flex items-center gap-3 py-2 text-[13px]">
+                  <div key={pi} className="flex items-center gap-3 py-2 text-[0.8125rem]">
                     <span className="w-14 shrink-0 text-xs text-muted-foreground">{prettyDate(p.date)}</span>
                     <span className="w-20 shrink-0 font-semibold text-emerald-400">{fmt(p.amount)}</span>
                     <span className="flex-1 truncate text-xs text-muted-foreground">{p.note || ''}</span>
@@ -472,9 +493,9 @@ function ConsolidationCard() {
     <Card className={open ? 'p-5' : 'px-5 py-3.5'}>
       <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2.5 text-left">
         <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
-        <span className="text-[13px] font-semibold">Consolidation Loan Calculator</span>
-        {!open && <span className="hidden text-[11px] text-muted-foreground sm:inline">would a loan help? enter amount, APR & payment per $1k to find out</span>}
-        <span className="ml-auto shrink-0 text-[11px] font-medium text-primary">{open ? 'Collapse' : 'Open'}</span>
+        <span className="text-[0.8125rem] font-semibold">Consolidation Loan Calculator</span>
+        {!open && <span className="hidden text-[0.6875rem] text-muted-foreground sm:inline">would a loan help? enter amount, APR & payment per $1k to find out</span>}
+        <span className="ml-auto shrink-0 text-[0.6875rem] font-medium text-primary">{open ? 'Collapse' : 'Open'}</span>
       </button>
       {open && (
         <div className="mt-4 fade-in">
@@ -488,18 +509,18 @@ function ConsolidationCard() {
               </Select>
             </div>
             <div className="rounded-lg border bg-secondary/40 px-3.5 py-2">
-              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Est. payment per $1k</div>
-              <div className="text-base font-bold">${per1k.toFixed(2)}<span className="text-[11px] font-normal text-muted-foreground">/mo</span></div>
+              <div className="text-[0.65625rem] uppercase tracking-wider text-muted-foreground">Est. payment per $1k</div>
+              <div className="text-base font-bold">${per1k.toFixed(2)}<span className="text-[0.6875rem] font-normal text-muted-foreground">/mo</span></div>
             </div>
             <div className="rounded-lg border border-sky-400/25 bg-sky-400/[0.07] px-3.5 py-2">
-              <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground">Your monthly payment</div>
-              <div className="text-base font-bold text-sky-300">{fmt(loanPay)}<span className="text-[11px] font-normal text-muted-foreground">/mo</span></div>
-              <div className="text-[10px] text-muted-foreground">{fmt0(amount)} × ${per1k.toFixed(2)} per $1k</div>
+              <div className="text-[0.65625rem] uppercase tracking-wider text-muted-foreground">Your monthly payment</div>
+              <div className="text-base font-bold text-sky-300">{fmt(loanPay)}<span className="text-[0.6875rem] font-normal text-muted-foreground">/mo</span></div>
+              <div className="text-[0.625rem] text-muted-foreground">{fmt0(amount)} × ${per1k.toFixed(2)} per $1k</div>
             </div>
           </div>
 
           {/* recommendation */}
-          <div className="mb-4 rounded-lg border border-primary/25 bg-primary/5 px-3.5 py-3 text-[12.5px] leading-relaxed">
+          <div className="mb-4 rounded-lg border border-primary/25 bg-primary/5 px-3.5 py-3 text-[0.78125rem] leading-relaxed">
             <div className="mb-2.5 flex flex-wrap items-center gap-2.5">
               <span className="font-semibold"><Lightbulb className="mr-1 inline h-4 w-4 align-[-3px] text-amber-300" />What matters most to you?</span>
               <Segmented value={goal} onChange={(v) => { setGoal(v); setSel(null) }} options={[['cash', 'Free up monthly cash'], ['interest', 'Save the most interest']]} />
@@ -524,7 +545,7 @@ function ConsolidationCard() {
 
           {/* debt picker */}
           <div className="mb-4">
-            <div className="mb-2 flex flex-wrap items-baseline gap-x-2 text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">
+            <div className="mb-2 flex flex-wrap items-baseline gap-x-2 text-[0.65625rem] font-medium uppercase tracking-wider text-muted-foreground">
               <span>Which debts would the loan pay off?</span>
               <span className="normal-case tracking-normal opacity-80">loan costs ${per1k.toFixed(2)} per $1k — anything you pay more than that on frees up cash</span>
             </div>
@@ -535,23 +556,23 @@ function ConsolidationCard() {
                 const r = relief(d)
                 const promo = parseAPR(d.apr) === 0
                 return (
-                  <label key={d.name} className={`flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 text-[13px] transition ${on ? 'border-sky-400/40 bg-sky-400/[0.06]' : 'bg-secondary/30 hover:bg-secondary/60'}`}>
+                  <label key={d.name} className={`flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 text-[0.8125rem] transition ${on ? 'border-sky-400/40 bg-sky-400/[0.06]' : 'bg-secondary/30 hover:bg-secondary/60'}`}>
                     <input type="checkbox" className="h-4 w-4 accent-sky-400" checked={on} onChange={() => toggle(d.name)} />
                     <div className="min-w-0 flex-1">
                       <div className="truncate">{d.name}</div>
-                      <div className="text-[10.5px] text-muted-foreground">
+                      <div className="text-[0.65625rem] text-muted-foreground">
                         pays ${(d.min / d.balance * 1000).toFixed(2)}/$1k ·{' '}
                         <span className={r > 0 ? 'text-emerald-400' : 'text-red-400'}>{r > 0 ? '+' : '−'}{fmt0(Math.abs(r * d.balance / 1000))}/mo</span>
                       </div>
                     </div>
                     {promo ? <Badge variant="warning">0% promo</Badge> : rec && <Badge variant="success">suggested</Badge>}
-                    <span className="shrink-0 text-[11px] text-muted-foreground">APR {d.apr}</span>
+                    <span className="shrink-0 text-[0.6875rem] text-muted-foreground">APR {d.apr}</span>
                     <span className="w-20 shrink-0 text-right font-semibold">{fmt0(d.balance)}</span>
                   </label>
                 )
               })}
             </div>
-            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[11.5px] text-muted-foreground">
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[0.71875rem] text-muted-foreground">
               <span>Selected: <b className="text-foreground">{fmt0(selBal)}</b> across {selDebts.length} debt{selDebts.length === 1 ? '' : 's'} · minimums <b className="text-amber-400">{fmt(selMins)}/mo</b></span>
               {selDebts.length > 0 && (leftover >= 0
                 ? <span>Loan covers it with <b className="text-emerald-400">{fmt0(leftover)}</b> left over</span>
@@ -575,7 +596,7 @@ function ConsolidationCard() {
               {chartData.length > 0 && (
                 <div className="mb-4 grid gap-4 lg:grid-cols-2">
                   <div>
-                    <div className="mb-2 text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">Monthly payment over time</div>
+                    <div className="mb-2 text-[0.65625rem] font-medium uppercase tracking-wider text-muted-foreground">Monthly payment over time</div>
                     <div className="h-48">
                       <ResponsiveContainer>
                         <LineChart data={chartData}>
@@ -587,13 +608,13 @@ function ConsolidationCard() {
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
-                    <div className="mt-1.5 flex gap-4 text-[10.5px] text-muted-foreground">
+                    <div className="mt-1.5 flex gap-4 text-[0.65625rem] text-muted-foreground">
                       <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-red-400" />Now: keep paying minimums</span>
                       <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-sky-400" />With the loan ({fmt0(loanPay)}/mo)</span>
                     </div>
                   </div>
                   <div>
-                    <div className="mb-2 text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">Interest saved as time goes on</div>
+                    <div className="mb-2 text-[0.65625rem] font-medium uppercase tracking-wider text-muted-foreground">Interest saved as time goes on</div>
                     <div className="h-48">
                       <ResponsiveContainer>
                         <LineChart data={chartData}>
@@ -606,7 +627,7 @@ function ConsolidationCard() {
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
-                    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[10.5px] text-muted-foreground">
+                    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[0.65625rem] text-muted-foreground">
                       <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-400" />Saved (the gap)</span>
                       <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-red-400" />Interest piling up on minimums</span>
                       <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-sky-400" />Interest on the loan</span>
@@ -615,7 +636,7 @@ function ConsolidationCard() {
                 </div>
               )}
               {after && before.done && (
-                <div className="rounded-lg border bg-secondary/40 px-3.5 py-3 text-[12.5px] leading-relaxed text-foreground/85">
+                <div className="rounded-lg border bg-secondary/40 px-3.5 py-3 text-[0.78125rem] leading-relaxed text-foreground/85">
                   <b>Your whole debt picture</b> (keeping your {fmt0(state.sim.budget)}/mo plan):{' '}
                   debt-free <b className={after.done && after.end <= before.end ? 'text-emerald-400' : 'text-amber-400'}>{after.done ? monthLabel(after.end) : 'never'}</b> with the loan
                   {' '}vs <b>{monthLabel(before.end)}</b> without ·{' '}
@@ -623,7 +644,7 @@ function ConsolidationCard() {
                   <span className="text-muted-foreground"> You'd still owe the same total — consolidation changes the rate and payment, not the amount.</span>
                 </div>
               )}
-              <p className="mt-3 text-[11px] text-muted-foreground">Pretend mode — nothing changes your real debts. This is an estimate, not financial advice; check the loan's actual terms and fees before signing anything.</p>
+              <p className="mt-3 text-[0.6875rem] text-muted-foreground">Pretend mode — nothing changes your real debts. This is an estimate, not financial advice; check the loan's actual terms and fees before signing anything.</p>
             </>
           )}
         </div>
@@ -639,9 +660,9 @@ function DebtDialog({ idx, onClose }) {
   const [f, setF] = useState({ ...d })
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
   const save = () => {
-    if (!String(f.name).trim()) return toast('Enter a name')
+    if (!String(f.name).trim()) return toast('Enter a name', 'error')
     const bal = parseFloat(f.balance)
-    if (isNaN(bal)) return toast('Enter a balance')
+    if (isNaN(bal)) return toast('Enter a balance', 'error')
     update((s) => {
       const debt = {
         name: String(f.name).trim(), balance: bal, apr: f.apr || '—', min: parseFloat(f.min) || 0,

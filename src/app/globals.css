@@ -4,27 +4,32 @@
 
 @layer base {
   :root {
-    --background: 240 6% 4%;
-    --foreground: 0 0% 95%;
-    --card: 240 6% 7%;
-    --card-foreground: 0 0% 95%;
-    --primary: 160 84% 39%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 5% 12%;
-    --secondary-foreground: 0 0% 90%;
-    --muted: 240 5% 12%;
-    --muted-foreground: 240 4% 56%;
-    --accent: 240 5% 14%;
-    --accent-foreground: 0 0% 95%;
-    --destructive: 0 72% 51%;
+    --background: 224 64% 4%;
+    --foreground: 213 30% 96%;
+    --card: 221 55% 8%;
+    --card-foreground: 213 30% 96%;
+    --primary: 213 90% 66%;
+    --primary-foreground: 224 64% 6%;
+    --secondary: 220 45% 13%;
+    --secondary-foreground: 213 25% 88%;
+    --muted: 220 45% 13%;
+    --muted-foreground: 217 22% 58%;
+    --accent: 219 45% 16%;
+    --accent-foreground: 213 30% 96%;
+    --destructive: 0 78% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 6% 14%;
-    --input: 240 6% 16%;
-    --ring: 160 84% 39%;
-    --radius: 0.625rem;
+    --border: 220 42% 14%;
+    --input: 220 40% 18%;
+    --ring: 213 90% 66%;
+    --radius: 1rem;
   }
   * { @apply border-border; }
   body { @apply bg-background text-foreground font-sans antialiased; }
+  /* Phones read too small at the desktop-tuned sizes; scale the whole UI up fluidly
+     with the viewport (Copilot-style chunky text) instead of one fixed bump. */
+  @media (max-width: 767px) {
+    html { font-size: clamp(17px, 4.9vw, 21px); }
+  }
   /* iOS Safari zooms the page when a focused input's font-size is under 16px */
   @media (max-width: 639px) {
     input, select, textarea { font-size: 16px; }
@@ -36,4 +41,6 @@
   @keyframes fadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
   .track { @apply h-[0.45rem] rounded-full bg-secondary overflow-hidden; }
   .track > div { @apply h-full rounded-full transition-all; }
+  .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
 }

@@ -33,7 +33,7 @@ export default function Simulator() {
 
   const pull = (v) => {
     if (!v) return
-    if (state.mSim.items.some((x) => x.src === v)) return toast('Already added')
+    if (state.mSim.items.some((x) => x.src === v)) return toast('Already added', 'error')
     let it = null
     if (v === 'debt-all') it = { desc: 'All debt minimums', amount: mins }
     else if (v === 'rec-all') it = { desc: 'All recurring bills', amount: recT }
@@ -55,15 +55,15 @@ export default function Simulator() {
   }
 
   const addCustom = () => {
-    if (!name.trim()) return toast('Name the expense')
+    if (!name.trim()) return toast('Name the expense', 'error')
     const a = parseFloat(amt)
-    if (isNaN(a)) return toast('Enter an amount')
+    if (isNaN(a)) return toast('Enter an amount', 'error')
     update((s) => { s.mSim.items.push({ id: uid('ms'), src: 'custom', desc: name.trim(), amount: Math.max(0, a) }) })
     setName(''); setAmt('')
   }
 
   return (
-    <div className="fade-in space-y-4">
+    <div className="fade-in space-y-6">
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <SectionHead title="Plan a month" desc="Type an income, stack up expenses, see what's left. Pretend mode — nothing here touches your real data." />
@@ -71,21 +71,21 @@ export default function Simulator() {
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
           <div className="rounded-xl border border-emerald-400/15 bg-emerald-400/[0.06] px-2 py-3 text-center sm:p-4">
-            <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground sm:text-[11px]">Income</div>
+            <div className="mb-1 text-[0.625rem] uppercase tracking-wider text-muted-foreground sm:text-[0.6875rem]">Income</div>
             <div className="text-base font-bold tracking-tight text-emerald-400 sm:text-xl md:text-2xl">{fmt0(income)}</div>
           </div>
           <div className="rounded-xl border border-red-400/15 bg-red-400/[0.05] px-2 py-3 text-center sm:p-4">
-            <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground sm:text-[11px]">Expenses</div>
+            <div className="mb-1 text-[0.625rem] uppercase tracking-wider text-muted-foreground sm:text-[0.6875rem]">Expenses</div>
             <div className="text-base font-bold tracking-tight text-red-400 sm:text-xl md:text-2xl">{fmt0(totalExp)}</div>
           </div>
           <div className={`rounded-xl border px-2 py-3 text-center sm:p-4 ${net >= 0 ? 'border-emerald-400/25 bg-emerald-400/[0.06]' : 'border-red-400/30 bg-red-400/[0.08]'}`}>
-            <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground sm:text-[11px]">{net >= 0 ? 'Left Over' : 'In The Negative'}</div>
+            <div className="mb-1 text-[0.625rem] uppercase tracking-wider text-muted-foreground sm:text-[0.6875rem]">{net >= 0 ? 'Left Over' : 'In The Negative'}</div>
             <div className={`text-base font-bold tracking-tight sm:text-xl md:text-2xl ${net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{net >= 0 ? '' : '−'}{fmt0(Math.abs(net))}</div>
           </div>
         </div>
         {income > 0 && (
           <div className="mt-3">
-            <div className="mb-1.5 flex justify-between text-[11px] text-muted-foreground">
+            <div className="mb-1.5 flex justify-between text-[0.6875rem] text-muted-foreground">
               <span>Spent</span><span className={pct >= 100 ? 'font-semibold text-red-400' : ''}>{pct}% of income</span>
             </div>
             <div className="track !h-2.5"><div style={{ width: `${pct}%`, background: totalExp > income ? '#f87171' : pct > 80 ? '#fbbf24' : '#34d399' }} /></div>
@@ -132,13 +132,13 @@ export default function Simulator() {
       </div>
 
       <Card className="overflow-hidden">
-        <div className="flex items-center border-b bg-secondary/40 px-4 py-2.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="flex items-center border-b bg-secondary/40 px-4 py-2.5 text-[0.65625rem] font-semibold uppercase tracking-wider text-muted-foreground">
           <span>Expense list</span><span className="ml-auto">{ms.items.length} item{ms.items.length === 1 ? '' : 's'} · {fmt0(totalExp)}</span>
         </div>
         <div className="divide-y divide-border/60">
           {ms.items.length ? ms.items.map((x) => (
             <div key={x.id} className="flex items-center gap-3 px-4 py-2">
-              <span className="flex-1 truncate text-[13px]">{x.desc}</span>
+              <span className="flex-1 truncate text-[0.8125rem]">{x.desc}</span>
               {x.src !== 'custom' && <Badge>pulled</Badge>}
               <Input type="number" step="5" min="0" className="h-8 w-28 text-right font-semibold" value={x.amount}
                 onChange={(e) => update((s) => { const it = s.mSim.items.find((i) => i.id === x.id); if (it) it.amount = Math.max(0, parseFloat(e.target.value) || 0) })} />
@@ -146,7 +146,7 @@ export default function Simulator() {
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
-          )) : <div className="p-10 text-center text-[13px] text-muted-foreground">No expenses yet — pull some in above or type your own.</div>}
+          )) : <div className="p-10 text-center text-[0.8125rem] text-muted-foreground">No expenses yet — pull some in above or type your own.</div>}
         </div>
       </Card>
     </div>
