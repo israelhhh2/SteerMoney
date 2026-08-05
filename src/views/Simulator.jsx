@@ -138,7 +138,7 @@ export default function Simulator() {
         <div className="divide-y divide-border/60">
           {ms.items.length ? ms.items.map((x) => (
             <div key={x.id} className="flex items-center gap-3 px-4 py-2">
-              <span className="flex-1 truncate text-[0.8125rem]">{x.desc}</span>
+              <span className="min-w-0 flex-1 truncate text-[0.8125rem]">{x.desc}</span>
               {x.src !== 'custom' && <Badge>pulled</Badge>}
               <Input type="number" step="5" min="0" className="h-8 w-28 text-right font-semibold" value={x.amount}
                 onChange={(e) => update((s) => { const it = s.mSim.items.find((i) => i.id === x.id); if (it) it.amount = Math.max(0, parseFloat(e.target.value) || 0) })} />

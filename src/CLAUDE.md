@@ -77,6 +77,32 @@ before flipping the switch.
 
 ## Session log (newest first)
 
+### 2026-08-04
+- Fixed mobile horizontal-overflow bug (viewport ~390-430px): several flex
+  rows (label + right-aligned value, or badge lists) had no `min-w-0` on the
+  shrinkable child, so long labels forced the row wider than the viewport and
+  the whole `<body>` panned right instead of the label truncating in place.
+  Added `overflow-x: hidden` to `html, body` in `globals.css` as a backstop,
+  then added `min-w-0` (+ `flex-1`) to the label/name span in every affected
+  row: Dashboard.jsx (Due in 14 days, Credit Cards, Budgets rows, category
+  legend, per-month cash-flow row), Debts.jsx (DebtCard title row — this was
+  also what freed the APR/min/due-day/% pill row to wrap correctly and
+  stopped the balance amount from getting pushed off-screen — plus the
+  minimums breakdown, payoff order, and payment-history rows), Budgets.jsx
+  (list row's name column changed from a fixed `w-32` to `min-w-0 flex-1`
+  on mobile, `sm:w-44 sm:flex-none` back to the original fixed width at
+  desktop widths — the fixed width alone was wider than an iPhone viewport
+  once the mobile font-size clamp in globals.css scales rem-based widths up),
+  Transactions.jsx, Simulator.jsx, Charts.jsx, Admin.jsx. Also removed
+  `whitespace-nowrap` from `MoneyTile` (shared.jsx, used by Dashboard's Cash
+  Flow tiles) and added `min-w-0` to its button, since it sat in a
+  `grid-cols-3` row where nowrap text could exceed the grid track. Goals.jsx,
+  Recurring.jsx, and Accounts.jsx already used the correct `min-w-0 flex-1`
+  pattern — no changes needed there.
+- **Left off:** no dev server was started per instructions; changes are
+  untested in a real browser. Next session should sanity-check on an actual
+  ~390px viewport (or browser devtools) before considering this closed.
+
 ### 2026-08-01
 - Created this file. Established Fable-PM + Sonnet-workers protocol.
 - Sonnet Explore agent surveyed full codebase; confirmed Plaid integration is

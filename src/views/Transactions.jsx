@@ -75,7 +75,7 @@ export default function Transactions({ preset, clearPreset }) {
           {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           <option value="debt">Debt Payment</option><option value="income">Income</option><option value="transfer">Transfer</option>
         </Select>
-        <div className="ml-auto flex gap-2 text-xs">
+        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
           <Badge>In <b className="text-emerald-400">{fmt0(inc)}</b></Badge>
           <Badge>Out <b className="text-foreground">{fmt0(exp)}</b></Badge>
           <Badge>Net <b className={inc - exp >= 0 ? 'text-emerald-400' : 'text-red-400'}>{fmt0(inc - exp)}</b></Badge>
@@ -91,7 +91,7 @@ export default function Transactions({ preset, clearPreset }) {
             {byDate[dt].map((t) => (
               <div key={t.id} className="group flex items-center gap-3 px-4 py-2 transition-colors hover:bg-secondary/30">
                 <span className="flex w-6 shrink-0 justify-center"><CatIcon cat={t.cat} /></span>
-                <span className="flex-1 truncate text-[0.8125rem] text-foreground/90" title={t.desc}>{t.desc}</span>
+                <span className="min-w-0 flex-1 truncate text-[0.8125rem] text-foreground/90" title={t.desc}>{t.desc}</span>
                 <span className="hidden sm:inline-flex"><CatChip cat={t.cat} /></span>
                 <span className={`w-20 shrink-0 text-right text-[0.8125rem] font-semibold sm:w-24 ${t.type === 'income' ? 'text-emerald-400' : t.cat === 'transfer' ? 'text-muted-foreground' : ''}`}>
                   {t.type === 'income' ? '+' : '−'}{fmt(t.amount)}

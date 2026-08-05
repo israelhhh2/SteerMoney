@@ -210,14 +210,14 @@ export default function Dashboard() {
                 <span className={`w-14 shrink-0 whitespace-nowrap text-left font-medium sm:w-24 ${on ? 'text-emerald-300' : ''}`}>
                   {ymLabel(m)}{m === nowYm && <span className="hidden text-[0.625rem] text-muted-foreground sm:inline"> · so far</span>}
                 </span>
-                <span className="flex-1 whitespace-nowrap text-right text-emerald-400">+{fmt0(inc)}</span>
-                <span className="flex-1 whitespace-nowrap text-right text-red-400">−{fmt0(ex)}</span>
+                <span className="min-w-0 flex-1 whitespace-nowrap text-right text-emerald-400">+{fmt0(inc)}</span>
+                <span className="min-w-0 flex-1 whitespace-nowrap text-right text-red-400">−{fmt0(ex)}</span>
                 <span className={`w-16 shrink-0 whitespace-nowrap text-right font-bold sm:w-28 ${net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{net >= 0 ? '+' : '−'}{fmt0(Math.abs(net))}</span>
               </button>
             )
           })}
           <div className="flex items-center gap-2 pt-2 text-[0.625rem] text-muted-foreground sm:gap-3 sm:text-[0.6875rem]">
-            <span className="w-14 shrink-0 sm:w-24">tap a month ↑</span><span className="flex-1 whitespace-nowrap text-right">money in</span><span className="flex-1 whitespace-nowrap text-right">money out</span><span className="w-16 shrink-0 text-right sm:w-28">left over</span>
+            <span className="w-14 shrink-0 sm:w-24">tap a month ↑</span><span className="min-w-0 flex-1 whitespace-nowrap text-right">money in</span><span className="min-w-0 flex-1 whitespace-nowrap text-right">money out</span><span className="w-16 shrink-0 text-right sm:w-28">left over</span>
           </div>
         </div>
       </Card>
@@ -341,7 +341,7 @@ export default function Dashboard() {
               {donut.map((d) => (
                 <span key={d.name} className="flex min-w-0 items-center gap-1.5">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: d.color }} />
-                  <span className="truncate text-muted-foreground">{d.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">{d.name}</span>
                 </span>
               ))}
             </div>
@@ -362,7 +362,7 @@ export default function Dashboard() {
                 <span className={`w-11 shrink-0 rounded-md px-1 py-1 text-center text-[0.625rem] font-bold ${u.diff <= 3 ? 'bg-red-400/10 text-red-400' : 'bg-secondary text-muted-foreground'}`}>
                   {u.diff === 0 ? 'today' : `in ${u.diff}d`}
                 </span>
-                <span className="flex-1 truncate text-foreground/90">{u.name}</span>
+                <span className="min-w-0 flex-1 truncate text-foreground/90">{u.name}</span>
                 <Badge variant={u.tag === 'debt' ? 'destructive' : 'info'}>{u.tag}</Badge>
                 <span className="shrink-0 text-xs font-semibold">{u.amt ? fmt(u.amt) : ''}</span>
               </div>
@@ -379,8 +379,8 @@ export default function Dashboard() {
               const u = Math.min(100, Math.round((d.balance / d.limit) * 100))
               return (
                 <div key={d.name} className="py-2">
-                  <div className="mb-1.5 flex justify-between text-xs">
-                    <span className="truncate text-foreground/90">{d.name}</span>
+                  <div className="mb-1.5 flex justify-between gap-2 text-xs">
+                    <span className="min-w-0 flex-1 truncate text-foreground/90">{d.name}</span>
                     <span className="shrink-0 text-muted-foreground">{fmt0(d.balance)} <span className="opacity-60">/ {fmt0(d.limit)}</span></span>
                   </div>
                   <Bar pct={u} color={u > 80 ? '#f87171' : u > 30 ? '#fbbf24' : '#34d399'} />
@@ -398,8 +398,8 @@ export default function Dashboard() {
               const over = b.limit > 0 && sp > b.limit
               return (
                 <div key={b.id} className="py-2">
-                  <div className="mb-1.5 flex justify-between text-xs">
-                    <span className="flex items-center gap-1.5 truncate text-foreground/90"><CatIcon cat={b.id} className="h-3.5 w-3.5 shrink-0" />{b.name}</span>
+                  <div className="mb-1.5 flex justify-between gap-2 text-xs">
+                    <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-foreground/90"><CatIcon cat={b.id} className="h-3.5 w-3.5 shrink-0" />{b.name}</span>
                     <span className={`shrink-0 ${over ? 'font-semibold text-red-400' : 'text-muted-foreground'}`}>{fmt0(sp)} <span className="opacity-60">/ {b.limit ? fmt0(b.limit) : '—'}</span></span>
                   </div>
                   <Bar pct={pct} color={over ? '#f87171' : catColor(b.id)} />

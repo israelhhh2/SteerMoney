@@ -156,10 +156,10 @@ export function MoneyTile({ label, hint, value, tone, active, onClick }) {
   return (
     <button
       onClick={onClick}
-      className={`rounded-xl border px-2 py-3 text-center transition sm:p-4 ${base} ${active ? activeCls : ''} ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
+      className={`min-w-0 rounded-xl border px-2 py-3 text-center transition sm:p-4 ${base} ${active ? activeCls : ''} ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
     >
       <div className="mb-1 text-[0.625rem] font-bold uppercase tracking-wider text-muted-foreground sm:text-[0.6875rem]">{label}</div>
-      <div className={`whitespace-nowrap text-base font-extrabold tracking-tight sm:text-xl md:text-2xl ${isNeg ? 'text-red-400' : 'text-emerald-400'}`}>{value}</div>
+      <div className={`text-base font-extrabold tracking-tight sm:text-xl md:text-2xl ${isNeg ? 'text-red-400' : 'text-emerald-400'}`}>{value}</div>
       {hint ? <div className={`mt-1 text-[0.625rem] font-semibold ${active ? (isNeg ? 'text-red-300' : 'text-emerald-300') : 'text-muted-foreground'}`}>{hint}</div> : null}
     </button>
   )

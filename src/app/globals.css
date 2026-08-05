@@ -24,6 +24,10 @@
     --radius: 1rem;
   }
   * { @apply border-border; }
+  /* Safety net: a stray overflowing row should scroll within itself (or get clipped),
+     never pan the whole page sideways. Individual rows still get proper flex/truncate
+     fixes — this is just the backstop. */
+  html, body { @apply overflow-x-hidden; }
   body { @apply bg-background text-foreground font-sans antialiased; }
   /* Phones read too small at the desktop-tuned sizes; scale the whole UI up fluidly
      with the viewport (Copilot-style chunky text) instead of one fixed bump. */

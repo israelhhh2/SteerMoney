@@ -114,7 +114,7 @@ export default function Debts() {
           <div className="divide-y divide-border/60">
             {state.debts.slice().sort((a, b) => b.min - a.min).map((d) => (
               <div key={d.name} className="flex items-center gap-3 py-1.5 text-[0.8125rem]">
-                <span className="flex-1 truncate text-foreground/90">{d.name}</span>
+                <span className="min-w-0 flex-1 truncate text-foreground/90">{d.name}</span>
                 {d.balance <= 0 && <Badge variant="success">paid off</Badge>}
                 <span className="hidden shrink-0 text-[0.6875rem] text-muted-foreground sm:inline">bal {fmt0(d.balance)}</span>
                 <span className="w-20 shrink-0 text-right font-semibold">{fmt(d.min)}</span>
@@ -175,7 +175,7 @@ export default function Debts() {
               {payoffList.length ? payoffList.map(([n, d], idx) => (
                 <div key={n} className="flex items-center gap-2.5 py-1.5 text-[0.8125rem]">
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-secondary text-[0.65625rem] font-bold text-muted-foreground">{idx + 1}</span>
-                  <span className="flex-1 truncate text-foreground/90">{n}</span>
+                  <span className="min-w-0 flex-1 truncate text-foreground/90">{n}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">{monthLabel(d)}</span>
                 </div>
               )) : <p className="text-[0.8125rem] text-muted-foreground">Nothing pays off within 50 years at this payment.</p>}
@@ -297,7 +297,7 @@ function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, on
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 text-[0.9375rem] font-semibold tracking-tight">
               <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
-              <span className="truncate">{d.name}</span>
+              <span className="min-w-0 flex-1 truncate">{d.name}</span>
               {bankMatch ? (
                 <Badge variant="success" className="shrink-0"><Landmark className="h-3 w-3" />Bank connected</Badge>
               ) : (
@@ -371,7 +371,7 @@ function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, on
                   <div key={pi} className="flex items-center gap-3 py-2 text-[0.8125rem]">
                     <span className="w-14 shrink-0 text-xs text-muted-foreground">{prettyDate(p.date)}</span>
                     <span className="w-20 shrink-0 font-semibold text-emerald-400">{fmt(p.amount)}</span>
-                    <span className="flex-1 truncate text-xs text-muted-foreground">{p.note || ''}</span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{p.note || ''}</span>
                     <button onClick={() => onDeletePayment(pi)} className="shrink-0 text-muted-foreground hover:text-red-400" title="Delete payment & restore balance"><X className="h-3.5 w-3.5" /></button>
                   </div>
                 ))}

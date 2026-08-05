@@ -118,7 +118,7 @@ export default function Charts() {
             {dd.map((d, i) => (
               <span key={d.name} className="flex min-w-0 items-center gap-1.5">
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: DCOLORS[i % DCOLORS.length] }} />
-                <span className="truncate text-muted-foreground">{d.name}</span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">{d.name}</span>
               </span>
             ))}
           </div>

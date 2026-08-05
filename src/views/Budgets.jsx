@@ -114,17 +114,17 @@ export default function Budgets({ onViewTx }) {
               const barPct = b.limit ? Math.min(100, Math.round((sp / b.limit) * 100)) : Math.round((sp / maxSp) * 100)
               const n = monthTx(state, ym).filter((t) => t.type === 'expense' && t.cat === b.id).length
               return (
-                <div key={b.id} className="group flex cursor-pointer items-center gap-3 px-4 py-3 transition hover:bg-secondary/40" onClick={() => onViewTx && onViewTx(b.id)}>
-                  <span className="flex w-7 shrink-0 justify-center"><CatIcon cat={b.id} className="h-5 w-5" /></span>
-                  <div className="w-32 min-w-0 shrink-0 sm:w-44">
+                <div key={b.id} className="group flex cursor-pointer items-center gap-2 px-3 py-3 transition hover:bg-secondary/40 sm:gap-3 sm:px-4" onClick={() => onViewTx && onViewTx(b.id)}>
+                  <span className="flex w-6 shrink-0 justify-center sm:w-7"><CatIcon cat={b.id} className="h-5 w-5" /></span>
+                  <div className="min-w-0 flex-1 sm:w-44 sm:flex-none">
                     <div className="truncate text-[0.84375rem] font-bold">{b.name}</div>
-                    <div className="text-[0.65625rem] font-semibold text-muted-foreground">
+                    <div className="truncate text-[0.65625rem] font-semibold text-muted-foreground">
                       {n} purchase{n === 1 ? '' : 's'}{over && <> · <span className="font-bold text-red-400">{fmt0(sp - b.limit)} over</span></>}
                     </div>
                   </div>
-                  <span className={`w-16 shrink-0 text-right text-[0.8125rem] font-extrabold ${over ? 'text-red-400' : ''}`}>{fmt0(sp)}</span>
+                  <span className={`w-14 shrink-0 text-right text-[0.8125rem] font-extrabold sm:w-16 ${over ? 'text-red-400' : ''}`}>{fmt0(sp)}</span>
                   <div className="hidden flex-1 sm:block"><Bar pct={barPct} color={budgetTone(sp, b.limit)} /></div>
-                  <span className="w-16 shrink-0 text-right text-[0.8125rem] font-semibold text-muted-foreground">{b.limit ? fmt0(b.limit) : '—'}</span>
+                  <span className="w-14 shrink-0 text-right text-[0.8125rem] font-semibold text-muted-foreground sm:w-16">{b.limit ? fmt0(b.limit) : '—'}</span>
                   <button
                     className="shrink-0 text-muted-foreground transition hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100"
                     title="Edit limit"

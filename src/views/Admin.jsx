@@ -155,8 +155,8 @@ export default function Admin() {
                     <div className="mb-1.5 text-[0.65625rem] font-semibold uppercase tracking-wider text-muted-foreground">Budgets</div>
                     <div className="divide-y divide-border/40">
                       {c.budgets.length ? c.budgets.map((b, i) => (
-                        <div key={i} className="flex justify-between py-1 text-[0.75rem]">
-                          <span className="truncate text-foreground/85">{b.name}</span>
+                        <div key={i} className="flex justify-between gap-2 py-1 text-[0.75rem]">
+                          <span className="min-w-0 flex-1 truncate text-foreground/85">{b.name}</span>
                           <span className="shrink-0 font-medium">{fmt0(Number(b.monthly_limit))}<span className="text-muted-foreground">/mo</span></span>
                         </div>
                       )) : <p className="py-1 text-[0.6875rem] text-muted-foreground">None</p>}
@@ -166,8 +166,8 @@ export default function Admin() {
                     <div className="mb-1.5 text-[0.65625rem] font-semibold uppercase tracking-wider text-muted-foreground">Debts</div>
                     <div className="divide-y divide-border/40">
                       {c.debts.length ? c.debts.slice().sort((a, b) => b.balance - a.balance).map((d, i) => (
-                        <div key={i} className="flex justify-between py-1 text-[0.75rem]">
-                          <span className="truncate text-foreground/85">{d.name}</span>
+                        <div key={i} className="flex justify-between gap-2 py-1 text-[0.75rem]">
+                          <span className="min-w-0 flex-1 truncate text-foreground/85">{d.name}</span>
                           <span className="shrink-0 font-medium text-red-400">{fmt0(Number(d.balance))}</span>
                         </div>
                       )) : <p className="py-1 text-[0.6875rem] text-muted-foreground">None</p>}
