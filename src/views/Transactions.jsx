@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Pencil, Plus, Search, Upload, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CreditCard, Pencil, Plus, Search, Upload, X } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,7 @@ import { useToast } from '@/components/toast'
 import { fmt, fmt0, today, ymLabel, prettyDate, uid } from '@/lib/utils'
 import { parseWescomCSV, guessCat } from '@/lib/wescom'
 
-export default function Transactions({ preset, clearPreset }) {
+export default function Transactions({ preset, clearPreset, accountFilter, clearAccountFilter }) {
   const { state, update, catInfo } = useApp()
   const toast = useToast()
   const fileRef = useRef(null)
@@ -22,6 +22,27 @@ export default function Transactions({ preset, clearPreset }) {
   const [cat, setCat] = useState('all')
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
   const [importRows, setImportRows] = useState(null) // null closed · [] -> preview dialog
+  const [filterAccount, setFilterAccount] = useState(null) // {mask, institution} resolved for the chip label
+
+  // Resolve a friendly label (mask/institution) for the ?account= filter chip.
+  // The identifier itself is the Plaid account_id — matched against
+  // transactions.accountId (populated by app/api/plaid/sync's upsert).
+  useEffect(() => {
+    if (!accountFilter) { setFilterAccount(null); return }
+    let on = true
+    fetch('/api/plaid/items')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!on) return
+        for (const it of d.items || []) {
+          const a = (it.accounts || []).find((x) => x.account_id === accountFilter)
+          if (a) { setFilterAccount({ mask: a.mask, name: a.name, institution: it.institution }); return }
+        }
+        setFilterAccount({})
+      })
+      .catch(() => { if (on) setFilterAccount({}) })
+    return () => { on = false }
+  }, [accountFilter])
 
   const importFile = (file) => {
     if (!file) return
@@ -49,6 +70,7 @@ export default function Transactions({ preset, clearPreset }) {
   }
 
   let list = monthTx(state, ym)
+  if (accountFilter) list = list.filter((t) => t.accountId === accountFilter)
   if (cat !== 'all') list = list.filter((t) => t.cat === cat)
   if (q) list = list.filter((t) => t.desc.toLowerCase().includes(q.toLowerCase()))
   const inc = list.filter((t) => t.type === 'income' && t.cat !== 'transfer').reduce((s, t) => s + t.amount, 0)
@@ -75,6 +97,13 @@ export default function Transactions({ preset, clearPreset }) {
           {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           <option value="debt">Debt Payment</option><option value="income">Income</option><option value="transfer">Transfer</option>
         </Select>
+        {accountFilter && (
+          <div className="flex shrink-0 items-center gap-1.5 rounded-full border bg-secondary/60 px-2.5 py-1 text-[0.75rem] font-semibold">
+            <CreditCard className="h-3 w-3 shrink-0 text-muted-foreground" />
+            <span className="whitespace-nowrap">{filterAccount?.mask ? `•• ${filterAccount.mask}` : filterAccount?.name || 'Account'}</span>
+            <button onClick={clearAccountFilter} title="Clear account filter" className="text-muted-foreground transition hover:text-foreground"><X className="h-3 w-3" /></button>
+          </div>
+        )}
         <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
           <Badge>In <b className="text-emerald-400">{fmt0(inc)}</b></Badge>
           <Badge>Out <b className="text-foreground">{fmt0(exp)}</b></Badge>
@@ -105,7 +134,7 @@ export default function Transactions({ preset, clearPreset }) {
           </div>
         )) : (
           <div className="p-10 text-center text-[0.8125rem] text-muted-foreground">
-            No transactions in {ymLabel(ym)}{(q || cat !== 'all') && <> matching your filters — <button className="text-primary hover:underline" onClick={() => { setQ(''); setCat('all') }}>clear filters</button></>}.
+            No transactions in {ymLabel(ym)}{(q || cat !== 'all' || accountFilter) && <> matching your filters — <button className="text-primary hover:underline" onClick={() => { setQ(''); setCat('all'); if (accountFilter) clearAccountFilter() }}>clear filters</button></>}.
           </div>
         )}
       </Card>

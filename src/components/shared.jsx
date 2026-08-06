@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { catColor, fmt0 } from '@/lib/utils'
+import { catColor, fmt0, cn } from '@/lib/utils'
 import { useApp } from '@/store'
 
 const CAT_ICONS = {
@@ -106,6 +106,45 @@ export function Money({ value, className = '' }) {
     <span className={`whitespace-nowrap tracking-tight ${className}`}>
       {neg && '-'}<sup className="mr-px text-[0.62em] font-bold opacity-80">$</sup>{clean}
     </span>
+  )
+}
+
+// Deterministic hue from an institution/account name so each card gets a stable,
+// distinct gradient (no real issuer branding data available — this stands in for it).
+export function cardHue(seed) {
+  let h = 0
+  const s = seed || ''
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360
+  return h
+}
+
+// Copilot-style "credit card" visual chip, shared by the Dashboard's Credit Cards
+// list and the Accounts page's account rows/detail sheet.
+// `size`: 'dash' (Dashboard's small name-only chip — exact previous look) ·
+// 'row' (Accounts list rows, default) · 'lg' (Accounts detail sheet, bigger).
+export function CardChip({ institution, name, mask, size = 'row' }) {
+  const hue = cardHue(institution || name || '')
+  const gradient = `linear-gradient(135deg, hsl(${hue} 65% 40%), hsl(${(hue + 40) % 360} 55% 24%))`
+
+  if (size === 'dash') {
+    return (
+      <div className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl px-1.5 shadow-sm" style={{ background: gradient }}>
+        <span className="truncate text-center text-[0.5625rem] font-bold leading-tight text-white/90">{name}</span>
+      </div>
+    )
+  }
+  const big = size === 'lg'
+  return (
+    <div
+      className={cn('flex shrink-0 flex-col justify-between overflow-hidden shadow-md', big ? 'h-32 w-56 rounded-2xl p-4' : 'h-20 w-32 rounded-xl p-2.5')}
+      style={{ background: gradient }}
+    >
+      <div className={cn('truncate font-semibold text-white/80', big ? 'text-xs' : 'text-[0.5625rem]')}>{institution || 'Bank'}</div>
+      <div className="flex items-end justify-between gap-1">
+        <span className={cn('truncate font-bold text-white', big ? 'text-sm' : 'text-[0.625rem]')}>{name}</span>
+        {mask ? <span className={cn('shrink-0 font-semibold text-white/70', big ? 'text-xs' : 'text-[0.5625rem]')}>••{mask}</span> : null}
+      </div>
+    </div>
   )
 }
 

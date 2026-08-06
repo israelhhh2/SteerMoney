@@ -57,10 +57,20 @@ export async function POST() {
           // Plaid convention: a positive amount is money leaving the account.
           type: tx.amount < 0 ? 'income' : 'expense',
           category: guessCategory(tx),
+          // Lets the Accounts detail sheet / Transactions page filter by account.
+          account_id: tx.account_id || null,
         }))
 
       if (upsertRows.length) {
-        const { error } = await supabaseAdmin.from('transactions').upsert(upsertRows, { onConflict: 'user_id,id' })
+        let { error } = await supabaseAdmin.from('transactions').upsert(upsertRows, { onConflict: 'user_id,id' })
+        if (error && /account_id/i.test(error.message || '')) {
+          // `account_id` column not migrated onto public.transactions yet — retry
+          // without it so sync keeps working. Add the column (see supabase/plaid.sql
+          // or `ALTER TABLE transactions ADD COLUMN account_id text;`) to enable
+          // account-filtered transactions.
+          const fallbackRows = upsertRows.map(({ account_id, ...rest }) => rest)
+          ;({ error } = await supabaseAdmin.from('transactions').upsert(fallbackRows, { onConflict: 'user_id,id' }))
+        }
         if (error) throw error
       }
       added += allAdded.filter((t) => !t.pending).length

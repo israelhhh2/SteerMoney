@@ -9,8 +9,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Segmented } from '@/components/ui/segmented'
-import { SectionHead, SectionLabel, Kpi, MoneyTile, CatIcon, Bar, Ring, budgetTone, Money } from '@/components/shared'
+import { SectionHead, SectionLabel, Kpi, MoneyTile, CatIcon, Bar, Ring, budgetTone, Money, CardChip } from '@/components/shared'
 import { useApp, monthTx, rangeTx, incomeIn, expensesIn, spentIn, dataMonths } from '@/store'
+import { debtUrlId } from '@/lib/accounts'
 import { fmt, fmt0, today, isoDate, ymLabel, monthLabel, prettyDate, catColor, srcLabel, ordinal } from '@/lib/utils'
 import { simulatePlan, recMonthly, nextDueDate } from '@/lib/finance'
 import { useIsMobile } from '@/lib/useMediaQuery'
@@ -25,27 +26,6 @@ const TIP = {
   contentStyle: { background: 'hsl(240 6% 9%)', border: '1px solid hsl(240 6% 16%)', borderRadius: 8, fontSize: 12 },
   labelStyle: { color: '#d4d4d8', fontWeight: 600, marginBottom: 2 },
   itemStyle: { color: '#e4e4e7' },
-}
-
-// Deterministic hue from a card's name so each one gets a stable, distinct gradient
-// (no real issuer branding data available, so this stands in for "issuer color").
-function cardHue(name) {
-  let h = 0
-  for (let i = 0; i < (name || '').length; i++) h = (h * 31 + name.charCodeAt(i)) % 360
-  return h
-}
-
-// Copilot-style mini "credit card" chip used in the Dashboard's Credit Cards list.
-function CardChip({ name }) {
-  const hue = cardHue(name)
-  return (
-    <div
-      className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl px-1.5 shadow-sm"
-      style={{ background: `linear-gradient(135deg, hsl(${hue} 65% 40%), hsl(${(hue + 40) % 360} 55% 24%))` }}
-    >
-      <span className="truncate text-center text-[0.5625rem] font-bold leading-tight text-white/90">{name}</span>
-    </div>
-  )
 }
 
 function cfBounds(range) {
@@ -402,18 +382,17 @@ export default function Dashboard() {
           </div>
         </Card>
         </Link>
-        <Link href="/debts" className="group block min-w-0">
-        <Card className="min-w-0 cursor-pointer p-5 transition hover:border-primary/40 hover:bg-secondary/[0.12]">
+        <Card className="min-w-0 p-5">
           <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
-            <SectionHead title="Credit Cards" total={fmt0(ccBal)} chevron />
+            <SectionHead title="Credit Cards" total={fmt0(ccBal)} href="/debts" chevron />
             <Badge className="shrink-0" variant={ccUtil > 80 ? 'destructive' : ccUtil > 30 ? 'warning' : 'success'}>{ccUtil}% used</Badge>
           </div>
           <div className="max-h-64 divide-y divide-border/60 overflow-y-auto">
             {cards.map((d) => {
               const u = Math.min(100, Math.round((d.balance / d.limit) * 100))
               return (
-                <div key={d.name} className="flex items-center gap-3 py-2.5">
-                  <CardChip name={d.name} />
+                <Link key={d.name} href={`/accounts/${debtUrlId(d.id)}`} className="-mx-2 flex items-center gap-3 rounded-lg px-2 py-2.5 transition hover:bg-secondary/40">
+                  <CardChip name={d.name} size="dash" />
                   <div className="min-w-0 flex-1">
                     <div className="mb-0.5 flex min-w-0 items-baseline justify-between gap-2">
                       <span className="min-w-0 flex-1 truncate text-[0.625rem] font-bold uppercase tracking-wider text-muted-foreground">{d.name}</span>
@@ -422,12 +401,11 @@ export default function Dashboard() {
                     <Money value={fmt0(d.balance)} className="text-base font-extrabold" />
                     <div className="mt-1.5"><Bar pct={u} thin color={u > 80 ? '#f87171' : u > 30 ? '#fbbf24' : '#34d399'} /></div>
                   </div>
-                </div>
+                </Link>
               )
             })}
           </div>
         </Card>
-        </Link>
         <Link href="/budgets" className="group block min-w-0">
         <Card className="min-w-0 cursor-pointer p-5 transition hover:border-primary/40 hover:bg-secondary/[0.12]">
           <SectionHead title="Budgets" desc={`${ymLabel(nowYm)} spending by category`} chevron />

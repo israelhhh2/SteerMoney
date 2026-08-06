@@ -117,7 +117,7 @@ function BottomNav({ isAdmin }) {
   )
 }
 
-function Frame({ children }) {
+function Frame({ children, modal }) {
   const pathname = usePathname()
   const router = useRouter()
   const toast = useToast()
@@ -277,15 +277,16 @@ function Frame({ children }) {
         />
       )}
       {inviteUrl && <InviteLinkDialog url={inviteUrl} onClose={() => setInviteUrl(null)} />}
+      {modal}
     </div>
   )
 }
 
-export default function AppLayout({ children }) {
+export default function AppLayout({ children, modal }) {
   return (
     <AppProvider>
       <ToastProvider>
-        <Frame>{children}</Frame>
+        <Frame modal={modal}>{children}</Frame>
       </ToastProvider>
     </AppProvider>
   )

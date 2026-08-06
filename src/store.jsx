@@ -45,11 +45,18 @@ const mappers = {
     }),
   },
   transactions: {
+    // `account_id`/`accountId` are only included when already present — omitting
+    // the key entirely (rather than sending null) keeps this working even if the
+    // `account_id` column hasn't been migrated onto public.transactions yet.
     toRow: (t, userId) => ({
       user_id: userId, id: t.id, date: t.date, description: t.desc,
       amount: t.amount, type: t.type, category: t.cat ?? 'other',
+      ...(t.accountId !== undefined ? { account_id: t.accountId } : {}),
     }),
-    fromRow: (r) => ({ id: r.id, date: r.date, desc: r.description, amount: Number(r.amount), type: r.type, cat: r.category }),
+    fromRow: (r) => ({
+      id: r.id, date: r.date, desc: r.description, amount: Number(r.amount), type: r.type, cat: r.category,
+      ...(r.account_id !== undefined ? { accountId: r.account_id } : {}),
+    }),
   },
   goals: {
     toRow: (g, userId) => ({

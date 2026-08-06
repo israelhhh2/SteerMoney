@@ -1,125 +1,58 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Plus, Wallet, CreditCard, Landmark } from 'lucide-react'
-import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import { Plus, Wallet, ChevronDown, ChevronRight } from 'lucide-react'
+import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Money, SectionLabel } from '@/components/shared'
+import { Segmented } from '@/components/ui/segmented'
+import { Money, CardChip } from '@/components/shared'
 import { ConnectBankButton } from '@/components/connect-bank'
 import { useApp } from '@/store'
 import { useToast } from '@/components/toast'
-import { fmt0, today, isoDate, prettyDate, uid } from '@/lib/utils'
-import { matchesBankAccount } from '@/lib/finance'
+import { cn, fmt0, today, uid } from '@/lib/utils'
+import {
+  RANGE_KEYS, daysFor, buildSeries, pctChange, pctChange30,
+  buildAccountInventory, accountUrlId, usePlaidItems,
+} from '@/lib/accounts'
 
 const TIP = { contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 } }
 
-const TYPE_GROUPS = [['depository', 'Depository'], ['investment', 'Investments'], ['other', 'Other']]
+// Slate-blue used for Copilot's uppercase micro-labels throughout this page
+// (component-scoped per the design brief — not a global token change).
+const LABEL_COLOR = '#6f8bb8'
 
-// ---- daily series for the header chart (approximate on purpose) ----
-
-function lastNDays(n) {
-  const out = []
-  const base = new Date(today() + 'T00:00:00')
-  for (let i = n - 1; i >= 0; i--) {
-    const d = new Date(base)
-    d.setDate(d.getDate() - i)
-    out.push(isoDate(d))
-  }
-  return out
-}
-
-// Carry the last known balance forward per day; accounts with no history
-// contribute their current balance flat, and days before the first known
-// entry fall back to that earliest entry.
-function assetsOn(accounts, date) {
-  return accounts.reduce((sum, a) => {
-    const hist = (a.history || []).slice().sort((x, y) => x.date.localeCompare(y.date))
-    if (!hist.length) return sum + (a.balance || 0)
-    let val = hist[0].balance
-    for (const h of hist) { if (h.date <= date) val = h.balance; else break }
-    return sum + val
-  }, 0)
-}
-
-// Walk backward from the current balance: a payment made after the day in
-// question hadn't happened yet, so add it back.
-function debtsOn(debts, date) {
-  return debts.reduce((sum, d) => {
-    const future = (d.payments || []).filter((p) => p.date > date)
-    const bal = d.balance + future.reduce((s, p) => s + p.amount, 0)
-    return sum + Math.max(0, bal)
-  }, 0)
-}
-
-// Depository/investment Plaid accounts have no local history, so they carry
-// their current balance flat across the whole window (assetsOn already does
-// this for any account missing a `history` array).
-function buildSeries(accounts, debts, plaidAssetAccounts) {
-  const manual = accounts.filter((a) => a.type !== 'credit' && a.type !== 'loan')
-  const merged = [...manual, ...(plaidAssetAccounts || [])]
-  return lastNDays(90).map((date) => ({
-    name: prettyDate(date),
-    assets: Math.round(assetsOn(merged, date)),
-    debts: Math.round(debtsOn(debts, date)),
-  }))
-}
-
-// Stable-ish identity for a Plaid account row, used to line up "this debt
-// matches this connected account" without relying on account_id existing on
-// older, not-yet-resynced rows.
-const acctKey = (a) => a.account_id || `${a.mask || ''}|${(a.name || '').toLowerCase()}`
-
-export default function Accounts() {
+export default function Accounts({ editParam, clearEditParam } = {}) {
   const { state } = useApp()
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
-  const [plaidItems, setPlaidItems] = useState([])
-  const [plaidChecked, setPlaidChecked] = useState(false)
+  const [range, setRange] = useState('3M')
+  const { plaidItems, plaidChecked } = usePlaidItems()
 
+  // ?edit=<accountId> arrives from the account detail view's "Edit account"
+  // action (manual accounts only) — open the dialog once, then clear the param.
   useEffect(() => {
-    let on = true
-    fetch('/api/plaid/items')
-      .then((r) => r.json())
-      .then((d) => { if (on) { setPlaidItems(d.items || []); setPlaidChecked(true) } })
-      .catch(() => { if (on) setPlaidChecked(true) })
-    return () => { on = false }
-  }, [])
+    if (editParam) { setEditing(editParam); clearEditParam && clearEditParam() }
+  }, [editParam])
 
-  // Depository/investment Plaid accounts count as assets; credit/loan-type
-  // ones stay out of both Assets and Debts — the Debt Tracker is the source
-  // of truth for those, this view only shows their balance with a hint.
-  const plaidAssetAccounts = useMemo(
-    () => plaidItems.flatMap((it) => (it.accounts || []).filter((a) => a.type === 'depository' || a.type === 'investment')),
-    [plaidItems]
+  const { plaidAssetAccounts, cards, loans, depository } = useMemo(
+    () => buildAccountInventory(state, plaidItems),
+    [state.debts, state.accounts, plaidItems]
   )
-  const plaidAccountsFlat = useMemo(
-    () => plaidItems.flatMap((it) => (it.accounts || []).map((a) => ({ ...a, institution: it.institution }))),
-    [plaidItems]
-  )
-  const matchedAccountIds = useMemo(() => {
-    const set = new Set()
-    state.debts.forEach((d) => {
-      const m = matchesBankAccount(d, plaidAccountsFlat)
-      if (m) set.add(acctKey(m))
-    })
-    return set
-  }, [state.debts, plaidAccountsFlat])
 
   const manualAssets = state.accounts.filter((a) => a.type !== 'credit' && a.type !== 'loan').reduce((s, a) => s + a.balance, 0)
   const plaidAssets = plaidAssetAccounts.reduce((s, a) => s + (a.balance || 0), 0)
   const assetsTotal = manualAssets + plaidAssets
   const debtsTotal = state.debts.reduce((s, d) => s + d.balance, 0)
 
-  const series = useMemo(() => buildSeries(state.accounts, state.debts, plaidAssetAccounts), [state.accounts, state.debts, plaidAssetAccounts])
-
-  const cards = state.debts.filter((d) => d.limit).slice().sort((a, b) => b.balance - a.balance)
-  const loans = state.debts.filter((d) => !d.limit).slice().sort((a, b) => b.balance - a.balance)
-  const byType = { depository: [], investment: [], other: [] }
-  state.accounts.forEach((a) => { (byType[a.type] || byType.other).push(a) })
+  const series = useMemo(
+    () => buildSeries(state.accounts, state.debts, plaidAssetAccounts, daysFor(range)),
+    [state.accounts, state.debts, plaidAssetAccounts, range]
+  )
+  const assetsPct = useMemo(() => pctChange(series, 'assets'), [series])
+  const debtsPct = useMemo(() => pctChange(series, 'debts'), [series])
 
   const isEmpty = !state.accounts.length && !state.debts.length && plaidChecked && !plaidItems.length
 
@@ -156,189 +89,173 @@ export default function Accounts() {
               <span className="h-2 w-2 rounded-full" style={{ background: '#5b9df9' }} />Assets
             </div>
             <Money value={fmt0(assetsTotal)} className="text-2xl font-extrabold sm:text-3xl" />
+            <div className="mt-1"><ChangePill pct={assetsPct} /></div>
           </div>
           <div className="text-center">
             <div className="mb-1 flex items-center justify-center gap-1.5 text-[0.75rem] font-semibold text-muted-foreground">
-              <span className="h-2 w-2 rounded-full" style={{ background: '#e08a3d' }} />Debts
+              <span className="h-2 w-2 rounded-full" style={{ background: '#e08a3d' }} />Debt
             </div>
             <Money value={fmt0(debtsTotal)} className="text-2xl font-extrabold sm:text-3xl" />
+            <div className="mt-1"><ChangePill pct={debtsPct} invert /></div>
           </div>
         </div>
-        {series.length > 0 && (
+        {series.length > 1 && (
           <div className="mt-4 h-40">
             <ResponsiveContainer>
-              <LineChart data={series}>
-                <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 10 }} interval="preserveStartEnd" axisLine={false} tickLine={false} />
-                <Tooltip {...TIP} formatter={(v, n) => [fmt0(v), n === 'assets' ? 'Assets' : 'Debts']} />
-                <Line type="monotone" dataKey="assets" stroke="#5b9df9" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="debts" stroke="#e08a3d" strokeWidth={2} dot={false} />
-              </LineChart>
+              <AreaChart data={series} margin={{ top: 8, right: 4, left: 4, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="acctAssets" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#5b9df9" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#5b9df9" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="acctDebt" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#e08a3d" stopOpacity={0.3} />
+                    <stop offset="100%" stopColor="#e08a3d" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="name" hide />
+                <Tooltip {...TIP} formatter={(v, n) => [fmt0(v), n === 'assets' ? 'Assets' : 'Debt']} />
+                <Area type="monotone" dataKey="assets" stroke="#5b9df9" strokeWidth={2.5} fill="url(#acctAssets)"
+                  dot={(p) => (p.index === series.length - 1 ? <circle key={p.index} cx={p.cx} cy={p.cy} r={4} fill="#5b9df9" stroke="hsl(224 64% 4%)" strokeWidth={2} /> : null)}
+                  style={{ filter: 'drop-shadow(0 0 6px rgba(91,157,249,0.45))' }} />
+                <Area type="monotone" dataKey="debts" stroke="#e08a3d" strokeWidth={2.5} fill="url(#acctDebt)"
+                  dot={(p) => (p.index === series.length - 1 ? <circle key={p.index} cx={p.cx} cy={p.cy} r={4} fill="#e08a3d" stroke="hsl(224 64% 4%)" strokeWidth={2} /> : null)}
+                  style={{ filter: 'drop-shadow(0 0 6px rgba(224,138,61,0.4))' }} />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         )}
+        <div className="mt-3 flex justify-center">
+          <Segmented options={RANGE_KEYS.map((k) => [k, k])} value={range} onChange={setRange} />
+        </div>
       </Card>
 
       {cards.length > 0 && (
-        <div className="space-y-2.5">
-          <SectionLabel title="Credit cards" />
-          <Card className="divide-y divide-border/60 overflow-hidden">
-            {cards.map((d) => <DebtRow key={d.id} debt={d} />)}
-            <GroupTotal value={cards.reduce((s, d) => s + d.balance, 0)} />
-          </Card>
-        </div>
+        <Section title="Credit cards" total={fmt0(cards.reduce((s, a) => s + a.balance, 0))} addHref="/debts">
+          {cards.map((a) => <CardRow key={a.key} account={a} />)}
+        </Section>
       )}
 
       {loans.length > 0 && (
-        <div className="space-y-2.5">
-          <SectionLabel title="Loans" />
-          <Card className="divide-y divide-border/60 overflow-hidden">
-            {loans.map((d) => <DebtRow key={d.id} debt={d} />)}
-            <GroupTotal value={loans.reduce((s, d) => s + d.balance, 0)} />
-          </Card>
-        </div>
+        <Section title="Loans" total={fmt0(loans.reduce((s, a) => s + a.balance, 0))} addHref="/debts">
+          {loans.map((a) => <LoanRow key={a.key} account={a} />)}
+        </Section>
       )}
 
-      {TYPE_GROUPS.map(([type, label]) => {
-        const list = byType[type]
-        if (!list.length) return null
-        return (
-          <div key={type} className="space-y-2.5">
-            <SectionLabel title={label} />
-            <Card className="divide-y divide-border/60 overflow-hidden">
-              {list.map((a) => <AccountRow key={a.id} account={a} onClick={() => setEditing(a.id)} />)}
-              <GroupTotal value={list.reduce((s, a) => s + a.balance, 0)} />
-            </Card>
-          </div>
-        )
-      })}
-
-      {plaidItems.length > 0 && (
-        <div className="space-y-2.5">
-          <SectionLabel title="Connected banks" />
-          <Card className="divide-y divide-border/60 overflow-hidden">
-            {plaidItems.map((it) => <PlaidItemRow key={it.id} item={it} matchedAccountIds={matchedAccountIds} />)}
-          </Card>
-          <p className="text-[0.6875rem] text-muted-foreground/70">Connected accounts update when you sync from Settings.</p>
-        </div>
-      )}
+      <Section title="Depository" total={fmt0(depository.reduce((s, a) => s + a.balance, 0))} onAdd={() => setEditing(null)}>
+        {depository.length ? (
+          depository.map((a) => <DepositoryRow key={a.key} account={a} />)
+        ) : (
+          <div className="p-6 text-center text-[0.78125rem] text-muted-foreground">No depository accounts yet — add one or connect a bank.</div>
+        )}
+      </Section>
 
       {editing !== undefined && <AccountDialog id={editing} onClose={() => setEditing(undefined)} />}
     </div>
   )
 }
 
-function GroupTotal({ value }) {
+// Red/green % pill. `invert` flips the good/bad color read for Debt, where a
+// decrease is the desirable direction.
+function ChangePill({ pct, invert = false }) {
+  const good = invert ? pct <= 0 : pct >= 0
   return (
-    <div className="flex items-center justify-between bg-secondary/20 px-4 py-2.5">
-      <span className="text-[0.71875rem] font-semibold text-muted-foreground">Total</span>
-      <Money value={fmt0(value)} className="text-[0.8125rem] font-extrabold" />
+    <span className={cn('inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[0.625rem] font-bold', good ? 'bg-emerald-400/10 text-emerald-400' : 'bg-red-400/10 text-red-400')}>
+      {pct >= 0 ? '↗' : '↘'} {Math.abs(pct).toFixed(2)}%
+    </span>
+  )
+}
+
+function StatLabel({ children }) {
+  return <div className="truncate text-[0.65rem] font-bold uppercase tracking-wide" style={{ color: LABEL_COLOR }}>{children}</div>
+}
+
+// Collapsible Copilot-style section header: "▾ Title  $total" with an optional
+// "Add ›" affordance (either a Link, e.g. Credit cards → /debts, or a callback,
+// e.g. Depository → the existing AccountDialog).
+function Section({ title, total, addHref, onAdd, children, defaultOpen = true }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center justify-between gap-2 px-0.5">
+        <button onClick={() => setOpen((o) => !o)} className="flex min-w-0 items-center gap-1.5 text-left">
+          <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', !open && '-rotate-90')} />
+          <span className="truncate text-[0.9375rem] font-semibold">{title}</span>
+          <span className="shrink-0 whitespace-nowrap text-[0.8125rem] font-bold" style={{ color: '#5b9df9' }}>{total}</span>
+        </button>
+        {addHref ? (
+          <Link href={addHref} className="flex shrink-0 items-center text-[0.78125rem] font-bold text-primary/90 transition hover:text-primary">Add<ChevronRight className="h-3.5 w-3.5" /></Link>
+        ) : onAdd ? (
+          <button onClick={onAdd} className="flex shrink-0 items-center text-[0.78125rem] font-bold text-primary/90 transition hover:text-primary">Add<ChevronRight className="h-3.5 w-3.5" /></button>
+        ) : null}
+      </div>
+      {open && <Card className="divide-y divide-border/60 overflow-hidden">{children}</Card>}
     </div>
   )
 }
 
-function DebtRow({ debt }) {
+// Rows now navigate to /accounts/{id} — a Notion-style modal on in-app clicks
+// (intercepted route, app/(app)/@modal/(.)accounts/[id]) or the full detail
+// page on direct load/refresh. See views/AccountDetail.jsx.
+function CardRow({ account }) {
+  const hasLimit = !!account.limit
+  const util = hasLimit ? Math.min(999, Math.round((account.balance / account.limit) * 100)) : null
   return (
-    <Link href="/debts" className="flex items-center gap-3 px-4 py-3 transition hover:bg-accent/60">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary/60 text-muted-foreground"><CreditCard className="h-4 w-4" /></span>
+    <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
+      <CardChip institution={account.institution} name={account.name} mask={account.mask} />
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[0.84375rem] font-bold">{debt.name}</div>
-        <div className="text-[0.6875rem] text-muted-foreground">tracked in Debt Tracker</div>
+        {hasLimit ? (
+          <div className="grid grid-cols-3 items-center gap-1 text-center">
+            <div><StatLabel>Balance</StatLabel><Money value={fmt0(account.balance)} className="text-sm font-extrabold sm:text-base" /></div>
+            <div><StatLabel>Limit</StatLabel><Money value={fmt0(account.limit)} className="text-sm font-extrabold text-muted-foreground sm:text-base" /></div>
+            <div>
+              <StatLabel>Utilized</StatLabel>
+              <div className={cn('text-sm font-extrabold sm:text-base', util > 80 ? 'text-red-400' : util > 30 ? 'text-amber-400' : 'text-emerald-400')}>{util}%</div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <div className="w-full rounded-full border border-amber-400/40 px-2 py-1 text-center text-[0.625rem] font-bold uppercase tracking-wide text-amber-400">
+              Credit limit needed
+            </div>
+            <div className="text-center">
+              <StatLabel>Balance</StatLabel>
+              <Money value={fmt0(account.balance)} className="text-xl font-extrabold sm:text-2xl" />
+            </div>
+          </div>
+        )}
       </div>
-      <Money value={fmt0(debt.balance)} className="shrink-0 text-[0.8125rem] font-extrabold text-red-400" />
     </Link>
   )
 }
 
-function Sparkline({ history }) {
-  const pts = (history || []).slice(-30)
-  if (pts.length < 2) return null
-  const vals = pts.map((p) => p.balance)
-  const min = Math.min(...vals)
-  const max = Math.max(...vals)
-  const range = max - min || 1
-  const w = 90, h = 24
-  const step = w / (pts.length - 1)
-  const coords = vals.map((v, i) => `${(i * step).toFixed(1)},${(h - ((v - min) / range) * h).toFixed(1)}`).join(' ')
+function LoanRow({ account }) {
   return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="hidden shrink-0 sm:block">
-      <polyline points={coords} fill="none" stroke="#5b9df9" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
+      <CardChip institution={account.institution} name={account.name} mask={account.mask} />
+      <div className="min-w-0 flex-1 text-center">
+        <StatLabel>Balance</StatLabel>
+        <Money value={fmt0(account.balance)} className="text-xl font-extrabold sm:text-2xl" />
+      </div>
+    </Link>
   )
 }
 
-function ChangeBadge({ account }) {
-  const cutoff = new Date(today() + 'T00:00:00')
-  cutoff.setDate(cutoff.getDate() - 30)
-  const cutoffIso = isoDate(cutoff)
-  const recent = (account.history || []).filter((h) => h.date >= cutoffIso).slice().sort((a, b) => a.date.localeCompare(b.date))
-  if (!recent.length) return null
-  const oldest = recent[0].balance
-  if (!oldest) return null
-  const pct = ((account.balance - oldest) / Math.abs(oldest)) * 100
-  const positive = pct >= 0
-  return <Badge variant={positive ? 'success' : 'destructive'}>{positive ? '+' : ''}{pct.toFixed(1)}%</Badge>
-}
-
-function AccountRow({ account, onClick }) {
+function DepositoryRow({ account }) {
+  const pct = pctChange30(account.history, account.balance)
+  const available = account.available ?? account.balance
   return (
-    <button onClick={onClick} className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-accent/60">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary/60 text-muted-foreground"><Landmark className="h-4 w-4" /></span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[0.84375rem] font-bold">
-          {account.name}
-          {account.mask ? <span className="ml-1.5 font-semibold text-muted-foreground">•• {account.mask}</span> : null}
-        </div>
-        <div className="text-[0.6875rem] text-muted-foreground">{account.institution || 'Manual account'}</div>
-      </div>
-      <Sparkline history={account.history} />
-      <div className="shrink-0 space-y-0.5 text-right">
-        <ChangeBadge account={account} />
-        <Money value={fmt0(account.balance)} className="block text-[0.8125rem] font-extrabold" />
-      </div>
-    </button>
-  )
-}
-
-function PlaidItemRow({ item, matchedAccountIds }) {
-  const accounts = item.accounts || []
-  return (
-    <div className="px-4 py-3">
-      <div className="flex items-center gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary/60 text-muted-foreground"><Landmark className="h-4 w-4" /></span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[0.84375rem] font-bold">{item.institution || 'Bank'}</div>
-          <div className="text-[0.6875rem] text-muted-foreground">
-            {item.last_synced ? `Synced ${prettyDate(item.last_synced.slice(0, 10))}` : 'Not yet synced'}
-          </div>
+    <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
+      <CardChip institution={account.institution} name={account.name} mask={account.mask} />
+      <div className="grid min-w-0 flex-1 grid-cols-3 items-center gap-1 text-center">
+        <div><StatLabel>Available</StatLabel><Money value={fmt0(available)} className="text-sm font-extrabold sm:text-base" /></div>
+        <div><StatLabel>Current</StatLabel><Money value={fmt0(account.balance)} className="text-sm font-extrabold sm:text-base" /></div>
+        <div>
+          <StatLabel>Change</StatLabel>
+          {pct == null ? <div className="text-sm font-extrabold text-muted-foreground sm:text-base">–</div> : <ChangePill pct={pct} />}
         </div>
       </div>
-      {accounts.length > 0 ? (
-        <div className="mt-2.5 space-y-2 pl-[2.75rem]">
-          {accounts.map((a, i) => {
-            const isDebtType = a.type === 'credit' || a.type === 'loan'
-            const matched = isDebtType && matchedAccountIds.has(acctKey(a))
-            return (
-              <div key={acctKey(a) + i} className="flex items-center gap-2.5">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[0.78125rem] font-medium">
-                    {a.name}
-                    {a.mask ? <span className="ml-1.5 font-normal text-muted-foreground">•• {a.mask}</span> : null}
-                  </div>
-                  {isDebtType && (
-                    <div className="truncate text-[0.65625rem] text-muted-foreground/80">
-                      {matched ? 'tracked as debt below' : 'add it in the Debt Tracker to include it in payoff tools'}
-                    </div>
-                  )}
-                </div>
-                {a.balance != null && <Money value={fmt0(a.balance)} className="shrink-0 text-[0.8125rem] font-semibold" />}
-              </div>
-            )
-          })}
-        </div>
-      ) : (
-        <p className="mt-2 pl-[2.75rem] text-[0.6875rem] text-muted-foreground">No accounts found</p>
-      )}
-    </div>
+    </Link>
   )
 }
 
