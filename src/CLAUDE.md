@@ -77,6 +77,36 @@ before flipping the switch.
 
 ## Session log (newest first)
 
+### 2026-08-05
+- **Plaid production application (roadmap item 1) filled out and submitted**:
+  products Transactions + Liabilities, use case "Personal budgeting and
+  financial advice". Security questionnaire answered honestly (MFA on all
+  admin systems: Vercel/Supabase/GitHub/Plaid; consumer MFA = No for now,
+  Clerk gates it behind Pro $25/mo — revisit later; Dependabot enabled for
+  vuln management). Wrote `Information-Security-Policy.docx` (in src/, also
+  attached to Plaid app: infosec, access controls, retention questions).
+- **Privacy policy shipped**: `app/privacy/page.jsx` (public route added to
+  `middleware.js` matcher, footer link on /home). Live at
+  https://steer-money-nine.vercel.app/privacy — used for Plaid Q9.
+- Second overflow fix: root cause was grid items defaulting to
+  `min-width:auto` — the bottom-widget Cards themselves grew past the
+  viewport. Added `min-w-0` on the Cards + header rows, `shrink-0
+  whitespace-nowrap` on amounts/badges. Added empty state to "This Month by
+  Category" donut ("Nothing recorded in this period.").
+- **Copilot-inspired dashboard redesign + clickable cards**: all dashboard
+  cards/tiles Link to their pages (income/spending→/charts, debt→/debts,
+  fixed→/recurring, due-14d→/recurring, credit cards→/debts,
+  budgets→/budgets, category→/charts); Segmented pills stopPropagation.
+  Visuals: superscript-$ `Money` hero numbers, uppercase micro-labels,
+  `CardChip` gradient credit-card visuals, slim `Bar thin`, scrollable
+  Segmented pills, bar-chart glow. Files: Dashboard.jsx, shared.jsx
+  (SectionHead href/total/chevron, Kpi href, Bar thin — all opt-in,
+  backward compatible), ui/segmented.jsx (scroll mode + stopPropagation).
+- **Left off:** redesign untested in browser (desktop Chrome couldn't shrink
+  to 390px for verification). User to deploy + verify on phone. Remaining
+  roadmap: items 2-10 (env switch pending Plaid approval; webhook route and
+  OAuth support can be built now).
+
 ### 2026-08-04
 - Fixed mobile horizontal-overflow bug (viewport ~390-430px): several flex
   rows (label + right-aligned value, or badge lists) had no `min-w-0` on the
