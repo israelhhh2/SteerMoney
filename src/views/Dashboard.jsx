@@ -325,18 +325,22 @@ export default function Dashboard() {
         </Card>
         <Card className="p-5">
           <SectionHead title="This Month by Category" desc={ymLabel(nowYm)} />
-          <div className="mt-4 h-48 sm:h-56">
-            <ResponsiveContainer>
-              <PieChart>
-                <Pie data={donut} dataKey="value" nameKey="name" innerRadius="62%" outerRadius="90%" paddingAngle={2} stroke="hsl(240 6% 7%)">
-                  {donut.map((d) => <Cell key={d.name} fill={d.color} />)}
-                </Pie>
-                <Tooltip {...TIP} formatter={(v) => fmt0(v)} />
-                {!isMobile && <Legend layout="vertical" align="right" verticalAlign="middle" wrapperStyle={{ fontSize: 10 }} formatter={(v) => <span style={{ color: '#a1a1aa' }}>{v}</span>} />}
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          {isMobile && (
+          {donut.length ? (
+            <div className="mt-4 h-48 sm:h-56">
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie data={donut} dataKey="value" nameKey="name" innerRadius="62%" outerRadius="90%" paddingAngle={2} stroke="hsl(240 6% 7%)">
+                    {donut.map((d) => <Cell key={d.name} fill={d.color} />)}
+                  </Pie>
+                  <Tooltip {...TIP} formatter={(v) => fmt0(v)} />
+                  {!isMobile && <Legend layout="vertical" align="right" verticalAlign="middle" wrapperStyle={{ fontSize: 10 }} formatter={(v) => <span style={{ color: '#a1a1aa' }}>{v}</span>} />}
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="mt-4 flex h-48 items-center justify-center text-center text-xs text-muted-foreground sm:h-56">Nothing recorded in this period.</div>
+          )}
+          {isMobile && donut.length > 0 && (
             <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[0.6875rem]">
               {donut.map((d) => (
                 <span key={d.name} className="flex min-w-0 items-center gap-1.5">
@@ -351,37 +355,37 @@ export default function Dashboard() {
 
       {/* bottom widgets */}
       <div className="grid gap-3 lg:grid-cols-3">
-        <Card className="p-5">
-          <div className="mb-3 flex items-center justify-between">
+        <Card className="min-w-0 p-5">
+          <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
             <SectionHead title="Due in 14 days" />
-            <Badge>{fmt0(up.reduce((s, u) => s + (u.amt || 0), 0))}</Badge>
+            <Badge className="shrink-0">{fmt0(up.reduce((s, u) => s + (u.amt || 0), 0))}</Badge>
           </div>
           <div className="max-h-64 divide-y divide-border/60 overflow-y-auto">
             {up.length ? up.map((u, i) => (
-              <div key={i} className="flex items-center gap-2.5 py-2 text-[0.8125rem]">
+              <div key={i} className="flex min-w-0 items-center gap-2.5 py-2 text-[0.8125rem]">
                 <span className={`w-11 shrink-0 rounded-md px-1 py-1 text-center text-[0.625rem] font-bold ${u.diff <= 3 ? 'bg-red-400/10 text-red-400' : 'bg-secondary text-muted-foreground'}`}>
                   {u.diff === 0 ? 'today' : `in ${u.diff}d`}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-foreground/90">{u.name}</span>
-                <Badge variant={u.tag === 'debt' ? 'destructive' : 'info'}>{u.tag}</Badge>
-                <span className="shrink-0 text-xs font-semibold">{u.amt ? fmt(u.amt) : ''}</span>
+                <Badge className="shrink-0" variant={u.tag === 'debt' ? 'destructive' : 'info'}>{u.tag}</Badge>
+                <span className="shrink-0 whitespace-nowrap text-xs font-semibold">{u.amt ? fmt(u.amt) : ''}</span>
               </div>
             )) : <p className="py-2 text-[0.8125rem] text-muted-foreground">Nothing due in the next two weeks.</p>}
           </div>
         </Card>
-        <Card className="p-5">
-          <div className="mb-3 flex items-center justify-between">
+        <Card className="min-w-0 p-5">
+          <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
             <SectionHead title="Credit Cards" />
-            <Badge variant={ccUtil > 80 ? 'destructive' : ccUtil > 30 ? 'warning' : 'success'}>{ccUtil}% used</Badge>
+            <Badge className="shrink-0" variant={ccUtil > 80 ? 'destructive' : ccUtil > 30 ? 'warning' : 'success'}>{ccUtil}% used</Badge>
           </div>
           <div className="max-h-64 divide-y divide-border/60 overflow-y-auto">
             {cards.map((d) => {
               const u = Math.min(100, Math.round((d.balance / d.limit) * 100))
               return (
                 <div key={d.name} className="py-2">
-                  <div className="mb-1.5 flex justify-between gap-2 text-xs">
+                  <div className="mb-1.5 flex min-w-0 justify-between gap-2 text-xs">
                     <span className="min-w-0 flex-1 truncate text-foreground/90">{d.name}</span>
-                    <span className="shrink-0 text-muted-foreground">{fmt0(d.balance)} <span className="opacity-60">/ {fmt0(d.limit)}</span></span>
+                    <span className="shrink-0 whitespace-nowrap text-muted-foreground">{fmt0(d.balance)} <span className="opacity-60">/ {fmt0(d.limit)}</span></span>
                   </div>
                   <Bar pct={u} color={u > 80 ? '#f87171' : u > 30 ? '#fbbf24' : '#34d399'} />
                 </div>
@@ -389,7 +393,7 @@ export default function Dashboard() {
             })}
           </div>
         </Card>
-        <Card className="p-5">
+        <Card className="min-w-0 p-5">
           <SectionHead title="Budgets" desc={`${ymLabel(nowYm)} spending by category`} />
           <div className="mt-2 max-h-64 divide-y divide-border/60 overflow-y-auto">
             {state.budgets.slice().sort((a, b) => spentIn(state, nowYm, b.id) - spentIn(state, nowYm, a.id)).slice(0, 7).map((b) => {
@@ -398,9 +402,9 @@ export default function Dashboard() {
               const over = b.limit > 0 && sp > b.limit
               return (
                 <div key={b.id} className="py-2">
-                  <div className="mb-1.5 flex justify-between gap-2 text-xs">
+                  <div className="mb-1.5 flex min-w-0 justify-between gap-2 text-xs">
                     <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-foreground/90"><CatIcon cat={b.id} className="h-3.5 w-3.5 shrink-0" />{b.name}</span>
-                    <span className={`shrink-0 ${over ? 'font-semibold text-red-400' : 'text-muted-foreground'}`}>{fmt0(sp)} <span className="opacity-60">/ {b.limit ? fmt0(b.limit) : '—'}</span></span>
+                    <span className={`shrink-0 whitespace-nowrap ${over ? 'font-semibold text-red-400' : 'text-muted-foreground'}`}>{fmt0(sp)} <span className="opacity-60">/ {b.limit ? fmt0(b.limit) : '—'}</span></span>
                   </div>
                   <Bar pct={pct} color={over ? '#f87171' : catColor(b.id)} />
                 </div>
