@@ -1,5 +1,5 @@
 'use client'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, ReferenceLine } from 'recharts'
 import { Card } from '@/components/ui/card'
 import { SectionHead } from '@/components/shared'
@@ -15,10 +15,25 @@ const TIP = {
 }
 const kfmt = (v) => '$' + (Math.abs(v) >= 1000 ? (v / 1000).toFixed(v % 1000 === 0 ? 0 : 1) + 'k' : v)
 
-export default function Charts() {
+export default function Charts({ focus } = {}) {
   const { state, catInfo } = useApp()
   const isMobile = useIsMobile()
   const noTr = useMemo(() => state.transactions.filter((t) => t.cat !== 'transfer'), [state.transactions])
+
+  // Deep-link support for /charts?focus=income|spending (Dashboard's "Avg
+  // Monthly Income"/"Avg Monthly Spending" KPIs link here) — scrolls the
+  // matching card into view and gives it a brief highlight ring, same
+  // Suspense+useSearchParams pattern app/(app)/transactions/page.jsx already
+  // uses for its own deep links.
+  const [highlight, setHighlight] = useState(focus || null)
+  useEffect(() => {
+    if (!focus) return
+    setHighlight(focus)
+    const el = document.getElementById(`chart-${focus}`)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const t = setTimeout(() => setHighlight(null), 2200)
+    return () => clearTimeout(t)
+  }, [focus])
 
   // 1. cumulative net
   const cum = useMemo(() => {
@@ -30,6 +45,21 @@ export default function Charts() {
 
   // 2. stacked categories by month
   const months = useMemo(() => [...new Set(noTr.map((t) => t.date.slice(0, 7)))].sort(), [noTr])
+
+  // 1b/1c. income by month & spending by month, last 12 months (transfers
+  // excluded, same "expense/income" definition store.jsx's incomeIn/
+  // expensesIn use — Dashboard's Avg Monthly Income/Spending KPIs are
+  // computed from those same two functions, so the totals shown here line
+  // up with what the KPI links promise).
+  const last12 = months.slice(-12)
+  const incomeByMonth = useMemo(() => last12.map((m) => ({
+    name: ymLabel(m),
+    total: Math.round(noTr.filter((t) => t.type === 'income' && t.date.startsWith(m)).reduce((s, t) => s + t.amount, 0)),
+  })), [noTr, months.join(',')])
+  const spendByMonth = useMemo(() => last12.map((m) => ({
+    name: ymLabel(m),
+    total: Math.round(noTr.filter((t) => t.type === 'expense' && t.date.startsWith(m)).reduce((s, t) => s + t.amount, 0)),
+  })), [noTr, months.join(',')])
   const catTotals = {}
   noTr.forEach((t) => { if (t.type === 'expense' && t.cat !== 'debt') catTotals[t.cat] = (catTotals[t.cat] || 0) + t.amount })
   const topCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 6).map((e) => e[0])
@@ -67,6 +97,32 @@ export default function Charts() {
               <ReferenceLine y={0} stroke="#3f3f46" />
               <Line type="monotone" dataKey="total" stroke="#10b981" strokeWidth={2} dot={false} />
             </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+      <Card id="chart-income" className={`p-5 transition ${highlight === 'income' ? 'ring-2 ring-emerald-400/60' : ''}`}>
+        <SectionHead title="Income by Month" desc="Last 12 months, from transactions (transfers excluded)" />
+        <div className="mt-4 h-56">
+          <ResponsiveContainer>
+            <BarChart data={incomeByMonth}>
+              <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: '#52525b', fontSize: 10 }} tickFormatter={kfmt} axisLine={false} tickLine={false} />
+              <Tooltip {...TIP} cursor={{ fill: '#ffffff08' }} formatter={(v) => fmt0(v)} />
+              <Bar dataKey="total" fill="#34d399" radius={[5, 5, 0, 0]} maxBarSize={36} style={{ filter: 'drop-shadow(0 0 4px rgba(52,211,153,0.35))' }} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+      <Card id="chart-spending" className={`p-5 transition ${highlight === 'spending' ? 'ring-2 ring-red-400/60' : ''}`}>
+        <SectionHead title="Spending by Month" desc="Last 12 months, from transactions (transfers excluded)" />
+        <div className="mt-4 h-56">
+          <ResponsiveContainer>
+            <BarChart data={spendByMonth}>
+              <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: '#52525b', fontSize: 10 }} tickFormatter={kfmt} axisLine={false} tickLine={false} />
+              <Tooltip {...TIP} cursor={{ fill: '#ffffff08' }} formatter={(v) => fmt0(v)} />
+              <Bar dataKey="total" fill="#e0655f" radius={[5, 5, 0, 0]} maxBarSize={36} style={{ filter: 'drop-shadow(0 0 4px rgba(224,101,95,0.35))' }} />
+            </BarChart>
           </ResponsiveContainer>
         </div>
       </Card>

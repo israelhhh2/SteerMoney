@@ -14,7 +14,7 @@ import { useApp } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
 import { fmt, fmt0, today, monthLabel, prettyDate, uid } from '@/lib/utils'
 import { simulatePlan, simCardPlan, parseAPR, payoffMonths, fmtMonths, matchesBankAccount } from '@/lib/finance'
-import { deleteDebt } from '@/lib/accounts'
+import { deleteDebt, reconcileDebtLimits } from '@/lib/accounts'
 
 const TIP = {
   contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 },
@@ -30,21 +30,35 @@ export default function Debts() {
   const [openDebt, setOpenDebt] = useState(null)
   const [editIdx, setEditIdx] = useState(undefined) // undefined closed · -1 new · i edit
   const [view, setView] = useState({ sort: 'balance', dir: 'desc', filter: 'all', q: '' })
-  const [plaidAccounts, setPlaidAccounts] = useState([])
+  const [plaidItems, setPlaidItems] = useState([])
+  const plaidAccounts = useMemo(
+    () => plaidItems.flatMap((it) => (it.accounts || []).map((a) => ({ ...a, institution: it.institution }))),
+    [plaidItems]
+  )
 
   // Silently probe connected banks so debt cards can badge "Bank connected"
-  // vs "Manual entry" — no accounts just means nothing badges.
+  // vs "Manual entry" — no accounts just means nothing badges. Keeping the
+  // raw per-item list (not just the flattened `plaidAccounts` above) is what
+  // lets the credit-limit auto-fill effect below reuse it without a second
+  // fetch.
   useEffect(() => {
     let on = true
     fetch('/api/plaid/items')
       .then((r) => r.json())
-      .then((d) => {
-        if (!on) return
-        setPlaidAccounts((d.items || []).flatMap((it) => (it.accounts || []).map((a) => ({ ...a, institution: it.institution }))))
-      })
+      .then((d) => { if (on) setPlaidItems(d.items || []) })
       .catch(() => {})
     return () => { on = false }
   }, [])
+
+  // "Venture is $300 limit, let it automatically fill those out" — once the
+  // connected banks are known, fill any manual debt's empty `limit` field
+  // from its matched Plaid account's real balances.limit. Safe to re-run on
+  // every debts/plaidItems change: reconcileDebtLimits (lib/accounts.js) is
+  // idempotent and never overwrites a limit that's already set, so this
+  // settles after the first fill and doesn't loop the diff-sync.
+  useEffect(() => {
+    reconcileDebtLimits(state, plaidItems, update)
+  }, [state.debts, plaidItems])
 
   const total = state.debts.reduce((s, d) => s + d.balance, 0)
   const mins = state.debts.reduce((s, d) => s + d.min, 0)

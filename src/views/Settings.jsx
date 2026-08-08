@@ -14,7 +14,7 @@ import { OCCUPATIONS } from '@/components/onboarding'
 import { useApp } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
 import { prettyDate } from '@/lib/utils'
-import { SpaceNameDialog, InviteLinkDialog, RemoveMemberDialog } from '@/components/space-name-dialog'
+import { SpaceNameDialog, InviteLinkDialog, RemoveMemberDialog, ConvertToSharedSpaceDialog } from '@/components/space-name-dialog'
 import { ConnectBankButton, PlaidLinkRunner } from '@/components/connect-bank'
 
 export default function Settings() {
@@ -343,7 +343,7 @@ function RemoveBankDialog({ institution, onConfirm, onClose }) {
 
 function SharedSpacesSection() {
   const { user } = useUser()
-  const { spaces, createSpace, createInvite, renameSpace, fetchMembers, removeMember, transferPersonalDataToSpace } = useApp()
+  const { state, space, spaces, createSpace, createInvite, renameSpace, fetchMembers, removeMember, transferPersonalDataToSpace } = useApp()
   const toast = useToast()
   const centerToast = useCenterToast()
   const [showNewSpace, setShowNewSpace] = useState(false)
@@ -354,6 +354,19 @@ function SharedSpacesSection() {
   const [removing, setRemoving] = useState(null) // { space, member }
   const [moving, setMoving] = useState(null) // space the user is about to move their personal data into
   const [moveBusy, setMoveBusy] = useState(false)
+  const [showConvert, setShowConvert] = useState(false) // naming dialog for "Convert my personal space into a shared space"
+  const [convertBusy, setConvertBusy] = useState(false)
+
+  // Gate for the "Convert my personal space into a shared space" banner:
+  // only while Personal is the active view (a shared space can't be
+  // converted into another shared space), and only if there's actually
+  // something to move — an untouched brand-new account shouldn't see an
+  // offer to move zero data. Deliberately doesn't check bank connections
+  // here (ConnectedBanksSection owns that fetch, not this section) — a
+  // user with only a connected bank and no other data is an edge case the
+  // "hide otherwise" requirement doesn't need to be airtight against.
+  const hasDataToMove = !!state && [state.debts, state.budgets, state.recurring, state.transactions, state.goals, state.accounts]
+    .some((arr) => Array.isArray(arr) && arr.length > 0)
 
   const saveNewSpace = async (name) => {
     const r = await createSpace(name)
@@ -377,6 +390,45 @@ function SharedSpacesSection() {
     } catch {
       setInviteUrl(r.url)
     }
+  }
+
+  // "Convert my personal space into a shared space" — the one-click version
+  // of "create a space, then move my data into it," per Israel's verbatim
+  // request. Deliberately built on top of the two existing primitives
+  // (createSpace, transferPersonalDataToSpace) rather than a new store
+  // method: createSpace already does everything a brand-new space needs
+  // (workspaces + workspace_members insert, local `spaces` state, switches
+  // the active view via setSpace), and transferPersonalDataToSpace already
+  // has the full all-or-nothing move sequencing (see store.jsx) — this is
+  // just those two calls back-to-back, with a naming dialog and toasts
+  // wrapped around them.
+  const convertToShared = async (name) => {
+    setConvertBusy(true)
+    const created = await createSpace(name)
+    if (created.error) {
+      setConvertBusy(false)
+      centerToast("Couldn't create the shared space: " + created.error, 'error')
+      return
+    }
+    const target = { id: created.id, name: created.name || name }
+    const move = await transferPersonalDataToSpace(target.id)
+    setConvertBusy(false)
+    setShowConvert(false)
+    if (move.error) {
+      // Per transferPersonalDataToSpace's own guarantee: a core-table
+      // failure aborts before anything is deleted, so personal data is
+      // intact — the only side effect is the new (still-empty) space
+      // sitting there, retryable via that space's own "Move my data here".
+      centerToast(`"${target.name}" was created, but moving your data failed: ${move.error} Your personal data wasn't touched — use "Move my data here" on "${target.name}" to try again.`, 'error')
+      return
+    }
+    if (move.warning) centerToast(move.warning, 'error')
+    else if (move.bankError) centerToast(`"${target.name}" is ready — one bank connection needs manual attention (${move.bankError})`, 'error')
+    else centerToast(`"${target.name}" is ready with all your data.`)
+    // Surface the invite link the same way every other invite in this
+    // section does — copies to the clipboard silently, or falls back to
+    // the InviteLinkDialog if the clipboard isn't available.
+    await copyInvite(target)
   }
 
   const loadMembers = async (spaceId) => {
@@ -426,6 +478,17 @@ function SharedSpacesSection() {
         <p className="text-[0.78125rem] leading-relaxed text-muted-foreground">
           1. Create a shared space. 2. Copy the invite link and send it to your partner. 3. They open the link, create an account, and the space shows up for both of you. Use the switcher in the header to flip between Personal and the shared space. The person who created a space owns it and can remove members.
         </p>
+
+        {!space && hasDataToMove && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-primary/30 bg-primary/[0.04] px-3 py-2.5">
+            <p className="min-w-0 flex-1 text-[0.75rem] leading-relaxed text-muted-foreground">
+              Splitting finances with a partner? Turn your Personal space into a shared one — everything you already have moves with you.
+            </p>
+            <Button size="sm" variant="outline" onClick={() => setShowConvert(true)}>
+              <Users />Convert my personal space into a shared space
+            </Button>
+          </div>
+        )}
 
         {spaces.length > 0 && (
           <div className="divide-y divide-border/60 overflow-hidden rounded-lg border">
@@ -525,6 +588,16 @@ function SharedSpacesSection() {
           initial={renaming.name}
           onSave={saveRename}
           onClose={() => setRenaming(null)}
+        />
+      )}
+      {showConvert && (
+        <ConvertToSharedSpaceDialog
+          initial={user?.firstName ? `${user.firstName} & partner` : 'Our finances'}
+          placeholder="Our finances"
+          desc="This creates a shared space, moves all your current data into it — accounts, debts, budgets, transactions, bank connections — and gives you an invite link for your partner. Your Personal space will be empty afterward."
+          busy={convertBusy}
+          onSave={convertToShared}
+          onClose={() => !convertBusy && setShowConvert(false)}
         />
       )}
       {inviteUrl && <InviteLinkDialog url={inviteUrl} onClose={() => setInviteUrl(null)} />}

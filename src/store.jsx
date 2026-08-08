@@ -426,7 +426,11 @@ export function AppProvider({ children }) {
     const info = { id, name }
     setSpaces((s) => [...s, { ...info, ownerId: user.id }])
     setSpace(info)
-    return { ok: true }
+    // id/name returned (not just {ok:true}) so a caller that creates a space
+    // and immediately needs to act on it — e.g. Settings' "Convert my
+    // personal space into a shared space" — doesn't have to guess the
+    // freshly-generated id back out of local state.
+    return { ok: true, id, name }
   }
 
   // sp defaults to the currently selected space so the header's Invite button
@@ -527,12 +531,26 @@ export function AppProvider({ children }) {
     if (viewAs) return { error: "Not available while viewing another customer" }
     if (!supabase || !user?.id) return { error: 'Not signed in' }
     if (!targetSpaceId || targetSpaceId === user.id) return { error: 'Invalid target space' }
-    if (!spaces.some((s) => s.id === targetSpaceId)) return { error: "You're not a member of that space" }
 
     const sourceId = user.id
     const allTables = [...CORE_TRANSFER_TABLES, ...OPTIONAL_TRANSFER_TABLES]
 
     try {
+      // Membership check against Supabase directly, not the local `spaces`
+      // state array: a caller that just created the target space (Settings'
+      // "Convert my personal space into a shared space") calls this in the
+      // same tick as `createSpace()`'s `setSpaces(...)` — that state update
+      // hasn't re-rendered yet, so the `transferPersonalDataToSpace` closure
+      // in scope at call time still holds the *old* `spaces` array without
+      // the brand-new space in it. Checking real membership in the DB avoids
+      // a false "you're not a member of that space" for a space the caller
+      // just created (and is, in fact, a real member of).
+      const { data: membership, error: memErr } = await supabase
+        .from('workspace_members').select('workspace_id')
+        .eq('workspace_id', targetSpaceId).eq('user_id', sourceId).maybeSingle()
+      if (memErr) return { error: `Couldn't verify your membership in that space: ${memErr.message}` }
+      if (!membership) return { error: "You're not a member of that space" }
+
       // 1. Read every personal row for every table up front.
       const results = await Promise.all(allTables.map((t) => supabase.from(t).select('*').eq('user_id', sourceId)))
       const byTable = {}

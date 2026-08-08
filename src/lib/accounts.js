@@ -429,3 +429,58 @@ export function setAccountColor(update, accountKey, color) {
     if (color != null) s.accountColors.push({ id: uid('ac'), accountKey, color })
   })
 }
+
+// ---- auto-fill a manual debt's credit limit from a matched Plaid account ----
+// "For the limits I was talking about credit card limits. Like Venture is
+// 300 limit. Let it automatically fill those out." (verbatim request).
+// buildAccountInventory's fromDebts() already *displays* a matched Plaid
+// account's real balances.limit in place of a manual debt's own d.limit (see
+// the (15) session-log quick win) — but that's read-only/derived, so the
+// debt's own stored `limit` field (the one DebtDialog's input edits, and
+// what payoff/utilization math elsewhere reads directly off state.debts)
+// never actually got the value. This does the same fuzzy match
+// (matchesBankAccount, lib/finance.js — the exact function
+// buildAccountInventory already uses) and persists it onto the debt itself.
+//
+// Rules, deliberately narrow:
+//   1. Only fills a debt whose own `limit` is empty (null/0/undefined/'') —
+//      never overwrites a truthy, user-entered limit, even if Plaid reports
+//      a different number for the matched account.
+//   2. No `limitSource`/provenance flag is persisted. The debts table's
+//      mapper (store.jsx's `mappers.debts`) writes `credit_limit`
+//      unconditionally on every row — unlike transactions/recurring's
+//      "only include the key when already present" convention — and `debts`
+//      is core data, not in `OPTIONAL_TABLES`. Adding a new `limit_source`
+//      column would need a migration
+//      (`ALTER TABLE debts ADD COLUMN IF NOT EXISTS limit_source text;`) that,
+//      if not yet run, would risk the whole debts upsert failing (not a
+//      soft/optional-table skip like account_tags/account_colors) — too
+//      risky for a nicety. Decided instead to keep this one-directional and
+//      migration-free: fill once while empty, then leave it alone forever,
+//      exactly like a number the user typed by hand. Tradeoff (accepted): if
+//      Plaid's reported limit later changes, an already-filled debt won't
+//      re-sync to the new number — same as it wouldn't if a human had typed
+//      it.
+//   3. Never touches balance/apr/min/dueDay/anything else on the debt —
+//      limits only, per the request.
+//   4. Idempotent — only calls `update()` when at least one debt actually
+//      needs filling (an empty Map short-circuits before touching the
+//      store), so calling this on every render/effect tick is safe and
+//      doesn't create diff-sync churn once every matched debt has its limit.
+export function reconcileDebtLimits(state, plaidItems, update) {
+  if (!state?.debts?.length || !plaidItems?.length) return
+  const plaidAccountsFlat = plaidItems.flatMap((it) => (it.accounts || []).map((a) => ({ ...a, institution: it.institution })))
+  if (!plaidAccountsFlat.length) return
+
+  const fills = new Map() // debtId -> limit
+  state.debts.forEach((d) => {
+    if (d.limit) return // already has a real limit (manual or previously auto-filled) — never overwrite
+    const m = matchesBankAccount(d, plaidAccountsFlat)
+    if (m && m.limit != null && m.limit > 0) fills.set(d.id, m.limit)
+  })
+  if (!fills.size) return
+
+  update((s) => {
+    s.debts.forEach((d) => { if (fills.has(d.id)) d.limit = fills.get(d.id) })
+  })
+}

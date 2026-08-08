@@ -119,6 +119,290 @@ before flipping the switch.
 
 ## Session log (newest first)
 
+### 2026-08-08 (22)
+- **"Add a chart where it shows the income in a year on Charts, and clicking
+  'avg monthly income'/'avg monthly spending' on Dashboard should take me to
+  that chart"** (Sonnet worker), per Israel's verbatim request. Read
+  `views/Charts.jsx` (recharts usage, how `noTr`/`months` are derived from
+  `state.transactions`), `views/Dashboard.jsx` (the KPI row — `Kpi` already
+  supports an optional `href`, both income/spending tiles already linked to
+  the bare `/charts`, per 2026-08-05 (2)'s dashboard redesign), and
+  `app/(app)/transactions/page.jsx` (the existing Suspense+`useSearchParams`
+  deep-link pattern) before changing anything. Confirmed first that no
+  "spending by month" *totals* chart already existed on Charts — the closest
+  thing, "Spending by Category per Month," is a stacked-by-category bar
+  chart (and deliberately excludes `cat === 'debt'`), not a plain monthly
+  total — so both requested charts were genuinely new, not a duplicate.
+  - **`views/Charts.jsx`**: two new Card charts, `incomeByMonth`/
+    `spendByMonth` — last 12 months (`months.slice(-12)`, `months` was
+    already computed ascending from `noTr`), summed with the *same*
+    definition `store.jsx`'s `incomeIn`/`expensesIn` use (`t.cat !==
+    'transfer'`, not excluding debt payments from spending) so the chart's
+    totals actually match what the Dashboard KPIs being clicked promise —
+    deliberately did not reuse the category-stacked chart's debt-exclusion
+    convention, since these are meant to mirror the KPI, not the category
+    breakdown. "Income by Month" (`id="chart-income"`, emerald `#34d399`
+    bars, same glow-filter/radius treatment Dashboard's own Income/Spending
+    combo chart already uses) placed right after "Running Total"; "Spending
+    by Month" (`id="chart-spending"`, `#e0655f` bars, same treatment)
+    placed right after it, both before the existing category-stacked chart.
+  - **Deep link**: `Charts` now takes an optional `focus` prop (`'income'` |
+    `'spending'`); a `useEffect` scrolls `document.getElementById(`chart-${focus}`)`
+    into view and applies a 2.2s highlight ring (`highlight` state, a plain
+    conditional Tailwind class — no manual DOM classList mutation) then
+    clears it. `app/(app)/charts/page.jsx` rewritten to the same
+    Suspense+`useSearchParams` shape `transactions/page.jsx` already
+    established (`ChartsPage` reads `?focus=`, passes it down to `<Charts>`;
+    the outer `Page` wraps it in `<Suspense>`).
+  - **`views/Dashboard.jsx`**: the "Avg Monthly Income" Kpi's `href` changed
+    from `/charts` to `/charts?focus=income`; "Avg Monthly Spending"'s to
+    `/charts?focus=spending`. `Kpi` itself (`components/shared.jsx`) needed
+    no changes — its `href` prop already renders the whole card as a
+    `<Link>`, confirmed by re-reading it, not assumed.
+  - **Files changed**: `views/Charts.jsx` (two new chart cards + focus/
+    highlight effect), `app/(app)/charts/page.jsx` (Suspense +
+    `useSearchParams` rewrite), `views/Dashboard.jsx` (two `href` values).
+  - **Left off / not verified**: no dev server, no npm installs, nothing
+    clicked in a real browser (standing instruction) — all three changed
+    files were checked with `npx esbuild <file> --bundle=false
+    --outfile=/dev/null` and parse cleanly. Next session with real access
+    should: (a) click both Dashboard KPIs and confirm `/charts?focus=income`
+    /`?focus=spending` land on Charts with the right card scrolled into view
+    and briefly ringed; (b) confirm the two new charts' totals actually
+    match the Dashboard KPI's "so far this month"/avg figures for the
+    current month (same `incomeIn`/`expensesIn` definition, but worth a
+    live sanity check); (c) confirm a user with <12 months of data doesn't
+    get an empty-looking chart (currently no explicit empty state on these
+    two cards — `months.slice(-12)` on a short history just renders fewer
+    bars, same as every other Charts.jsx chart already does with sparse
+    data, not a regression introduced here, but unverified at the extreme
+    of "zero transactions ever").
+
+### 2026-08-08 (21)
+- **"Convert my personal space into a shared space"** (Sonnet worker), per
+  Israel's verbatim request: "For the shared space: let me go to Settings,
+  and where it has the info, let me choose if I want to convert current
+  space into shared space." Read (17) (`transferPersonalDataToSpace`,
+  "Move my data here") and (10) (shared-space mechanics) first, per the
+  brief — this feature is deliberately built on top of both existing
+  primitives (`createSpace`, `transferPersonalDataToSpace`) rather than a
+  new store method: it's just those two calls back-to-back with a naming
+  dialog and toasts wrapped around them.
+  - **UI — `views/Settings.jsx`'s `SharedSpacesSection`**: a dashed-border
+    banner right under the section's explainer paragraph, gated on `!space
+    && hasDataToMove` (`space` = the active shared-space object, null means
+    Personal is active; `hasDataToMove` = any of
+    debts/budgets/recurring/transactions/goals/accounts has at least one
+    row) — hidden entirely for a shared-space view or a Personal space with
+    nothing in it yet. Button text is the literal ask: "Convert my personal
+    space into a shared space." Opens `ConvertToSharedSpaceDialog` (new,
+    `components/space-name-dialog.jsx`, alongside `SpaceNameDialog` — same
+    shape but paired with a `busy` prop the caller drives across the whole
+    multi-step flow, not a self-contained `saving` state, since naming is
+    only step one here). Prefill: `` `${user.firstName} & partner}` `` when
+    Clerk has a first name, else "Our finances." Dialog copy (verbatim,
+    per the brief): *"This creates a shared space, moves all your current
+    data into it — accounts, debts, budgets, transactions, bank
+    connections — and gives you an invite link for your partner. Your
+    Personal space will be empty afterward."* Confirm button: "Create &
+    Move" (spinner while `busy`).
+  - **`convertToShared(name)`** (Settings.jsx): `createSpace(name)` →
+    `transferPersonalDataToSpace(target.id)` → `copyInvite(target)` (the
+    exact same function the per-space "Copy invite link" pill already
+    calls — clipboard-writes silently or falls back to the existing
+    `InviteLinkDialog`, satisfying "reuse the existing copy-invite-link
+    mechanism" literally, no new invite code path). `createSpace` already
+    calls `setSpace(info)` internally, so "switches them into that space"
+    falls out of the existing function for free — nothing new needed there.
+  - **Failure handling (mirrors (17) exactly, same priority order as
+    `confirmMove`)**:
+    - `createSpace` fails → `centerToast` error, stop. Nothing was created,
+      nothing moved — genuinely a no-op.
+    - `transferPersonalDataToSpace` returns `.error` (a `CORE_TRANSFER_TABLES`
+      failure — debts/payments/budgets/recurring/transactions/goals) →
+      `centerToast` error explaining the space *was* created but the move
+      failed, personal data is untouched (per (17)'s hard-abort-before-
+      delete guarantee), and pointing at that space's own "Move my data
+      here" pill to retry. The one side effect on this path: an empty
+      shared space now exists — not undone, since transferPersonalDataToSpace
+      has no create-side rollback and building one was out of scope; data-
+      loss-wise this is still "nothing lost," per the brief.
+    - `.warning` (an `OPTIONAL_TRANSFER_TABLES` failure — accounts/
+      account_tags/account_colors lagging a migration) → `centerToast`
+      error with that table's warning, but proceeds to `copyInvite` — the
+      real financial data already moved.
+    - `.bankError` (plaid_items transfer failed via `/api/plaid/transfer`)
+      → `centerToast` error naming the bank issue, but also proceeds to
+      `copyInvite` — same "partial failure warns but doesn't block" shape
+      as (17).
+    - Full success → `centerToast` success, then `copyInvite`.
+  - **Real bug found and fixed while wiring this up, not hypothetical**:
+    `transferPersonalDataToSpace` in `store.jsx` gated on `spaces.some((s)
+    => s.id === targetSpaceId)` — a check against the **local React `spaces`
+    state**, not the database. `convertToShared` calls
+    `transferPersonalDataToSpace` immediately after `createSpace` resolves,
+    in the same tick — but `createSpace`'s `setSpaces(...)` state update
+    hadn't re-rendered yet, so the `transferPersonalDataToSpace` closure
+    still in scope was holding the *pre-creation* `spaces` array, which
+    obviously doesn't contain the space that was just created. Every prior
+    caller of `transferPersonalDataToSpace` (the per-space "Move my data
+    here" pill) only ever targeted a space that had already been sitting in
+    `spaces` for at least one prior render, so this race never surfaced
+    before. **Fixed** by replacing the local-array check with a real
+    `workspace_members` query (`.eq('workspace_id',
+    targetSpaceId).eq('user_id', sourceId).maybeSingle()`) — strictly more
+    correct in general, not just a workaround for this one caller.
+  - **`createSpace`'s return value widened**: previously just `{ok: true}`
+    on success; now `{ok: true, id, name}` so a caller that creates a space
+    and immediately needs its id (this feature) doesn't have to guess it
+    back out of local state. Purely additive — every existing caller
+    (`saveNewSpace`) only ever checked `.error`, unaffected.
+  - **Existing per-space "Move my data here" pill**: untouched, byte-
+    identical, per the explicit requirement to keep it as-is.
+  - **Files changed**: `store.jsx` (`createSpace` return value,
+    `transferPersonalDataToSpace`'s membership check),
+    `components/space-name-dialog.jsx` (new `ConvertToSharedSpaceDialog`),
+    `views/Settings.jsx` (`SharedSpacesSection`: banner, `hasDataToMove`,
+    `convertToShared`, dialog render).
+  - **Left off / not verified**: no dev server, no npm installs, nothing
+    clicked in a real browser (standing instruction) — all three
+    changed/new files were checked with `npx esbuild <file> --bundle=false
+    --outfile=/tmp/out.js` and parse cleanly. The membership-check race fix
+    is reasoned from React's closure/batching semantics, not observed live.
+    Next session with real two-account access should: (a) click "Convert
+    my personal space into a shared space" from an account with real data
+    across several tables, confirm the new space actually receives
+    everything and Personal ends up empty; (b) confirm the membership-check
+    fix actually resolves the race — i.e. this doesn't error with "You're
+    not a member of that space" immediately after creation; (c) confirm the
+    invite link surfaces (clipboard copy or the fallback dialog) right
+    after a successful convert; (d) deliberately break a core table's write
+    (e.g. rename a column) mid-flow and confirm the space is created empty,
+    personal data is provably untouched, and the error toast's guidance to
+    use "Move my data here" to retry actually works; (e) confirm the banner
+    is hidden both for a brand-new empty account and while a shared space
+    is the active view.
+
+### 2026-08-08 (20)
+- **Dashboard Cash Flow month-list dropdown** (Sonnet worker), per Israel's
+  verbatim request: "Add a dropdown, just show the last 3 months" — the
+  per-month cash-flow history rows (`views/Dashboard.jsx`, under the Money
+  In/Out tiles) previously rendered every month `dataMonths(state)` had data
+  for (unbounded, grows forever as transaction history accumulates).
+  - **New local state `monthsView`** (`'3'` default, or `'6'`/`'12'`/
+    `'all'`), persisted via plain `localStorage` under `fin-dash-months` —
+    copied the exact pattern `views/Recurring.jsx` already uses for
+    `fin-rec-view` (CLAUDE.md 2026-08-08 (13)): a `useState` default, a
+    mount-time `useEffect` reading the saved value (wrapped in try/catch,
+    same defensive shape), and a `changeMonthsView(v)` setter that updates
+    state and writes localStorage in the same call. Untethered to user id,
+    same reasoning as `fin-rec-view` — a per-browser display preference, not
+    data that needs to sync across devices or through the store.
+  - **`visibleMonths = monthsView === 'all' ? months : months.slice(0,
+    +monthsView)`** — `dataMonths(state)` (store.jsx) already returns months
+    sorted newest-first (`.sort().reverse()`), so `.slice(0, N)` is exactly
+    "last N months." The list `.map()` now iterates `visibleMonths` instead
+    of `months`; `avgIncome`/`avgExp` (the KPI tiles above) still average
+    over the *full* `months`/`fullM` — deliberately unaffected by this
+    display-only filter, since those aren't part of the list being trimmed.
+  - **Control**: a small `<Select>` (`components/ui/select.jsx` — the
+    app's existing native-select primitive, same one Transactions.jsx's
+    category/account filters already use) placed top-right of the month
+    list via a `flex items-center justify-end` wrapper row, options "Last 3
+    months" (default) / "Last 6 months" / "Last 12 months" / "All".
+    `!h-7 text-[0.6875rem]` to match the list's small type scale;
+    `max-w-[8.5rem]` on mobile (uncapped at `sm:`) so a long option string
+    can't push the row wider than a 390px viewport — same capping technique
+    CLAUDE.md 2026-08-08 (9) already used for Transactions' account
+    `<Select>`.
+  - **Row click behavior unchanged**: the "Show `<month>` in the cards
+    above" `onClick`/`title`/active-highlight logic inside the `.map()` body
+    was not touched, only the array it iterates over.
+  - **Files changed**: `views/Dashboard.jsx` (new `useEffect` import,
+    `Select` import, `MONTHS_VIEW_KEY`/`MONTHS_VIEW_OPTIONS` constants,
+    `monthsView` state/effect/setter, `visibleMonths`, the new `<Select>`
+    row).
+  - **Left off / not verified**: no dev server, no npm installs, nothing
+    clicked in a real browser (standing instruction) — verified with `npx
+    esbuild views/Dashboard.jsx --bundle=false --outfile=/dev/null`, parses
+    clean. Next session with real access should confirm (a) the dropdown
+    defaults to "Last 3 months" on a fresh browser and the list actually
+    shows only 3 rows; (b) switching options updates the list immediately
+    and the choice survives a page reload (localStorage); (c) the select
+    doesn't crowd the row at a real ~390px viewport next to the "Cash Flow"
+    card's existing padding; (d) clicking a still-visible month row still
+    correctly filters the KPI tiles above, unchanged from before.
+
+### 2026-08-08 (19)
+- **Auto-fill manual debt credit limits from a matched Plaid account**
+  (Sonnet worker), per Israel's verbatim request: "For the limits I was
+  talking about credit card limits. Like Venture is 300 limit. Let it
+  automatically fill those out." Session (15) made a matched Plaid
+  account's real `balances.limit` show up in `buildAccountInventory`'s
+  *derived* `fromDebts()` rows (the Accounts page / detail view), but that's
+  read-only — the debt's own stored `limit` field (what `DebtDialog`'s
+  input edits, and what payoff/utilization math elsewhere reads directly
+  off `state.debts`) never actually received the value. Read this file's
+  (15) and (5) entries, `lib/accounts.js`'s `buildAccountInventory`/
+  `fromDebts`, `store.jsx`'s `debts` mapper, `views/Debts.jsx`, and
+  `lib/finance.js`'s `matchesBankAccount` before changing anything.
+  - **New `reconcileDebtLimits(state, plaidItems, update)`**
+    (`lib/accounts.js`) — for every debt whose own `limit` is empty
+    (falsy: `null`/`0`/`undefined`), fuzzy-matches it to a connected Plaid
+    account via the same `matchesBankAccount()` `buildAccountInventory`
+    already uses, and if the match reports a real `limit > 0`, writes it
+    onto that debt via the store's normal `update(fn)` mutator (persists
+    through the existing diff-sync, no new API surface). A debt with any
+    truthy limit — user-typed or previously auto-filled — is never touched,
+    even if Plaid's number disagrees. Idempotent: batches every needed fill
+    into a `Map` first and only calls `update()` at all if that map is
+    non-empty, so once every matched debt has a limit this becomes a cheap
+    no-op instead of looping the diff-sync.
+  - **Decided against persisting a `limitSource: 'plaid'` provenance flag**
+    (the task's optional stretch goal) — `store.jsx`'s `mappers.debts.toRow`
+    writes `credit_limit` unconditionally on every row (unlike
+    transactions/recurring's "only include the key when already present"
+    convention for newer optional columns), and `debts` is core data, not
+    in `OPTIONAL_TABLES` — a `limit_source` column needing
+    `ALTER TABLE debts ADD COLUMN IF NOT EXISTS limit_source text;` before
+    it exists would risk the *entire* debts upsert failing on an
+    un-migrated project, not a soft skip like account_tags/account_colors.
+    Too risky for a nicety, so no migration is needed for this feature at
+    all. Simpler rule instead: fill once while empty, then leave it alone
+    forever — identical treatment to a number the user typed by hand.
+    Tradeoff, accepted: if Plaid's reported limit changes later, an
+    already-filled debt won't re-sync to the new number.
+  - **Wired into `views/Debts.jsx`** (the "least invasive" central spot —
+    this page already fetched `/api/plaid/items` on mount purely to badge
+    debt cards "Bank connected" vs "Manual entry"): kept that one fetch,
+    but now stores the raw per-item list (`plaidItems` state) instead of a
+    pre-flattened array, deriving the flattened `plaidAccounts` (used by the
+    existing badge logic, unchanged) via a `useMemo`. A new
+    `useEffect(() => reconcileDebtLimits(state, plaidItems, update), [state.debts, plaidItems])`
+    runs the fill whenever the debts list or the connected accounts change
+    — safe to re-run repeatedly since the function is idempotent per above.
+  - **Balances are explicitly out of scope** — only `limit` is touched;
+    balance/apr/min/dueDay flow through entirely different paths (manual
+    entry, or the Plaid-matched *display* fallback in `buildAccountInventory`)
+    and weren't asked for.
+  - **Files changed**: `lib/accounts.js` (new `reconcileDebtLimits`),
+    `views/Debts.jsx` (raw `plaidItems` state + derived `plaidAccounts` +
+    the new reconcile effect).
+  - **Left off / not verified**: no dev server, no npm installs, nothing
+    clicked in a real browser (standing instruction) — both changed files
+    were checked with `npx esbuild <file> --bundle=false
+    --outfile=/tmp/out.js` and parse cleanly. Not exercised against a real
+    Plaid sandbox/production account. Next session with real access should:
+    (a) connect (or use an already-connected) Venture-like sandbox credit
+    card, add a manual debt whose name fuzzy-matches it with no limit set,
+    confirm the limit fills in automatically on the Debts page without
+    reloading the browser tab (once `plaidItems` loads) and persists after a
+    real refresh (Supabase round-trip, existing `credit_limit` column — no
+    migration needed); (b) confirm a debt with a manually-typed limit is
+    never overwritten even if it's matched to a Plaid account reporting a
+    different number; (c) confirm a debt matched to a Plaid account with no
+    reported limit (`limit: null`) is left alone, not zeroed out.
+
 ### 2026-08-08 (18)
 - **Migration correction (Fable review):** every diff-sync upsert in
   `store.jsx` uses `onConflict: 'user_id,id'`, which requires a UNIQUE index

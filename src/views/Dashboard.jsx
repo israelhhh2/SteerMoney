@@ -1,5 +1,5 @@
 'use client'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useUser } from '@clerk/nextjs'
 import { TrendingUp, TrendingDown, CreditCard, CalendarDays, X, Lightbulb, Target } from 'lucide-react'
@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Segmented } from '@/components/ui/segmented'
+import { Select } from '@/components/ui/select'
 import { SectionHead, SectionLabel, Kpi, MoneyTile, CatIcon, Bar, Ring, budgetTone, Money, CardChip } from '@/components/shared'
 import { useApp, monthTx, rangeTx, incomeIn, expensesIn, spentIn, dataMonths } from '@/store'
 import { debtUrlId, colorForAccount } from '@/lib/accounts'
@@ -27,6 +28,13 @@ const TIP = {
   labelStyle: { color: '#d4d4d8', fontWeight: 600, marginBottom: 2 },
   itemStyle: { color: '#e4e4e7' },
 }
+
+// Per-month cash-flow list length — plain localStorage (same untethered-to-
+// user-id convention as Recurring.jsx's `fin-rec-view`, CLAUDE.md 2026-08-08
+// (13)), not a store/DB slice: this is a per-browser display preference, not
+// data that needs to sync across devices.
+const MONTHS_VIEW_KEY = 'fin-dash-months'
+const MONTHS_VIEW_OPTIONS = [['3', 'Last 3 months'], ['6', 'Last 6 months'], ['12', 'Last 12 months'], ['all', 'All']]
 
 function cfBounds(range) {
   const t = today()
@@ -57,9 +65,13 @@ export default function Dashboard() {
   const firstName = viewingAs ? viewingAs.name.split(' ')[0] : user?.firstName
   const [range, setRange] = useState({ mode: 'month', from: null, to: null })
   const [cfView, setCfView] = useState(null)
+  const [monthsView, setMonthsView] = useState('3')
+  useEffect(() => { try { setMonthsView(localStorage.getItem(MONTHS_VIEW_KEY) || '3') } catch {} }, [])
+  const changeMonthsView = (v) => { setMonthsView(v); try { localStorage.setItem(MONTHS_VIEW_KEY, v) } catch {} }
 
   const nowYm = today().slice(0, 7)
   const months = dataMonths(state)
+  const visibleMonths = monthsView === 'all' ? months : months.slice(0, +monthsView)
   const fullM = months.filter((m) => m !== nowYm)
   const avgIncome = fullM.length ? fullM.reduce((s, m) => s + incomeIn(state, m), 0) / fullM.length : incomeIn(state, nowYm)
   const avgExp = fullM.length ? fullM.reduce((s, m) => s + expensesIn(state, m), 0) / fullM.length : expensesIn(state, nowYm)
@@ -219,8 +231,13 @@ export default function Dashboard() {
           </div>
         )}
 
+        <div className="mb-1.5 flex items-center justify-end">
+          <Select className="!h-7 w-auto max-w-[8.5rem] text-[0.6875rem] sm:max-w-none" value={monthsView} onChange={(e) => changeMonthsView(e.target.value)}>
+            {MONTHS_VIEW_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+          </Select>
+        </div>
         <div className="divide-y divide-border/60">
-          {months.map((m) => {
+          {visibleMonths.map((m) => {
             const inc = incomeIn(state, m), ex = expensesIn(state, m), net = inc - ex
             const on = range.mode === 'ym' && range.ym === m
             return (
@@ -247,8 +264,8 @@ export default function Dashboard() {
 
       {/* KPIs — each tile is its own card, so each links straight to its detail page */}
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <Kpi label="Avg Monthly Income" value={<Money value={fmt0(avgIncome)} />} icon={TrendingUp} tone="text-emerald-400" sub={`${ymLabel(nowYm)} so far: ${fmt0(incomeIn(state, nowYm))}`} href="/charts" />
-        <Kpi label="Avg Monthly Spending" value={<Money value={fmt0(avgExp)} />} icon={TrendingDown} sub={`${ymLabel(nowYm)} so far: ${fmt0(expensesIn(state, nowYm))}`} href="/charts" />
+        <Kpi label="Avg Monthly Income" value={<Money value={fmt0(avgIncome)} />} icon={TrendingUp} tone="text-emerald-400" sub={`${ymLabel(nowYm)} so far: ${fmt0(incomeIn(state, nowYm))}`} href="/charts?focus=income" />
+        <Kpi label="Avg Monthly Spending" value={<Money value={fmt0(avgExp)} />} icon={TrendingDown} sub={`${ymLabel(nowYm)} so far: ${fmt0(expensesIn(state, nowYm))}`} href="/charts?focus=spending" />
         <Kpi label="Total Debt" value={<Money value={fmt0(totalDebt)} />} icon={CreditCard} tone="text-red-400" sub={plan.done ? `debt-free ${monthLabel(plan.end)} on your plan` : ''} href="/debts" />
         <Kpi label="Fixed Monthly Payments" value={<Money value={fmt0(mins + recTotal)} />} icon={CalendarDays} sub={`${fmt0(mins)} debt + ${fmt0(recTotal)} bills`} href="/recurring" />
       </div>
