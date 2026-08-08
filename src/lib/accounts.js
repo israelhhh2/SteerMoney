@@ -185,6 +185,12 @@ export function buildAccountInventory(state, plaidItems) {
       mask: m?.mask || extractMask(d.name), subtype: m?.subtype || null,
       institution: m?.institution || null, balance: d.balance, limit: d.limit || null,
       account_id: m?.account_id || null, last_synced: item?.last_synced || null,
+      // item_id/status mirror the connection this debt is matched to (if
+      // any), so the "still syncing" placeholder (see usePlaidItems below,
+      // AccountDetail.jsx, views/Accounts.jsx) applies to a manual debt
+      // that's matched to a freshly-connected Plaid account too, not just
+      // unmatchedPlaid rows.
+      item_id: item?.item_id || null, status: item?.status || null,
       source: 'debt', debtId: d.id, history: null,
     }
   })
@@ -200,6 +206,9 @@ export function buildAccountInventory(state, plaidItems) {
       // belongs to — Plaid has no per-account delete API, so AccountDetail's
       // "Disconnect bank" action needs this to DELETE /api/plaid/items.
       item_id: it.item_id || null,
+      // 'syncing' while the item's historical backfill is still in flight
+      // (see lib/plaid-sync.js) — drives the "please wait" placeholders.
+      status: it.status || null,
       source: 'plaid', history: null,
     })))
 
@@ -268,8 +277,22 @@ export function backToAccounts(router) {
   else router.push('/accounts')
 }
 
-// Fetches /api/plaid/items once, shared by Accounts.jsx and AccountDetail.jsx
-// (both need the same connected-accounts list to build the same inventory).
+// Fetches /api/plaid/items once, shared by Accounts.jsx, AccountDetail.jsx,
+// and Transactions.jsx (all three need the same connected-accounts list to
+// build the same inventory / resolve an account's sync status).
+//
+// Also self-polls while any item is still 'syncing' (a freshly-connected
+// bank whose 730-day historical backfill hasn't landed yet — see
+// lib/plaid-sync.js and the webhook route's HISTORICAL_UPDATE/
+// SYNC_UPDATES_AVAILABLE handling): every ~10s it nudges POST
+// /api/plaid/sync (in case the webhook was never registered or missed) then
+// re-fetches /api/plaid/items, so the "please wait, transactions are
+// loading" placeholders these three views show flip to real data on their
+// own, no manual refresh needed. Gives up after ~2 minutes of polling — the
+// server-side age fallback in app/api/plaid/sync (and the webhook route)
+// eventually clears a stuck flag on the next real "Sync now" or webhook
+// regardless. Self-cleaning: the effect tears down its own timer on unmount
+// or as soon as nothing is 'syncing' anymore.
 export function usePlaidItems() {
   const [plaidItems, setPlaidItems] = useState([])
   const [plaidChecked, setPlaidChecked] = useState(false)
@@ -282,6 +305,32 @@ export function usePlaidItems() {
       .catch(() => { if (on) setPlaidChecked(true) })
     return () => { on = false }
   }, [])
+
+  const hasSyncingItem = plaidChecked && plaidItems.some((it) => it.status === 'syncing')
+
+  useEffect(() => {
+    if (!hasSyncingItem) return
+    let on = true
+    let attempts = 0
+    const MAX_ATTEMPTS = 12 // ~2 minutes at 10s intervals
+    let timer = null
+    const tick = async () => {
+      attempts++
+      try { await fetch('/api/plaid/sync', { method: 'POST' }) } catch { /* best-effort nudge */ }
+      try {
+        const r = await fetch('/api/plaid/items')
+        const d = await r.json()
+        if (!on) return
+        setPlaidItems(d.items || [])
+      } catch { /* keep polling through a transient fetch failure */ }
+      if (on && attempts < MAX_ATTEMPTS) timer = setTimeout(tick, 10000)
+    }
+    timer = setTimeout(tick, 10000)
+    return () => { on = false; clearTimeout(timer) }
+    // Deliberately depends on the derived boolean, not `plaidItems` itself —
+    // depending on the array would reset `attempts` to 0 on every poll tick
+    // (since each tick calls setPlaidItems), defeating the MAX_ATTEMPTS cap.
+  }, [hasSyncingItem])
 
   return { plaidItems, plaidChecked }
 }

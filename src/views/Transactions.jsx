@@ -1,19 +1,20 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, CreditCard, Pencil, Plus, Search, Upload, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, Landmark, Pencil, Plus, Search, Upload, X } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { CatIcon, CatChip, ConfirmDialog } from '@/components/shared'
+import { CatIcon, CatChip, ConfirmDialog, TransactionsSkeleton } from '@/components/shared'
 import { useApp, monthTx } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
 import { fmt, fmt0, today, ymLabel, prettyDate, uid } from '@/lib/utils'
 import { parseWescomCSV, guessCat } from '@/lib/wescom'
+import { usePlaidItems } from '@/lib/accounts'
 
-export default function Transactions({ preset, clearPreset, accountFilter, clearAccountFilter }) {
+export default function Transactions({ preset, clearPreset, accountFilter, setAccountFilter }) {
   const { state, update, catInfo } = useApp()
   const toast = useToast()
   const centerToast = useCenterToast()
@@ -23,29 +24,46 @@ export default function Transactions({ preset, clearPreset, accountFilter, clear
   const [cat, setCat] = useState('all')
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
   const [importRows, setImportRows] = useState(null) // null closed · [] -> preview dialog
-  const [filterAccount, setFilterAccount] = useState(null) // {mask, institution} resolved for the chip label
   const [confirmDelId, setConfirmDelId] = useState(null) // transaction id pending delete confirmation
   const [deleting, setDeleting] = useState(false)
+  const { plaidItems } = usePlaidItems()
 
-  // Resolve a friendly label (mask/institution) for the ?account= filter chip.
-  // The identifier itself is the Plaid account_id — matched against
-  // transactions.accountId (populated by app/api/plaid/sync's upsert).
-  useEffect(() => {
-    if (!accountFilter) { setFilterAccount(null); return }
-    let on = true
-    fetch('/api/plaid/items')
-      .then((r) => r.json())
-      .then((d) => {
-        if (!on) return
-        for (const it of d.items || []) {
-          const a = (it.accounts || []).find((x) => x.account_id === accountFilter)
-          if (a) { setFilterAccount({ mask: a.mask, name: a.name, institution: it.institution }); return }
-        }
-        setFilterAccount({})
-      })
-      .catch(() => { if (on) setFilterAccount({}) })
-    return () => { on = false }
-  }, [accountFilter])
+  // One flat lookup, keyed by Plaid account_id, shared by the account
+  // dropdown's options and each row's small "which account" label — both
+  // just need {institution, name, mask, status} for a given accountId.
+  // usePlaidItems() (lib/accounts.js) self-polls while any item is
+  // 'syncing', so `status` here flips to 'ok' on its own once the
+  // historical backfill lands — no extra effect needed here for that.
+  const accountsById = useMemo(() => {
+    const map = {}
+    for (const it of plaidItems) {
+      for (const a of it.accounts || []) {
+        map[a.account_id] = { mask: a.mask, name: a.name, institution: it.institution, status: it.status }
+      }
+    }
+    return map
+  }, [plaidItems])
+
+  // Dropdown options, one per known Plaid account — "Institution — Name
+  // ••mask" per the design brief. Sorted by institution then account name
+  // so accounts from the same bank sit together as the list grows.
+  const accountOptions = useMemo(() => {
+    const opts = []
+    for (const it of plaidItems) {
+      for (const a of it.accounts || []) {
+        const label = `${it.institution || 'Bank'} — ${a.name}${a.mask ? ` ••${a.mask}` : ''}`
+        opts.push({ id: a.account_id, label, institution: it.institution || '', name: a.name || '' })
+      }
+    }
+    return opts.sort((x, y) => x.institution.localeCompare(y.institution) || x.name.localeCompare(y.name))
+  }, [plaidItems])
+
+  const filterAccount = accountFilter ? accountsById[accountFilter] || {} : null
+
+  // While the filtered account's bank connection is still pulling in its
+  // historical backfill, show the same "please wait" placeholder used by
+  // AccountDetail.jsx instead of a possibly-empty/partial transaction list.
+  const isSyncingAccount = !!accountFilter && filterAccount?.status === 'syncing'
 
   const importFile = (file) => {
     if (!file) return
@@ -118,12 +136,17 @@ export default function Transactions({ preset, clearPreset, accountFilter, clear
           {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           <option value="debt">Debt Payment</option><option value="income">Income</option><option value="transfer">Transfer</option>
         </Select>
-        {accountFilter && (
-          <div className="flex shrink-0 items-center gap-1.5 rounded-full border bg-secondary/60 px-2.5 py-1 text-[0.75rem] font-semibold">
-            <CreditCard className="h-3 w-3 shrink-0 text-muted-foreground" />
-            <span className="whitespace-nowrap">{filterAccount?.mask ? `•• ${filterAccount.mask}` : filterAccount?.name || 'Account'}</span>
-            <button onClick={clearAccountFilter} title="Clear account filter" className="text-muted-foreground transition hover:text-foreground"><X className="h-3 w-3" /></button>
-          </div>
+        {/* Only rendered once there's at least one connected bank — manual-only
+            users have nothing to filter by, so no dropdown clutter (design goal 3). */}
+        {accountOptions.length > 0 && (
+          <Select
+            className="max-w-[9.5rem] text-xs sm:max-w-[13rem]"
+            value={accountFilter || ''}
+            onChange={(e) => setAccountFilter(e.target.value || null)}
+          >
+            <option value="">All accounts</option>
+            {accountOptions.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+          </Select>
         )}
         <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
           <Badge>In <b className="text-emerald-400">{fmt0(inc)}</b></Badge>
@@ -135,13 +158,28 @@ export default function Transactions({ preset, clearPreset, accountFilter, clear
       </Card>
 
       <Card className="overflow-hidden">
-        {dates.length ? dates.map((dt) => (
+        {isSyncingAccount ? (
+          <div className="p-4">
+            <TransactionsSkeleton />
+          </div>
+        ) : dates.length ? dates.map((dt) => (
           <div key={dt}>
             <div className="border-y border-border/60 bg-secondary/40 px-4 py-1.5 text-[0.65625rem] font-semibold uppercase tracking-wider text-muted-foreground first:border-t-0">{prettyDate(dt)}</div>
-            {byDate[dt].map((t) => (
+            {byDate[dt].map((t) => {
+              const acct = t.accountId ? accountsById[t.accountId] : null
+              const acctLabel = acct ? `${acct.institution || 'Bank'}${acct.mask ? ` ••${acct.mask}` : acct.name ? ` — ${acct.name}` : ''}` : null
+              return (
               <div key={t.id} className="group flex items-center gap-3 px-4 py-2 transition-colors hover:bg-secondary/30">
                 <span className="flex w-6 shrink-0 justify-center"><CatIcon cat={t.cat} /></span>
-                <span className="min-w-0 flex-1 truncate text-[0.8125rem] text-foreground/90" title={t.desc}>{t.desc}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[0.8125rem] text-foreground/90" title={t.desc}>{t.desc}</span>
+                  {acctLabel && (
+                    <span className="flex items-center gap-1 truncate text-[0.625rem] text-muted-foreground" title={acctLabel}>
+                      <Landmark className="h-2.5 w-2.5 shrink-0" />
+                      <span className="truncate">{acctLabel}</span>
+                    </span>
+                  )}
+                </span>
                 <span className="hidden sm:inline-flex"><CatChip cat={t.cat} /></span>
                 <span className={`w-20 shrink-0 text-right text-[0.8125rem] font-semibold sm:w-24 ${t.type === 'income' ? 'text-emerald-400' : t.cat === 'transfer' ? 'text-muted-foreground' : ''}`}>
                   {t.type === 'income' ? '+' : '−'}{fmt(t.amount)}
@@ -151,11 +189,12 @@ export default function Transactions({ preset, clearPreset, accountFilter, clear
                   <button className="text-muted-foreground transition hover:text-red-400 sm:opacity-0 sm:group-hover:opacity-100" title="Delete" onClick={() => setConfirmDelId(t.id)}><X className="h-3.5 w-3.5" /></button>
                 </span>
               </div>
-            ))}
+              )
+            })}
           </div>
         )) : (
           <div className="p-10 text-center text-[0.8125rem] text-muted-foreground">
-            No transactions in {ymLabel(ym)}{(q || cat !== 'all' || accountFilter) && <> matching your filters — <button className="text-primary hover:underline" onClick={() => { setQ(''); setCat('all'); if (accountFilter) clearAccountFilter() }}>clear filters</button></>}.
+            No transactions in {ymLabel(ym)}{(q || cat !== 'all' || accountFilter) && <> matching your filters — <button className="text-primary hover:underline" onClick={() => { setQ(''); setCat('all'); if (accountFilter) setAccountFilter(null) }}>clear filters</button></>}.
           </div>
         )}
       </Card>

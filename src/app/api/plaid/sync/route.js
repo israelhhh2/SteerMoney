@@ -18,7 +18,13 @@ export async function POST() {
 
     let added = 0, modified = 0, removed = 0
     for (const item of items || []) {
-      const r = await syncPlaidItem(item)
+      // Fallback for a 'syncing' item whose HISTORICAL_UPDATE/
+      // SYNC_UPDATES_AVAILABLE webhook never arrived (not registered yet,
+      // delivery failure, etc): once the item is old enough that Plaid's
+      // backfill has almost certainly finished, a manual "Sync now" clears
+      // the flag too, same as the webhook route does on its own timer.
+      const ageMs = item.created_at ? Date.now() - new Date(item.created_at).getTime() : Infinity
+      const r = await syncPlaidItem(item, { clearSyncing: ageMs > 15 * 60 * 1000 })
       added += r.added
       modified += r.modified
       removed += r.removed

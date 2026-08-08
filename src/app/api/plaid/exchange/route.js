@@ -26,13 +26,27 @@ export async function POST(req) {
       balance: a.balances?.current ?? null,
     }))
 
-    const { error } = await supabaseAdmin.from('plaid_items').insert({
+    // New connections start life 'syncing' — Plaid's initial
+    // transactionsSync call returns recent data fast, but the 730-day
+    // historical backfill (days_requested, see app/api/plaid/link-token)
+    // lands minutes later via the webhook's HISTORICAL_UPDATE/
+    // SYNC_UPDATES_AVAILABLE handling (lib/plaid-sync.js). The client shows
+    // a "pulling in your transactions" placeholder for as long as this is
+    // 'syncing'. Defensive: retried below without `status` if the column
+    // isn't migrated yet (see CLAUDE.md).
+    const insertRow = {
       user_id: userId,
       item_id,
       access_token,
       institution: institution || null,
       accounts,
-    })
+      status: 'syncing',
+    }
+    let { error } = await supabaseAdmin.from('plaid_items').insert(insertRow)
+    if (error && /status/i.test(error.message || '')) {
+      const { status, ...rest } = insertRow
+      ;({ error } = await supabaseAdmin.from('plaid_items').insert(rest))
+    }
     if (error) throw error
 
     return Response.json({ ok: true, institution: institution || null })

@@ -118,6 +118,168 @@ before flipping the switch.
 
 ## Session log (newest first)
 
+### 2026-08-08 (9)
+- **Transactions: show which account each row is from + filter by account**
+  (Sonnet worker), per Israel's verbatim request — prep for multiple
+  connected banks. Read `views/Transactions.jsx`, `lib/accounts.js`
+  (`usePlaidItems`), `components/shared.jsx` (`SourceBadge`/`CardChip`
+  conventions), and `store.jsx`'s transactions mapper (`accountId` only
+  present when the row has one) before changing anything — no store/schema
+  changes needed, this is purely a read+display+filter feature on data
+  that's already synced (`t.accountId` ↔ Plaid `account_id`).
+  - **Per-row account label**: each transaction row's description now
+    stacks a second, smaller muted line underneath it —
+    `<Landmark> Institution ••mask` (falls back to `— Account Name` if a
+    Plaid account has no mask). Built from one `accountsById` lookup
+    (`views/Transactions.jsx`, keyed by Plaid `account_id`, sourced from
+    `usePlaidItems()`) shared with the new dropdown below. Manual rows
+    (`t.accountId` falsy) render no second line at all — deliberately not
+    even a "Manual" pill here, since design goal 1 only asked for it on
+    rows that have an account, and a bare description at the same
+    single-line height it always had is the least cluttered "nothing to
+    say" state. Lives inside the row's existing `min-w-0 flex-1` wrapper
+    (previously just the `<span>` description itself, now a `<span>`
+    wrapping both lines), so both lines truncate independently at any
+    viewport width — verified against the mobile `min-w-0` pattern CLAUDE.md
+    already documents for this file (2026-08-04 entry).
+  - **Account filter unified into one dropdown**: replaced the old
+    ?account= removable chip (a `<div>` with an X button, separate from the
+    category `<Select>` next to it — two competing controls for the same
+    kind of filtering) with a second native `<Select>` right next to the
+    category one: "All accounts" + one `<option>` per known Plaid account,
+    labeled `"{institution} — {account name} ••{mask}"`. Same identifier
+    space as before (Plaid `account_id`) and the same `?account=` query
+    param — `app/(app)/transactions/page.jsx`'s `clearAccount` helper was
+    generalized into `setAccount(id)` (sets the param when truthy, deletes
+    it when `null`/empty), passed down as a single `setAccountFilter` prop
+    replacing the old `clearAccountFilter`. Deep links from
+    `AccountDetail.jsx`'s "View all in Transactions" (`/transactions?account=
+    {plaid_account_id}`, added 2026-08-05 (3)) are unchanged and now show up
+    as the dropdown already having that account selected, rather than a
+    separate chip next to an unrelated "All accounts"-looking select — one
+    obvious control, matches the deep link automatically.
+  - **Zero-Plaid-accounts case**: the whole account `<Select>` is
+    conditionally rendered (`accountOptions.length > 0`) — a manual-only
+    user sees the exact same toolbar as before this change, no empty
+    dropdown, no "All accounts" clutter with nothing to pick.
+  - **Mobile width**: the new `<Select>` has `max-w-[9.5rem]`
+    (`sm:max-w-[13rem]`) so a long "Institution — Account Name ••1234"
+    label can't push the already-`flex-wrap`ped toolbar row wider than a
+    390px viewport — the select itself truncates/scrolls its own text via
+    native `<select>` behavior, the container just caps how much horizontal
+    space it's allowed to claim before wrapping to the next line.
+  - **Files changed**: `views/Transactions.jsx` (per-row label, account
+    lookup/options, dropdown, prop rename `clearAccountFilter` →
+    `setAccountFilter`), `app/(app)/transactions/page.jsx` (`setAccount`
+    replacing `clearAccount`).
+  - **Verification**: no dev server/npm installs (standing instruction);
+    both changed files were checked with `npx esbuild <file> --bundle=false
+    --outfile=/dev/null` and parse cleanly. Not clicked in a real browser —
+    next session should confirm the dropdown's selected value tracks a
+    deep-linked `?account=` correctly, the two-line row doesn't look
+    cramped at real row heights next to the category `CatChip`/amount
+    columns, and the `<select>`'s native option list is readable on an
+    actual small screen (native selects render their own OS picker, so this
+    is lower-risk than a custom dropdown, but unverified either way).
+
+### 2026-08-08 (8)
+- **"Please wait, transactions are loading" placeholder for freshly-connected
+  banks** (Sonnet worker), per Israel's verbatim request: don't show empty/
+  flat data for a new connection while Plaid's historical backfill is still
+  in flight — show a loading placeholder "in the modal and everywhere else"
+  instead.
+  - **Status lifecycle, `plaid_items.status`:** new value `'syncing'`,
+    alongside the existing `'ok'`/`'reauth_required'`/`'revoked'`.
+    - `app/api/plaid/exchange/route.js` now inserts new connections with
+      `status: 'syncing'` (defensive retry without the column if it's not
+      migrated yet, same pattern as everywhere else this column is touched).
+    - `lib/plaid-sync.js`'s `syncPlaidItem(item, opts)` gained an `opts`
+      param. It used to unconditionally stamp every successful sync
+      `status: 'ok'` — that's wrong for a `'syncing'` item, since one
+      completed `transactionsSync` loop doesn't prove Plaid's 730-day
+      backfill has fully landed (it can take several
+      `SYNC_UPDATES_AVAILABLE` cycles). New rule: `'reauth_required'`/
+      `'revoked'` still clear to `'ok'` unconditionally (a clean sync proves
+      the item's healthy again — unchanged); `'syncing'` only clears to
+      `'ok'` when the caller passes `opts.clearSyncing: true`.
+    - `app/api/plaid/webhook/route.js`: `SYNC_UPDATES_AVAILABLE` now passes
+      `clearSyncing: true` once the item is >10 minutes old (fallback for a
+      backfill that's surely done by then even without an explicit "done"
+      signal). Added two new webhook_code branches, `HISTORICAL_UPDATE`
+      (legacy `/transactions/get`-style code that means "full history is
+      ready" — not really expected on this app's Sync-based integration, but
+      handled defensively per the request: always `clearSyncing: true`) and
+      `INITIAL_UPDATE` (recent data ready, but backfill isn't necessarily
+      done — syncs but leaves `'syncing'` alone).
+    - `app/api/plaid/sync/route.js` (manual "Sync now"): same >-age fallback,
+      15 minutes instead of 10 (a human clicking "Sync now" is a weaker
+      signal of freshness than a webhook firing).
+  - **Client placeholders**, gated on `account.status === 'syncing'` /
+    `item.status === 'syncing'`:
+    - `lib/accounts.js`'s `buildAccountInventory` now threads `status` (and,
+      for debt-matched Plaid accounts, `item_id`) onto every Plaid-touching
+      row, not just unmatched ones — so a manual debt fuzzy-matched to a
+      freshly-connected card shows the placeholder too, not just brand-new
+      unmatched accounts.
+    - `lib/accounts.js`'s `usePlaidItems()` (shared by Accounts.jsx,
+      AccountDetail.jsx, and now Transactions.jsx) self-polls every ~10s,
+      capped at ~12 tries (~2 min), while any item is `'syncing'`: nudges
+      `POST /api/plaid/sync` then re-fetches `/api/plaid/items`, so the
+      placeholders below flip to real data on their own once the backfill
+      lands (or once a webhook does it first) — no manual refresh needed.
+      Self-cleaning (clears its own timer on unmount or once nothing is
+      `'syncing'`); deliberately keyed off a derived boolean, not the
+      `plaidItems` array itself, so its own `setPlaidItems` calls don't reset
+      the attempt counter and defeat the 2-minute cap.
+    - New shared components in `components/shared.jsx`:
+      `TransactionsSkeleton` (4 pulsing rows + "Hang tight — we're pulling in
+      your transactions. This usually takes a minute or two."),
+      `ChartSkeleton` (pulsing block, same footprint as the real chart via a
+      `className` prop), `SyncingPill` (small amber spinner pill).
+    - `views/AccountDetail.jsx` (full page +, byte-identical, the Notion-
+      style `@modal` overlay — one component, so both surfaces got this for
+      free): balance chart → `ChartSkeleton`, transaction list →
+      `TransactionsSkeleton`, whenever `isSyncing`.
+    - `views/Transactions.jsx`: replaced its one-shot inline
+      `/api/plaid/items` fetch with the shared `usePlaidItems()` (gets the
+      polling for free); when `?account=` is set and that account's item is
+      `'syncing'`, the transaction list Card renders `TransactionsSkeleton`
+      instead of the real rows or "No transactions" — regardless of whether
+      a few transactions have already trickled in, per "don't show the data
+      until transactions pop up."
+    - `views/Accounts.jsx`: `CardRow`/`LoanRow`/`DepositoryRow` now render a
+      `SyncingPill` next to `SourceBadge` when `account.status === 'syncing'`.
+    - `views/Settings.jsx`'s Connected Banks list also shows the same
+      `SyncingPill` next to the institution name for a syncing item (this
+      list doesn't poll itself — it'll pick up the flip on its own
+      `loadItems` refresh, e.g. after "Sync now" or navigating back to the page).
+  - **Bug fix, found while editing the exact section this feature touches**:
+    `views/AccountDetail.jsx`'s "View all in Transactions ›" button (added
+    2026-08-08 (7)) had a JSX comment written as `{/* ... */}` *inside* a
+    ternary's parenthesized expression branch — valid as a JSX **child**,
+    but not valid there (two unrelated expressions with no operator between
+    them). Confirmed with `npx esbuild` that the file failed to parse before
+    this session's fix and parses clean after — this would have broken the
+    production build the next time anything forced a rebuild. Fixed by
+    turning it into a plain `//` line comment (also verified every other
+    file touched this session parses with `esbuild`, per the no-dev-server
+    constraint — see below).
+  - **Left off / not verified**: no dev server, no npm installs, nothing
+    clicked in a real browser or against a real Plaid Link session (standing
+    instruction) — verification this session was limited to `npx esbuild
+    <file> --outfile=/tmp/out.js` per touched file (confirms JS/JSX syntax
+    only, not runtime behavior). Next session with real Plaid access should:
+    connect a fresh sandbox/production bank and confirm (a) the account
+    shows the loading skeleton immediately after connecting, in both the
+    `@modal` and the full `/accounts/[id]` page; (b) it flips to real
+    transactions/chart within ~2 minutes without a manual refresh (the
+    `usePlaidItems()` poll) or immediately if the webhook fires first; (c)
+    `/transactions?account=<id>` shows the same skeleton while syncing; (d)
+    the Accounts list rows and Settings' Connected Banks list show the
+    "Syncing…" pill and it disappears once backfill completes; (e) an
+    already-`'ok'` (pre-existing) connection is completely unaffected — no
+    regression for accounts connected before this session.
+
 ### 2026-08-08 (7)
 - **"View all in Transactions" left the account modal open over the new
   page** (Fable): it was a `<Link>` soft nav; navigating to a

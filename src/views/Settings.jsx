@@ -9,7 +9,7 @@ import { Select } from '@/components/ui/select'
 import { Segmented } from '@/components/ui/segmented'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { SectionLabel, ConfirmDialog } from '@/components/shared'
+import { SectionLabel, ConfirmDialog, SyncingPill } from '@/components/shared'
 import { OCCUPATIONS } from '@/components/onboarding'
 import { useApp } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
@@ -193,6 +193,11 @@ function ConnectedBanksSection() {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="truncate text-[0.8125rem] font-semibold">{it.institution || 'Bank'}</span>
+                    {/* 'syncing' = the initial 730-day historical backfill hasn't
+                        landed yet (see lib/plaid-sync.js) — this clears itself
+                        (usePlaidItems()'s polling, or this list's own loadItems
+                        refresh) once it does, so no action button is needed here. */}
+                    {it.status === 'syncing' && <SyncingPill />}
                     {it.status === 'reauth_required' && <Badge variant="warning">Needs attention</Badge>}
                     {it.status === 'revoked' && <Badge variant="destructive">Access revoked</Badge>}
                   </div>

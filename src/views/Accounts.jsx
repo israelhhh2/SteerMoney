@@ -9,7 +9,7 @@ import { Input, Label } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Segmented } from '@/components/ui/segmented'
-import { Money, CardChip, SourceBadge, ConfirmDialog } from '@/components/shared'
+import { Money, CardChip, SourceBadge, ConfirmDialog, SyncingPill } from '@/components/shared'
 import { ConnectBankButton } from '@/components/connect-bank'
 import { useApp } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
@@ -204,7 +204,7 @@ function CardRow({ account }) {
     <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
       <CardChip institution={account.institution} name={account.name} mask={account.mask} />
       <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex justify-center"><SourceBadge accountId={account.account_id} institution={account.institution} /></div>
+        <div className="flex justify-center gap-1.5"><SourceBadge accountId={account.account_id} institution={account.institution} />{account.status === 'syncing' && <SyncingPill />}</div>
         {hasLimit ? (
           <div className="grid grid-cols-3 items-center gap-1 text-center">
             <div><StatLabel>Balance</StatLabel><Money value={fmt0(account.balance)} className="text-sm font-extrabold sm:text-base" /></div>
@@ -235,7 +235,7 @@ function LoanRow({ account }) {
     <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
       <CardChip institution={account.institution} name={account.name} mask={account.mask} />
       <div className="min-w-0 flex-1 space-y-1.5 text-center">
-        <div className="flex justify-center"><SourceBadge accountId={account.account_id} institution={account.institution} /></div>
+        <div className="flex justify-center gap-1.5"><SourceBadge accountId={account.account_id} institution={account.institution} />{account.status === 'syncing' && <SyncingPill />}</div>
         <StatLabel>Balance</StatLabel>
         <Money value={fmt0(account.balance)} className="text-xl font-extrabold sm:text-2xl" />
       </div>
@@ -250,7 +250,7 @@ function DepositoryRow({ account }) {
     <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
       <CardChip institution={account.institution} name={account.name} mask={account.mask} />
       <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex justify-center"><SourceBadge accountId={account.account_id} institution={account.institution} /></div>
+        <div className="flex justify-center gap-1.5"><SourceBadge accountId={account.account_id} institution={account.institution} />{account.status === 'syncing' && <SyncingPill />}</div>
         <div className="grid grid-cols-3 items-center gap-1 text-center">
           <div><StatLabel>Available</StatLabel><Money value={fmt0(available)} className="text-sm font-extrabold sm:text-base" /></div>
           <div><StatLabel>Current</StatLabel><Money value={fmt0(account.balance)} className="text-sm font-extrabold sm:text-base" /></div>

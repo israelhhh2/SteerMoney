@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Loader2, Trash2, Link2Off } from 'lucide-react'
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Segmented } from '@/components/ui/segmented'
-import { Money, CardChip, CatIcon, CatChip, SourceBadge, ConfirmDialog } from '@/components/shared'
+import { Money, CardChip, CatIcon, CatChip, SourceBadge, ConfirmDialog, TransactionsSkeleton, ChartSkeleton } from '@/components/shared'
 import { useApp } from '@/store'
 import { useCenterToast } from '@/components/toast'
 import { fmt, fmt0, prettyDate } from '@/lib/utils'
@@ -63,6 +63,12 @@ export default function AccountDetail({ id }) {
     )
   }
 
+  // 'syncing' means this account's bank connection is still pulling in its
+  // 730-day historical backfill (see lib/plaid-sync.js) — show placeholders
+  // instead of a misleadingly-flat balance chart or an incomplete
+  // transaction list. usePlaidItems() (lib/accounts.js) polls in the
+  // background and this flips to false on its own once the backfill lands.
+  const isSyncing = account.status === 'syncing'
   const isCredit = account.kind === 'credit' || account.kind === 'loan'
   const util = account.limit ? Math.min(999, Math.round((account.balance / account.limit) * 100)) : null
   const history = accountHistorySeries(account, state.transactions, range)
@@ -163,22 +169,26 @@ export default function AccountDetail({ id }) {
         )}
       </div>
 
-      <div className="h-40 w-full max-w-xl">
-        <ResponsiveContainer>
-          <AreaChart data={history} margin={{ top: 6, right: 4, left: 4, bottom: 0 }}>
-            <defs>
-              <linearGradient id="detailHist" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={lineColor} stopOpacity={0.35} />
-                <stop offset="100%" stopColor={lineColor} stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <XAxis dataKey="name" hide />
-            <Tooltip {...TIP} formatter={(v) => fmt0(v)} />
-            <Area type="monotone" dataKey="balance" stroke={lineColor} strokeWidth={2.5} fill="url(#detailHist)" dot={false}
-              style={{ filter: `drop-shadow(0 0 6px ${isCredit ? 'rgba(224,138,61,0.4)' : 'rgba(91,157,249,0.45)'})` }} />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+      {isSyncing ? (
+        <ChartSkeleton className="h-40 w-full max-w-xl" />
+      ) : (
+        <div className="h-40 w-full max-w-xl">
+          <ResponsiveContainer>
+            <AreaChart data={history} margin={{ top: 6, right: 4, left: 4, bottom: 0 }}>
+              <defs>
+                <linearGradient id="detailHist" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={lineColor} stopOpacity={0.35} />
+                  <stop offset="100%" stopColor={lineColor} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <XAxis dataKey="name" hide />
+              <Tooltip {...TIP} formatter={(v) => fmt0(v)} />
+              <Area type="monotone" dataKey="balance" stroke={lineColor} strokeWidth={2.5} fill="url(#detailHist)" dot={false}
+                style={{ filter: `drop-shadow(0 0 6px ${isCredit ? 'rgba(224,138,61,0.4)' : 'rgba(91,157,249,0.45)'})` }} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       <Segmented options={RANGE_KEYS.map((k) => [k, k])} value={range} onChange={setRange} />
 
@@ -238,9 +248,9 @@ export default function AccountDetail({ id }) {
         <div className="flex items-center justify-between px-0.5">
           <h3 className="text-[0.9375rem] font-semibold">Transactions</h3>
           {account.account_id ? (
-            {/* Hard navigation, not <Link>: a soft nav to a non-intercepted
-                route leaves the @modal slot's previous content mounted, so
-                the overlay stayed open on top of /transactions. */}
+            // Hard navigation, not <Link>: a soft nav to a non-intercepted
+            // route leaves the @modal slot's previous content mounted, so
+            // the overlay stayed open on top of /transactions.
             <button
               type="button"
               onClick={() => { if (typeof window !== 'undefined') window.location.assign(txHref) }}
@@ -248,7 +258,9 @@ export default function AccountDetail({ id }) {
             >View all in Transactions ›</button>
           ) : null}
         </div>
-        {dates.length ? (
+        {isSyncing ? (
+          <TransactionsSkeleton />
+        ) : dates.length ? (
           <div className="divide-y divide-border/60 overflow-hidden rounded-xl border">
             {dates.map((dt) => (
               <div key={dt}>

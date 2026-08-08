@@ -27,7 +27,7 @@ function guessCategory(tx) {
 // (SYNC_UPDATES_AVAILABLE) share one implementation instead of drifting.
 // Caller is responsible for the plaidConfigured/supabaseAdmin gate checks —
 // this assumes both are available.
-export async function syncPlaidItem(item) {
+export async function syncPlaidItem(item, opts = {}) {
   const userId = item.user_id
   let cursor = item.cursor || undefined
   let hasMore = true
@@ -110,11 +110,26 @@ export async function syncPlaidItem(item) {
     }))
   } catch { /* keep previously stored accounts */ }
 
-  // A clean sync means the item is healthy again — clear any prior
-  // reauth/error flag. Defensive: `status` may not be migrated onto
-  // plaid_items yet (see CLAUDE.md: `ALTER TABLE plaid_items ADD COLUMN IF
-  // NOT EXISTS status text DEFAULT 'ok';`), so retry without it if so.
-  const update = { cursor, last_synced: new Date().toISOString(), accounts, status: 'ok' }
+  // Status bookkeeping ("please wait, transactions are loading" placeholder
+  // — see CLAUDE.md 2026-08-08 session entry). A brand-new item starts life
+  // as 'syncing' (set on insert in app/api/plaid/exchange). A routine sync
+  // loop completing does NOT by itself prove the full 730-day historical
+  // backfill has landed — Plaid can take several SYNC_UPDATES_AVAILABLE
+  // cycles to deliver all of it — so 'syncing' is only cleared when the
+  // caller explicitly says the backfill is done via opts.clearSyncing (the
+  // webhook route's HISTORICAL_UPDATE handler always passes true; its
+  // SYNC_UPDATES_AVAILABLE handler and the manual "Sync now" route pass true
+  // once the item is old enough that we assume the backfill has had time to
+  // finish, as a fallback for a missed/undelivered webhook). A clean sync
+  // still clears 'reauth_required'/'revoked' unconditionally, same as
+  // before — that part of the item was genuinely broken and a successful
+  // sync proves it's healthy again. Defensive: `status` may not be migrated
+  // onto plaid_items yet (see CLAUDE.md: `ALTER TABLE plaid_items ADD
+  // COLUMN IF NOT EXISTS status text DEFAULT 'ok';`), so retry without it if so.
+  const priorStatus = item.status || 'ok'
+  const nextStatus = priorStatus === 'syncing' ? (opts.clearSyncing ? 'ok' : 'syncing') : 'ok'
+
+  const update = { cursor, last_synced: new Date().toISOString(), accounts, status: nextStatus }
   let { error: updErr } = await supabaseAdmin.from('plaid_items').update(update).eq('id', item.id)
   if (updErr && /status/i.test(updErr.message || '')) {
     const { status, ...rest } = update

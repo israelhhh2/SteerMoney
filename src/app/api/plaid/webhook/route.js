@@ -91,9 +91,39 @@ export async function POST(req) {
 
     if (webhook_code === 'SYNC_UPDATES_AVAILABLE') {
       try {
-        await syncPlaidItem(item)
+        // Fallback for a 'syncing' item that never gets an explicit
+        // HISTORICAL_UPDATE (this app's Sync-based integration mainly
+        // relies on repeated SYNC_UPDATES_AVAILABLE calls instead — see
+        // lib/plaid-sync.js): once the item is old enough that Plaid's
+        // 730-day backfill has almost certainly finished, clear 'syncing'
+        // here too instead of waiting on a webhook code that may never come.
+        const ageMs = item.created_at ? Date.now() - new Date(item.created_at).getTime() : Infinity
+        await syncPlaidItem(item, { clearSyncing: ageMs > 10 * 60 * 1000 })
       } catch (e) {
         console.error('[plaid webhook] sync failed for item', item_id, e?.response?.data || e)
+      }
+    } else if (webhook_code === 'HISTORICAL_UPDATE') {
+      // Legacy /transactions/get-style webhook code that fires once the
+      // full requested history window has been pulled. Not typically sent
+      // for this app's Sync-based (transactionsSync) integration, but
+      // handled defensively per the "please wait, transactions are loading"
+      // placeholder requirement: if Plaid ever sends it, treat it as the
+      // definitive signal that the backfill is done and clear 'syncing'
+      // unconditionally.
+      try {
+        await syncPlaidItem(item, { clearSyncing: true })
+      } catch (e) {
+        console.error('[plaid webhook] historical-update sync failed for item', item_id, e?.response?.data || e)
+      }
+    } else if (webhook_code === 'INITIAL_UPDATE') {
+      // Recent transactions are ready, but the full historical backfill
+      // isn't necessarily done yet — sync now, but leave 'syncing' as-is so
+      // the placeholder stays up until HISTORICAL_UPDATE (or the age-based
+      // fallback above) confirms the rest has landed.
+      try {
+        await syncPlaidItem(item)
+      } catch (e) {
+        console.error('[plaid webhook] initial-update sync failed for item', item_id, e?.response?.data || e)
       }
     } else if (webhook_code === 'ITEM_LOGIN_REQUIRED' || webhook_code === 'PENDING_EXPIRATION' || webhook_code === 'ERROR') {
       await setItemStatus(item.id, 'reauth_required')

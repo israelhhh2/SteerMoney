@@ -173,6 +173,51 @@ export function SourceBadge({ accountId, institution, className = '' }) {
   )
 }
 
+// Placeholder shown wherever a freshly-connected Plaid account's
+// transactions aren't fully backfilled yet (item status === 'syncing' — see
+// lib/plaid-sync.js and the webhook route's HISTORICAL_UPDATE/
+// SYNC_UPDATES_AVAILABLE handling). Shared by AccountDetail.jsx's inline
+// transaction list and Transactions.jsx's ?account= filtered view, so a
+// syncing account never flashes an empty/partial list before flipping over
+// to real data once lib/accounts.js's usePlaidItems() polling clears the flag.
+export function TransactionsSkeleton() {
+  return (
+    <div className="space-y-3">
+      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="flex animate-pulse items-center gap-3 px-4 py-3">
+            <span className="h-6 w-6 shrink-0 rounded-full bg-secondary/70" />
+            <span className="h-3 min-w-0 flex-1 rounded-full bg-secondary/70" />
+            <span className="h-3 w-16 shrink-0 rounded-full bg-secondary/70" />
+          </div>
+        ))}
+      </div>
+      <p className="px-2 text-center text-[0.78125rem] text-muted-foreground">
+        Hang tight — we're pulling in your transactions. This usually takes a minute or two.
+      </p>
+    </div>
+  )
+}
+
+// Subtle pulsing block standing in for a chart while its underlying data
+// isn't ready yet (same 'syncing' state as TransactionsSkeleton above) — same
+// footprint as the real chart via `className` so nothing jumps on swap.
+export function ChartSkeleton({ className = 'h-40 w-full' }) {
+  return <div className={cn('animate-pulse rounded-xl bg-secondary/40', className)} />
+}
+
+// Tiny "still loading" pill for views/Accounts.jsx list rows belonging to a
+// syncing item — sits next to SourceBadge so a freshly-connected account
+// reads as "still working", not broken/empty.
+export function SyncingPill() {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-400/25 bg-amber-400/10 px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-amber-300">
+      <Loader2 className="h-2.5 w-2.5 animate-spin" />
+      Syncing…
+    </span>
+  )
+}
+
 // SVG circular progress ring (Copilot budget rings). pct > 100 renders a full ring.
 export function Ring({ pct, color, size = 64, stroke = 5, children }) {
   const r = (size - stroke) / 2
