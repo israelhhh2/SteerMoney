@@ -196,6 +196,10 @@ export function buildAccountInventory(state, plaidItems) {
       kind: a.type === 'credit' ? 'credit' : a.type === 'loan' ? 'loan' : (a.type || 'other'),
       name: a.name, mask: a.mask, subtype: a.subtype || null, institution: it.institution,
       balance: a.balance ?? 0, limit: null, account_id: a.account_id || null, last_synced: it.last_synced,
+      // item_id identifies the plaid_items row (the bank connection) this account
+      // belongs to — Plaid has no per-account delete API, so AccountDetail's
+      // "Disconnect bank" action needs this to DELETE /api/plaid/items.
+      item_id: it.item_id || null,
       source: 'plaid', history: null,
     })))
 
@@ -235,6 +239,33 @@ export function findAccountByUrlId(id, state, plaidItems) {
   if (!id || !state) return null
   const { all } = buildAccountInventory(state, plaidItems || [])
   return all.find((r) => accountUrlId(r) === id) || null
+}
+
+// ---- deletion (shared by Accounts.jsx, Debts.jsx, and AccountDetail.jsx) ----
+// Same mutations those views already performed inline — centralized here so
+// AccountDetail's Delete/Disconnect action (used by both the full page and
+// the modal) reuses the exact logic instead of duplicating it.
+export function deleteManualAccount(update, accountRowId) {
+  update((s) => { s.accounts = s.accounts.filter((a) => a.id !== accountRowId) })
+}
+
+export function deleteDebt(update, debtId) {
+  update((s) => {
+    const i = s.debts.findIndex((d) => d.id === debtId)
+    if (i !== -1) s.debts.splice(i, 1)
+  })
+}
+
+// Shared "go back to the accounts list" fallback — the standalone detail
+// page's Back button, and AccountDetail itself after a delete/disconnect,
+// both use this. Works unchanged whether AccountDetail is rendered as the
+// full page or inside the Notion-style modal: from the modal there's always
+// history to pop (it only ever opens via an in-app Link click), so
+// router.back() is what runs there; a directly-loaded full page with no
+// history falls back to /accounts.
+export function backToAccounts(router) {
+  if (typeof window !== 'undefined' && window.history.length > 1) router.back()
+  else router.push('/accounts')
 }
 
 // Fetches /api/plaid/items once, shared by Accounts.jsx and AccountDetail.jsx

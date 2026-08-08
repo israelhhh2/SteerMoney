@@ -105,6 +105,69 @@ before flipping the switch.
 
 ## Session log (newest first)
 
+### 2026-08-08 (3)
+- **Account deletion added to the Accounts experience** (Sonnet worker) —
+  previously there was no way to delete an account from `/accounts` at all;
+  deletion only existed inside the old `AccountDialog`'s edit form and on
+  `Debts.jsx`'s debt cards. Deletion now also lives in `AccountDetail.jsx`
+  (the per-account detail used by both the full page and the `@modal`
+  intercepting overlay — see 2026-08-05 (3)), placed right below the
+  existing Manage/Edit action, red/destructive-styled to match Debts.jsx's
+  delete button (`bg-destructive/15 text-red-400 border-destructive/30`,
+  same classes the shared `Button variant="destructive"` uses).
+  - **Manual account** (`acc_<id>`): "Delete account" → confirm dialog
+    ("Delete `<name>`? This removes it and its history from SteerMoney.") →
+    removed from the store → toast → navigates back.
+  - **Manual debt** (`debt_<id>`): "Delete debt" → same confirm-dialog flow
+    → removed from the store → toast → navigates back.
+  - **Plaid account**: "Disconnect bank" → confirm dialog ("Disconnect
+    `<institution>`? All its accounts stop syncing. Existing transactions
+    stay.") → `DELETE /api/plaid/items` with that account's item_id → toast
+    → `router.push('/accounts')` (not the back-fallback, per spec — a
+    disconnected bank shouldn't be "back"-able to).
+  - **No duplicated business logic**: added `deleteManualAccount(update, id)`
+    and `deleteDebt(update, id)` to `lib/accounts.js`, and rewired the two
+    places that already deleted these inline — `Accounts.jsx`'s
+    `AccountDialog.del` (was `s.accounts = s.accounts.filter(...)`) and
+    `Debts.jsx`'s `DebtCard onDelete` (was `s.debts.splice(i, 1)`, now looks
+    the row up by `id` instead of relying on list index) — to call the same
+    two functions AccountDetail uses. **The store itself has no dedicated
+    `deleteAccount`/`deleteDebt` action** — like every other mutation in this
+    app, deletion goes through the single generic `update(fn)` mutator in
+    `store.jsx`; these two new functions are just named, reusable wrappers
+    around the exact mutations that already existed inline, not a new store
+    layer.
+  - Extracted the standalone detail page's back-button fallback
+    (`router.back()` if there's history, else `router.push('/accounts')`)
+    into `backToAccounts(router)` in `lib/accounts.js` so `AccountDetail`'s
+    post-delete navigation and `app/(app)/accounts/[id]/page.jsx`'s Back
+    button share it — this is also what makes "router.back() from the modal,
+    /accounts from the full page" work for free: AccountDetail doesn't know
+    which context it's rendering in, but the modal only ever opens via an
+    in-app Link click, so `window.history.length > 1` is always true there.
+  - Added a `ConfirmDialog` to `components/shared.jsx` (title/desc/
+    confirmLabel/busy/onConfirm/onClose) and pointed `Accounts.jsx`'s
+    `AccountDialog` at it instead of its own local copy, so there's one
+    confirm-dialog implementation instead of two near-identical ones.
+    Debts.jsx's own delete button still uses the browser's native
+    `confirm()` — untouched, out of scope, only its deletion *logic* was
+    extracted.
+  - `lib/accounts.js`'s `buildAccountInventory` now carries `item_id` on
+    unmatched-Plaid inventory rows (`unmatchedPlaid` mapping) — needed so
+    `AccountDetail` knows which `plaid_items` row to DELETE for "Disconnect
+    bank"; wasn't there before since nothing needed the raw item id at that
+    layer until now.
+  - Deliberately did **not** add row-level delete buttons to `Accounts.jsx`'s
+    list rows (`CardRow`/`LoanRow`/`DepositoryRow`) — deletion lives only in
+    the detail view, per the requirement to avoid cluttering the list.
+  - **Left off / not verified**: no dev server, no npm installs, nothing
+    clicked in a real browser (standing instruction) — the delete/disconnect
+    flow, the confirm dialog, and the post-delete navigation (especially
+    from inside the `@modal` overlay) are all unexercised. Next session
+    should click through all three delete paths (manual account, manual
+    debt, Plaid disconnect) from both the modal and the full page before
+    trusting this.
+
 ### 2026-08-08 (2)
 - **Critical bug fix: Plaid Link clicks swallowed by a duplicate hidden
   iframe** (Sonnet worker, diagnosed from live DOM inspection on the

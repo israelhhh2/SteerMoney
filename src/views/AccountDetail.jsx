@@ -1,14 +1,17 @@
 'use client'
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { Loader2, Trash2, Link2Off } from 'lucide-react'
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Segmented } from '@/components/ui/segmented'
-import { Money, CardChip, CatIcon, CatChip, SourceBadge } from '@/components/shared'
+import { Money, CardChip, CatIcon, CatChip, SourceBadge, ConfirmDialog } from '@/components/shared'
 import { useApp } from '@/store'
+import { useToast } from '@/components/toast'
 import { fmt, fmt0, prettyDate } from '@/lib/utils'
 import {
   RANGE_KEYS, typeLabel, pctChange30, relTime, accountHistorySeries,
-  usePlaidItems, findAccountByUrlId,
+  usePlaidItems, findAccountByUrlId, deleteManualAccount, deleteDebt, backToAccounts,
 } from '@/lib/accounts'
 
 const TIP = { contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 } }
@@ -34,9 +37,13 @@ function ChangePill({ pct }) {
 // as the full page (app/(app)/accounts/[id]/page.jsx) and, byte-identical,
 // inside the Notion-style modal overlay (app/(app)/@modal/(.)accounts/[id]).
 export default function AccountDetail({ id }) {
-  const { state } = useApp()
+  const { state, update } = useApp()
   const { plaidItems, plaidChecked } = usePlaidItems()
   const [range, setRange] = useState('1M')
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const router = useRouter()
+  const toast = useToast()
 
   const account = useMemo(
     () => (state ? findAccountByUrlId(id, state, plaidItems) : null),
@@ -65,6 +72,49 @@ export default function AccountDetail({ id }) {
   const txHref = account.account_id ? `/transactions?account=${encodeURIComponent(account.account_id)}` : '/transactions'
   const manageHref = account.source === 'debt' ? '/debts' : account.source === 'plaid' ? '/settings' : null
   const manageLabel = account.source === 'manual' ? 'Edit account' : account.source === 'debt' ? 'Manage in Debt Tracker' : 'Manage connection'
+
+  // Destructive action: manual rows delete straight out of the store (reusing
+  // the exact mutations Accounts.jsx/Debts.jsx already use), Plaid rows can
+  // only be disconnected at the bank-connection (item) level — there's no
+  // per-account delete in Plaid's API.
+  const isPlaid = account.source === 'plaid'
+  const isDebt = account.source === 'debt'
+  const destructiveLabel = isPlaid ? 'Disconnect bank' : isDebt ? 'Delete debt' : 'Delete account'
+  const confirmTitle = isPlaid ? `Disconnect ${account.institution || 'this bank'}?` : `Delete ${account.name}?`
+  const confirmDesc = isPlaid
+    ? 'All its accounts stop syncing. Existing transactions stay.'
+    : 'This removes it and its history from SteerMoney.'
+
+  const goBack = () => backToAccounts(router)
+
+  const handleDelete = async () => {
+    if (isPlaid) {
+      if (!account.item_id) { toast("Couldn't find that bank connection", 'error'); setConfirmDelete(false); return }
+      setDeleting(true)
+      try {
+        const res = await fetch('/api/plaid/items', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ item_id: account.item_id }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || "Couldn't disconnect that bank")
+        toast('Bank disconnected')
+        setConfirmDelete(false)
+        router.push('/accounts')
+        return
+      } catch (e) {
+        toast(e.message, 'error')
+        setDeleting(false)
+        return
+      }
+    }
+    if (isDebt) deleteDebt(update, account.debtId)
+    else deleteManualAccount(update, account.accountRowId)
+    toast(`${isDebt ? 'Debt' : account.name} deleted`)
+    setConfirmDelete(false)
+    goBack()
+  }
 
   const accountTx = account.account_id
     ? state.transactions.filter((t) => t.accountId === account.account_id).slice().sort((a, b) => b.date.localeCompare(a.date))
@@ -129,7 +179,26 @@ export default function AccountDetail({ id }) {
         ) : account.source === 'manual' ? (
           <Link href={`/accounts?edit=${encodeURIComponent(account.accountRowId)}`} className="block w-full rounded-xl bg-primary px-4 py-3 text-center text-[0.84375rem] font-bold text-primary-foreground transition hover:bg-primary/90">{manageLabel}</Link>
         ) : null}
+        <button
+          onClick={() => setConfirmDelete(true)}
+          disabled={deleting}
+          className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-destructive/30 bg-destructive/15 px-4 py-3 text-center text-[0.84375rem] font-bold text-red-400 transition hover:bg-destructive/25 disabled:opacity-50"
+        >
+          {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : isPlaid ? <Link2Off className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
+          {destructiveLabel}
+        </button>
       </div>
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title={confirmTitle}
+          desc={confirmDesc}
+          confirmLabel={destructiveLabel}
+          busy={deleting}
+          onConfirm={handleDelete}
+          onClose={() => setConfirmDelete(false)}
+        />
+      )}
 
       <div className="w-full space-y-2.5 border-t border-border/60 pt-5">
         <div className="flex items-center justify-between px-0.5">

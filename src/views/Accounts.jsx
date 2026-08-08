@@ -9,14 +9,14 @@ import { Input, Label } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Segmented } from '@/components/ui/segmented'
-import { Money, CardChip, SourceBadge } from '@/components/shared'
+import { Money, CardChip, SourceBadge, ConfirmDialog } from '@/components/shared'
 import { ConnectBankButton } from '@/components/connect-bank'
 import { useApp } from '@/store'
 import { useToast } from '@/components/toast'
 import { cn, fmt0, today, uid } from '@/lib/utils'
 import {
   RANGE_KEYS, daysFor, buildSeries, pctChange, pctChange30,
-  buildAccountInventory, accountUrlId, usePlaidItems,
+  buildAccountInventory, accountUrlId, usePlaidItems, deleteManualAccount,
 } from '@/lib/accounts'
 
 const TIP = { contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 } }
@@ -264,21 +264,6 @@ function DepositoryRow({ account }) {
   )
 }
 
-function ConfirmDialog({ title, desc, onConfirm, onClose }) {
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
-        {desc ? <p className="text-[0.8125rem] text-muted-foreground">{desc}</p> : null}
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="destructive" onClick={onConfirm}>Delete</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 function AccountDialog({ id, onClose }) {
   const { state, update } = useApp()
   const toast = useToast()
@@ -317,7 +302,7 @@ function AccountDialog({ id, onClose }) {
   }
 
   const del = () => {
-    update((s) => { s.accounts = s.accounts.filter((x) => x.id !== id) })
+    deleteManualAccount(update, id)
     toast('Account deleted')
     onClose()
   }

@@ -14,6 +14,7 @@ import { useApp } from '@/store'
 import { useToast } from '@/components/toast'
 import { fmt, fmt0, today, monthLabel, prettyDate, uid } from '@/lib/utils'
 import { simulatePlan, simCardPlan, parseAPR, payoffMonths, fmtMonths, matchesBankAccount } from '@/lib/finance'
+import { deleteDebt } from '@/lib/accounts'
 
 const TIP = {
   contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 },
@@ -266,7 +267,7 @@ export default function Debts() {
           <DebtCard key={d.name + i} d={d} i={i} open={openDebt === d.name} plan={plan} total={total} plaidAccounts={plaidAccounts}
             onToggle={() => setOpenDebt(openDebt === d.name ? null : d.name)}
             onEdit={() => setEditIdx(i)}
-            onDelete={() => { if (confirm(`Delete "${d.name}"?`)) { update((s) => { s.debts.splice(i, 1) }); toast('Debt deleted') } }}
+            onDelete={() => { if (confirm(`Delete "${d.name}"?`)) { deleteDebt(update, d.id); toast('Debt deleted') } }}
             onPay={submitPayment}
             onDeletePayment={(pi) => update((s) => { const p = s.debts[i].payments.splice(pi, 1)[0]; s.debts[i].balance = +(s.debts[i].balance + p.amount).toFixed(2) })}
           />

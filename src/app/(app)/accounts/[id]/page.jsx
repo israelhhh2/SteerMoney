@@ -2,6 +2,7 @@
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft } from 'lucide-react'
 import AccountDetail from '@/views/AccountDetail'
+import { backToAccounts } from '@/lib/accounts'
 
 // Standalone full page for /accounts/[id] — renders on refresh or a direct
 // link (no history to intercept). Notion-style in-app clicks instead open
@@ -10,10 +11,7 @@ export default function Page() {
   const router = useRouter()
   const { id } = useParams()
 
-  const back = () => {
-    if (typeof window !== 'undefined' && window.history.length > 1) router.back()
-    else router.push('/accounts')
-  }
+  const back = () => backToAccounts(router)
 
   return (
     <div className="fade-in space-y-5">

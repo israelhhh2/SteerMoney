@@ -3,6 +3,8 @@ import Link from 'next/link'
 import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List, Link2, Pencil } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { catColor, fmt0, cn } from '@/lib/utils'
 import { useApp } from '@/store'
 
@@ -246,6 +248,24 @@ export function Bar({ pct, color, thin = false }) {
     <div className={thin ? 'track !h-[0.28rem]' : 'track'}>
       <div style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: color }} />
     </div>
+  )
+}
+
+// Generic destructive confirm dialog — Accounts.jsx (delete manual account)
+// and AccountDetail.jsx (delete account/debt, disconnect bank) share this
+// exact Cancel/Delete markup instead of each defining their own.
+export function ConfirmDialog({ title, desc, confirmLabel = 'Delete', busy = false, onConfirm, onClose }) {
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
+        {desc ? <p className="text-[0.8125rem] text-muted-foreground">{desc}</p> : null}
+        <DialogFooter>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button variant="destructive" disabled={busy} onClick={onConfirm}>{confirmLabel}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
