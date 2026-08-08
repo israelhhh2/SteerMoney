@@ -33,15 +33,27 @@ const mappers = {
     fromRow: (r) => ({ id: r.id, name: r.name, limit: Number(r.monthly_limit), position: r.position ?? 0 }),
   },
   recurring: {
+    // `account_id`/`accountId` follow the same "only include the key when
+    // already present" convention as transactions.toRow/fromRow below — a
+    // recurring bill created from a Suggested Subscriptions detection (see
+    // lib/recurring-detect.js, views/Recurring.jsx) carries the Plaid
+    // account_id it was charged on; every manually-created bill has no such
+    // key at all, so it round-trips unaffected. Needs its own migration —
+    // `ALTER TABLE recurring ADD COLUMN IF NOT EXISTS account_id text;` — see
+    // CLAUDE.md 2026-08-08 (11); until that runs, upserting a suggestion-
+    // created bill (the only path that ever sets accountId) will fail like
+    // any other not-yet-migrated column write in this app.
     toRow: (x, userId) => ({
       user_id: userId, id: x.id, description: x.desc, amount: x.amount,
       due_day: x.dueDay ?? null, category: x.cat ?? 'other', active: x.active !== false,
       every_n_months: x.every ?? 1, position: x.position ?? 0,
+      ...(x.accountId !== undefined ? { account_id: x.accountId } : {}),
     }),
     fromRow: (r) => ({
       id: r.id, desc: r.description, amount: Number(r.amount), dueDay: r.due_day,
       cat: r.category, active: r.active, position: r.position ?? 0,
       ...(r.every_n_months > 1 ? { every: r.every_n_months } : {}),
+      ...(r.account_id !== undefined ? { accountId: r.account_id } : {}),
     }),
   },
   transactions: {
@@ -78,6 +90,17 @@ const mappers = {
       balance: Number(r.balance), history: r.history || [], position: r.position ?? 0,
     }),
   },
+  // One row per {account, tag} — `accountKey` is the same canonical URL id
+  // lib/accounts.js's accountUrlId() produces for every account type (manual
+  // acc_<id>, debt debt_<id>, or a Plaid account_id), so tags need no
+  // per-account-type branching anywhere. See CLAUDE.md 2026-08-08 (10) for
+  // the account_tags table's migration SQL — this table is newer than every
+  // other slice, so it's read/written defensively (see the initial-load and
+  // diff-sync effects below) in case the migration hasn't run yet.
+  accountTags: {
+    toRow: (t, userId) => ({ user_id: userId, id: t.id, account_key: t.accountKey, tag: t.tag }),
+    fromRow: (r) => ({ id: r.id, accountKey: r.account_key, tag: r.tag }),
+  },
 }
 
 // Every new account starts fresh: no data, just a small starter category list
@@ -95,6 +118,7 @@ function freshState() {
     recurring: [],
     goals: [],
     accounts: [],
+    accountTags: [],
     sim: { budget: 0, strategy: 'avalanche', snowExtra: 0 },
     mSim: { income: '', items: [] },
   }
@@ -104,6 +128,7 @@ function freshState() {
 function normalize(s) {
   if (!s.goals) s.goals = [] // older cached states predate the goals table
   if (!s.accounts) s.accounts = [] // older cached states predate the accounts table
+  if (!s.accountTags) s.accountTags = [] // older cached states predate the account_tags table
   s.debts.forEach((d, i) => {
     if (!d.id) d.id = uid('d')
     d.position = i
@@ -115,6 +140,7 @@ function normalize(s) {
   s.transactions.forEach((t) => { if (!t.id) t.id = uid('tx') })
   s.goals.forEach((g, i) => { if (!g.id) g.id = uid('g'); g.position = i; if (!g.txs) g.txs = [] })
   s.accounts.forEach((a, i) => { if (!a.id) a.id = uid('a'); a.position = i; if (!a.history) a.history = [] })
+  s.accountTags.forEach((t) => { if (!t.id) t.id = uid('at') })
 }
 
 const flatPayments = (s, userId) =>
@@ -129,8 +155,16 @@ function stateRows(s, userId) {
     transactions: s.transactions.map((t) => mappers.transactions.toRow(t, userId)),
     goals: s.goals.map((g) => mappers.goals.toRow(g, userId)),
     accounts: s.accounts.map((a) => mappers.accounts.toRow(a, userId)),
+    accountTags: s.accountTags.map((t) => mappers.accountTags.toRow(t, userId)),
   }
 }
+
+// Tables that might not exist yet in an older Supabase project (their
+// migration shipped after the table was first introduced) — a sync failure
+// against one of these is swallowed (logged, not surfaced as `syncError`)
+// instead of aborting every other table's sync for the rest of this pass.
+// Only `account_tags` today; see CLAUDE.md 2026-08-08 (10).
+const OPTIONAL_TABLES = new Set(['account_tags'])
 
 // Diff two row arrays by id -> {upserts, deletes}
 function diffRows(prev, next) {
@@ -227,7 +261,7 @@ export function AppProvider({ children }) {
     loadingFor.current = userId
     let cancelled = false
     ;(async () => {
-      const [de, pa, bu, re, go, tx, se, acc] = await Promise.all([
+      const [de, pa, bu, re, go, tx, se, acc, tg] = await Promise.all([
         supabase.from('debts').select('*').eq('user_id', userId).order('position'),
         supabase.from('payments').select('*').eq('user_id', userId).order('date', { ascending: false }),
         supabase.from('budgets').select('*').eq('user_id', userId).order('position'),
@@ -236,6 +270,7 @@ export function AppProvider({ children }) {
         supabase.from('transactions').select('*').eq('user_id', userId).order('date', { ascending: false }),
         supabase.from('settings').select('*').eq('user_id', userId).maybeSingle(),
         supabase.from('accounts').select('*').eq('user_id', userId).order('position'),
+        supabase.from('account_tags').select('*').eq('user_id', userId),
       ])
       const err = [de, pa, bu, re, tx, se].find((r) => r.error)
       if (err) { if (!cancelled) setSyncError(err.error.message); return }
@@ -243,6 +278,10 @@ export function AppProvider({ children }) {
       if (go.error && !cancelled) setSyncError('Goals need setup: run supabase/goals.sql in the Supabase SQL editor (' + go.error.message + ')')
       // accounts shipped after the other tables — if accounts.sql hasn't been run yet, keep the app usable
       if (acc.error && !cancelled) setSyncError('Accounts need setup: run supabase/accounts.sql in the Supabase SQL editor (' + acc.error.message + ')')
+      // account_tags is the newest table (see CLAUDE.md 2026-08-08 (10)) — never blocks the app,
+      // and deliberately doesn't even set syncError (tags are a nicety, not core data; a
+      // console warning is enough until the migration is run).
+      if (tg.error) console.warn('[store] account_tags table not available yet:', tg.error.message)
 
       let s
       if (!de.data.length && !bu.data.length && !tx.data.length && !re.data.length) {
@@ -268,6 +307,7 @@ export function AppProvider({ children }) {
           transactions: tx.data.map(mappers.transactions.fromRow),
           goals: go.error ? [] : go.data.map(mappers.goals.fromRow),
           accounts: acc.error ? [] : acc.data.map(mappers.accounts.fromRow),
+          accountTags: tg.error ? [] : tg.data.map(mappers.accountTags.fromRow),
           sim: se.data?.sim || { budget: 2100, strategy: 'avalanche', snowExtra: 0 },
           mSim: se.data?.m_sim || { income: '', items: [] },
         }
@@ -293,19 +333,27 @@ export function AppProvider({ children }) {
         try {
           const prevRows = stateRows(prev, userId)
           const nextRows = stateRows(next, userId)
-          // deletes first for payments (FK), debts last so payment FKs stay valid
-          for (const table of ['payments', 'transactions', 'budgets', 'recurring', 'goals', 'accounts', 'debts']) {
+          // deletes first for payments (FK), debts last so payment FKs stay valid.
+          // account_tags has no FK relationship to anything else in this list, so
+          // its position doesn't matter — it's last purely for readability.
+          for (const table of ['payments', 'transactions', 'budgets', 'recurring', 'goals', 'accounts', 'debts', 'account_tags']) {
             const { deletes } = diffRows(prevRows[table], nextRows[table])
-            if (deletes.length) {
-              const { error } = await supabase.from(table).delete().eq('user_id', userId).in('id', deletes)
-              if (error) throw error
+            if (!deletes.length) continue
+            const { error } = await supabase.from(table).delete().eq('user_id', userId).in('id', deletes)
+            if (error) {
+              // account_tags may not be migrated yet — don't let that abort every
+              // other table's sync this pass (see OPTIONAL_TABLES above).
+              if (OPTIONAL_TABLES.has(table)) { console.warn(`[store] ${table} delete skipped:`, error.message); continue }
+              throw error
             }
           }
-          for (const table of ['debts', 'payments', 'budgets', 'recurring', 'transactions', 'goals', 'accounts']) {
+          for (const table of ['debts', 'payments', 'budgets', 'recurring', 'transactions', 'goals', 'accounts', 'account_tags']) {
             const { upserts } = diffRows(prevRows[table], nextRows[table])
-            if (upserts.length) {
-              const { error } = await supabase.from(table).upsert(upserts, { onConflict: 'user_id,id' })
-              if (error) throw error
+            if (!upserts.length) continue
+            const { error } = await supabase.from(table).upsert(upserts, { onConflict: 'user_id,id' })
+            if (error) {
+              if (OPTIONAL_TABLES.has(table)) { console.warn(`[store] ${table} upsert skipped:`, error.message); continue }
+              throw error
             }
           }
           if (JSON.stringify(prev.sim) !== JSON.stringify(next.sim) || JSON.stringify(prev.mSim) !== JSON.stringify(next.mSim)) {
@@ -435,7 +483,7 @@ export function AppProvider({ children }) {
     // no-op while viewing another customer — support mode is strictly read-only
     update: viewAs
       ? () => {}
-      : (fn) => { dirty.current = true; setState((s) => { const c = JSON.parse(JSON.stringify(s)); if (!c.goals) c.goals = []; if (!c.accounts) c.accounts = []; fn(c); normalize(c); return c }) },
+      : (fn) => { dirty.current = true; setState((s) => { const c = JSON.parse(JSON.stringify(s)); if (!c.goals) c.goals = []; if (!c.accounts) c.accounts = []; if (!c.accountTags) c.accountTags = []; fn(c); normalize(c); return c }) },
     catInfo: (id) => state?.budgets.find((b) => b.id === id) || ({ debt: { name: 'Debt Payment' }, income: { name: 'Income' }, transfer: { name: 'Transfer' } }[id]) || { name: id || 'Other' },
     uid,
   }), [state, syncError, viewAs, space, spaces])

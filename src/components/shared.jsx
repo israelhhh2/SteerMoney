@@ -1,12 +1,15 @@
 'use client'
+import { useState } from 'react'
 import Link from 'next/link'
-import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List, Link2, Pencil, Loader2 } from 'lucide-react'
+import { useUser } from '@clerk/nextjs'
+import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List, Link2, Pencil, Loader2, Plus, X } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { catColor, fmt0, cn } from '@/lib/utils'
 import { useApp } from '@/store'
+import { tagsForAccount, allAccountTags, addAccountTag, removeAccountTag } from '@/lib/accounts'
 
 const CAT_ICONS = {
   housing: Home, auto: Car, shopping: ShoppingBag, dining: Utensils, groceries: ShoppingCart,
@@ -170,6 +173,126 @@ export function SourceBadge({ accountId, institution, className = '' }) {
       {linked ? <Link2 className="h-2.5 w-2.5" /> : <Pencil className="h-2.5 w-2.5" />}
       {linked ? `Plaid · ${institution || 'Bank'}` : 'Manual'}
     </span>
+  )
+}
+
+// ---- Account tags ("Mine"/"Julia's"/"Business" — shared-space account labels) ----
+// Small fixed palette, picked by hashing the tag name — same "deterministic,
+// no real data needed" trick as cardHue() above, just mapped onto a curated
+// set of muted pill tones instead of an arbitrary hue so tags always look
+// intentional next to the rest of this dark UI.
+const TAG_PALETTE = [
+  { bg: 'bg-sky-400/10', text: 'text-sky-300', border: 'border-sky-400/25' },
+  { bg: 'bg-violet-400/10', text: 'text-violet-300', border: 'border-violet-400/25' },
+  { bg: 'bg-emerald-400/10', text: 'text-emerald-300', border: 'border-emerald-400/25' },
+  { bg: 'bg-amber-400/10', text: 'text-amber-300', border: 'border-amber-400/25' },
+  { bg: 'bg-pink-400/10', text: 'text-pink-300', border: 'border-pink-400/25' },
+  { bg: 'bg-cyan-400/10', text: 'text-cyan-300', border: 'border-cyan-400/25' },
+]
+
+export function tagTone(tag) {
+  let h = 0
+  const s = String(tag || '').toLowerCase()
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % TAG_PALETTE.length
+  return TAG_PALETTE[h]
+}
+
+// Read-only pill — Accounts.jsx list rows and AccountDetail.jsx both use this
+// for display; pass `onRemove` to also get an × (AccountTagsEditor below).
+export function TagPill({ tag, onRemove, className = '' }) {
+  const tone = tagTone(tag)
+  return (
+    <span className={cn('inline-flex max-w-[8rem] shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[0.625rem] font-bold', tone.bg, tone.text, tone.border, className)}>
+      <span className="truncate">{tag}</span>
+      {onRemove ? (
+        <button type="button" onClick={onRemove} aria-label={`Remove ${tag} tag`} className="shrink-0 rounded-full p-0.5 opacity-70 transition hover:opacity-100">
+          <X className="h-2.5 w-2.5" />
+        </button>
+      ) : null}
+    </span>
+  )
+}
+
+function TagSuggestChip({ label, onClick }) {
+  return (
+    <button type="button" onClick={onClick} className="shrink-0 rounded-full border border-border/70 bg-secondary/50 px-2 py-0.5 text-[0.625rem] font-semibold text-muted-foreground transition hover:text-foreground">
+      {label}
+    </button>
+  )
+}
+
+// Editable tags row for one account — existing tags as removable pills, a
+// "+ Add tag" ghost button that reveals a tiny inline input, and tap-to-add
+// suggestions (existing tags in the space so "Julia" gets reused rather than
+// retyped, or — the very first time, before any tag exists anywhere in this
+// space — the signed-in user's own first name + "Shared", so a couple has an
+// obvious starting point instead of a blank input). `accountKey` must be the
+// same canonical id accountUrlId() (lib/accounts.js) produces — works
+// unchanged for manual accounts, manual debts, and Plaid accounts.
+export function AccountTagsEditor({ accountKey, className = '' }) {
+  const { state, update } = useApp()
+  const { user } = useUser()
+  const [adding, setAdding] = useState(false)
+  const [text, setText] = useState('')
+
+  const tags = tagsForAccount(state, accountKey)
+  const spaceTags = allAccountTags(state)
+  const noTagsYet = spaceTags.length === 0
+  const suggestions = spaceTags.filter((t) => !tags.some((x) => x.tag.toLowerCase() === t.toLowerCase()))
+  const firstName = user?.firstName || null
+
+  const commit = (raw) => {
+    const val = String(raw ?? text).trim()
+    if (!val) return
+    addAccountTag(update, accountKey, val)
+    setText('')
+    setAdding(false)
+  }
+
+  return (
+    <div className={cn('flex flex-wrap items-center justify-center gap-1.5', className)}>
+      {tags.map((t) => <TagPill key={t.id} tag={t.tag} onRemove={() => removeAccountTag(update, t.id)} />)}
+
+      {adding ? (
+        <>
+          <span className="inline-flex items-center gap-1">
+            <input
+              autoFocus
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commit(text)
+                if (e.key === 'Escape') { setAdding(false); setText('') }
+              }}
+              maxLength={24}
+              placeholder={noTagsYet ? (firstName ? `e.g. ${firstName}` : "e.g. Mine, Julia’s, Business") : 'Tag name'}
+              className="h-6 w-28 rounded-full border border-input bg-transparent px-2.5 text-[0.6875rem] outline-none focus-visible:ring-1 focus-visible:ring-ring [color-scheme:dark]"
+            />
+            <button type="button" onClick={() => commit(text)} className="shrink-0 rounded-full bg-primary/90 px-2 py-0.5 text-[0.625rem] font-bold text-primary-foreground">Add</button>
+            <button type="button" onClick={() => { setAdding(false); setText('') }} className="shrink-0 text-[0.625rem] font-semibold text-muted-foreground hover:text-foreground">Cancel</button>
+          </span>
+          {!text && noTagsYet && firstName && (
+            <div className="flex w-full flex-wrap items-center justify-center gap-1.5 pt-0.5">
+              <TagSuggestChip label={firstName} onClick={() => commit(firstName)} />
+              <TagSuggestChip label="Shared" onClick={() => commit('Shared')} />
+            </div>
+          )}
+          {!text && !noTagsYet && suggestions.length > 0 && (
+            <div className="flex w-full flex-wrap items-center justify-center gap-1.5 pt-0.5">
+              {suggestions.slice(0, 6).map((s) => <TagSuggestChip key={s} label={s} onClick={() => commit(s)} />)}
+            </div>
+          )}
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[0.625rem] font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-primary"
+        >
+          <Plus className="h-2.5 w-2.5" />Add tag
+        </button>
+      )}
+    </div>
   )
 }
 

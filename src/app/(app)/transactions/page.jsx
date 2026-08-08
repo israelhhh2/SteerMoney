@@ -6,25 +6,27 @@ import Transactions from '@/views/Transactions'
 function TxPage() {
   const router = useRouter()
   const params = useSearchParams()
-  const preset = params.get('cat')
   const account = params.get('account')
+  const cat = params.get('cat')
   // Single setter backs both the account dropdown (views/Transactions.jsx)
-  // and deep links from AccountDetail.jsx ("View all in Transactions") —
-  // both just read/write the same `?account=` param, so the dropdown always
-  // reflects a deep-linked selection and clearing it (id=null) drops the
-  // param entirely rather than leaving `?account=`.
-  const setAccount = (id) => {
+  // and deep links from AccountDetail.jsx ("View all in Transactions") /
+  // Dashboard's "Where the money went" rows / Budgets' category rows —
+  // all of them just read/write the same `?account=`/`?cat=` params, so the
+  // dropdown/select always reflects a deep-linked selection and clearing it
+  // (id=null) drops the param entirely rather than leaving `?account=`/`?cat=`
+  // dangling with an empty value.
+  const setParam = (key, value) => (id) => {
     const next = new URLSearchParams(params.toString())
-    if (id) next.set('account', id); else next.delete('account')
+    if (id) next.set(key, id); else next.delete(key)
     const qs = next.toString()
     router.replace(qs ? `/transactions?${qs}` : '/transactions')
   }
   return (
     <Transactions
-      preset={preset}
-      clearPreset={() => router.replace('/transactions')}
+      catFilter={cat}
+      setCatFilter={setParam('cat')}
       accountFilter={account}
-      setAccountFilter={setAccount}
+      setAccountFilter={setParam('account')}
     />
   )
 }

@@ -1,19 +1,30 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Pencil, X, Search, FlaskConical, CreditCard, ChevronLeft, ChevronRight, CheckCircle2 } from 'lucide-react'
+import { Plus, Pencil, X, Search, FlaskConical, CreditCard, ChevronLeft, ChevronRight, CheckCircle2, Sparkles, Landmark } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Ring, Money, SectionLabel, CatIcon, ViewToggle, ConfirmDialog } from '@/components/shared'
+import { Ring, Money, SectionLabel, CatIcon, ViewToggle, ConfirmDialog, TagPill } from '@/components/shared'
 import { useApp, monthTx, incomeIn } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
 import { fmt, fmt0, today, isoDate, prettyDate, ymLabel, ordinal, uid } from '@/lib/utils'
 import { recEvery, recMonthly, nextDueDate, simulatePlan, fmtMonths, findPaidTx } from '@/lib/finance'
+import { usePlaidItems, buildAccountInventory, accountUrlId, tagsForAccount } from '@/lib/accounts'
+import { detectRecurring, CADENCE_LABEL } from '@/lib/recurring-detect'
 
 const VIEW_KEY = 'fin-rec-view'
+// Suggested-subscription dismissals — a merchant the user explicitly said "not
+// a bill" shouldn't keep reappearing. Plain localStorage (same untethered-to-
+// user-id convention as VIEW_KEY above), not a store/DB slice: this is a
+// per-browser "don't ask again," not data that needs to sync across devices
+// or survive a cache clear — the least invasive option per CLAUDE.md's
+// note-what-you-picked instruction, and avoids touching store.jsx's
+// settings-slice sync (which only diffs `sim`/`mSim` today) for something
+// this disposable.
+const DISMISSED_KEY = 'fin-recur-dismissed'
 
 export default function Recurring() {
   const { state, update, catInfo } = useApp()
@@ -24,6 +35,14 @@ export default function Recurring() {
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
   const [confirmDelId, setConfirmDelId] = useState(null) // recurring bill id pending delete confirmation
   const [deleting, setDeleting] = useState(false)
+  const { plaidItems } = usePlaidItems()
+  const [dismissed, setDismissed] = useState([])
+  useEffect(() => { try { setDismissed(JSON.parse(localStorage.getItem(DISMISSED_KEY)) || []) } catch {} }, [])
+  const dismissSuggestion = (key) => setDismissed((d) => {
+    const next = [...new Set([...d, key])]
+    try { localStorage.setItem(DISMISSED_KEY, JSON.stringify(next)) } catch {}
+    return next
+  })
   const nowYm = today().slice(0, 7)
   const [ym, setYm] = useState(nowYm)
   const [view, setView] = useState('cards')
@@ -39,6 +58,59 @@ export default function Recurring() {
   }
 
   const confirmDelBill = confirmDelId ? state.recurring.find((x) => x.id === confirmDelId) : null
+
+  // Same merged manual+Plaid inventory Accounts.jsx/AccountDetail.jsx build
+  // (lib/accounts.js) — reused here purely to resolve "which account" (name/
+  // institution/mask) and its tags (tagsForAccount, keyed by accountUrlId())
+  // for a Plaid account_id, whether that account came in unmatched or is
+  // actually a manual debt fuzzy-matched to a Plaid connection.
+  const inventory = useMemo(() => buildAccountInventory(state, plaidItems), [state.debts, state.accounts, plaidItems])
+  const accountRowFor = (accountId) => (accountId ? inventory.all.find((a) => a.account_id === accountId) : null)
+
+  // "Which account" + its tags, rendered under a recurring row's existing
+  // desc/cadence line — only present when the bill carries an accountId
+  // (i.e. it was added from a Suggested Subscriptions row below; manually
+  // added bills have none, so this renders nothing for them, unchanged).
+  const accountLineFor = (accountId) => {
+    const acctRow = accountRowFor(accountId)
+    if (!acctRow) return null
+    const tags = tagsForAccount(state, accountUrlId(acctRow))
+    return (
+      <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[0.625rem] text-muted-foreground">
+        <Landmark className="h-2.5 w-2.5 shrink-0" />
+        <span className="truncate">{acctRow.institution || 'Bank'}{acctRow.mask ? ` ••${acctRow.mask}` : ''}</span>
+        {tags.map((t) => <TagPill key={t.id} tag={t.tag} />)}
+      </div>
+    )
+  }
+
+  // Detected against every transaction + the current recurring list (so an
+  // already-tracked bill's merchant is fuzzy-excluded — see
+  // lib/recurring-detect.js), then filtered against this browser's dismissed
+  // list. Recomputes only when transactions/recurring/dismissals change.
+  const suggestions = useMemo(
+    () => detectRecurring(state.transactions, state.recurring).filter((s) => !dismissed.includes(s.key)),
+    [state.transactions, state.recurring, dismissed]
+  )
+
+  // Prefill exactly per spec: desc, amount, day-of-month from lastDate, cat
+  // from the transactions' own category. Always added as a monthly (every:1)
+  // bill — the store's recurring schema only supports "every N months" (see
+  // RecurringDialog below), so a detected weekly/biweekly cadence has no
+  // native representation yet; noted as a limitation in CLAUDE.md rather than
+  // silently mis-tagging it as something the schema can't actually express.
+  const addSuggestion = (s) => {
+    update((st) => {
+      const dueDay = Math.min(31, Math.max(1, new Date(s.lastDate + 'T00:00:00').getDate()))
+      st.recurring.push({
+        id: uid('r'), desc: s.displayName, amount: Math.round(s.avgAmount * 100) / 100,
+        dueDay, cat: s.cat || 'other', active: true, every: 1,
+        ...(s.accountId ? { accountId: s.accountId } : {}),
+      })
+    })
+    dismissSuggestion(s.key)
+    centerToast(`${s.displayName} added to recurring`)
+  }
 
   // Deletion is a synchronous store mutation; the deliberate short delay +
   // busy spinner in ConfirmDialog matches the "it's working" feedback the
@@ -243,6 +315,45 @@ export default function Recurring() {
         )}
       </Card>
 
+      {/* suggested subscriptions — detected from transaction history, see lib/recurring-detect.js */}
+      {suggestions.length > 0 && (
+        <Card className="p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-muted-foreground" />
+            <span className="text-[0.8125rem] font-semibold tracking-tight">Suggested subscriptions</span>
+            <Badge className="uppercase tracking-wide">found in your transactions</Badge>
+          </div>
+          <div className="space-y-2">
+            {suggestions.map((s) => {
+              const acctRow = accountRowFor(s.accountId)
+              const tags = acctRow ? tagsForAccount(state, accountUrlId(acctRow)) : []
+              return (
+                <div key={s.key} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border bg-secondary/30 px-3 py-2.5">
+                  <span className="flex w-6 shrink-0 justify-center"><CatIcon cat={s.cat} /></span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[0.8125rem] font-bold">{s.displayName}</div>
+                    <div className="flex flex-wrap items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
+                      <span className="shrink-0">{fmt(s.avgAmount)} · {CADENCE_LABEL[s.cadence] || s.cadence}</span>
+                      {acctRow && (
+                        <span className="flex min-w-0 items-center gap-1">
+                          <Landmark className="h-2.5 w-2.5 shrink-0" />
+                          <span className="truncate">{acctRow.institution || 'Bank'}{acctRow.mask ? ` ••${acctRow.mask}` : ''}</span>
+                        </span>
+                      )}
+                      {tags.map((t) => <TagPill key={t.id} tag={t.tag} />)}
+                    </div>
+                  </div>
+                  <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
+                    <Button size="xs" onClick={() => addSuggestion(s)}>Add</Button>
+                    <Button variant="outline" size="xs" onClick={() => dismissSuggestion(s.key)}>Dismiss</Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </Card>
+      )}
+
       {/* filters */}
       <Card className="flex flex-wrap items-center gap-2.5 p-3">
         <div className="relative">
@@ -283,6 +394,7 @@ export default function Recurring() {
                   <div className="text-[0.6875rem] text-muted-foreground">
                     {recEvery(r) > 1 ? `every ${recEvery(r)} mo · next ${r.nextDate ? prettyDate(r.nextDate) : 'set a date'}` : `day ${r.dueDay} · monthly`} · {catInfo(r.cat).name}
                   </div>
+                  {accountLineFor(r.accountId)}
                 </div>
                 <span className="shrink-0 text-right">
                   <span className="text-[0.8125rem] font-semibold">{fmt(r.amount)}</span>

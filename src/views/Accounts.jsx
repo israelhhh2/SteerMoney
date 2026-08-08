@@ -9,14 +9,14 @@ import { Input, Label } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Segmented } from '@/components/ui/segmented'
-import { Money, CardChip, SourceBadge, ConfirmDialog, SyncingPill } from '@/components/shared'
+import { Money, CardChip, SourceBadge, ConfirmDialog, SyncingPill, TagPill, tagTone } from '@/components/shared'
 import { ConnectBankButton } from '@/components/connect-bank'
 import { useApp } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
 import { cn, fmt0, today, uid } from '@/lib/utils'
 import {
   RANGE_KEYS, daysFor, buildSeries, pctChange, pctChange30,
-  buildAccountInventory, accountUrlId, usePlaidItems, deleteManualAccount,
+  buildAccountInventory, accountUrlId, usePlaidItems, deleteManualAccount, allAccountTags,
 } from '@/lib/accounts'
 
 const TIP = { contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 } }
@@ -41,6 +41,22 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
     () => buildAccountInventory(state, plaidItems),
     [state.debts, state.accounts, plaidItems]
   )
+
+  // Tags: "Mine"/"Julia's"/etc. per-account labels (see lib/accounts.js's tag
+  // helpers, CLAUDE.md 2026-08-08 (10)) — keyed by the same canonical
+  // accountUrlId() every row already uses, so this map works across manual
+  // accounts, manual debts, and Plaid accounts with no special-casing.
+  const tagsByKey = useMemo(() => {
+    const map = {}
+    ;(state.accountTags || []).forEach((t) => { (map[t.accountKey] = map[t.accountKey] || []).push(t.tag) })
+    return map
+  }, [state.accountTags])
+  const allTags = useMemo(() => allAccountTags(state), [state.accountTags])
+  const [tagFilter, setTagFilter] = useState(null) // null = "All"
+  const matchesTagFilter = (a) => !tagFilter || (tagsByKey[accountUrlId(a)] || []).some((t) => t.toLowerCase() === tagFilter.toLowerCase())
+  const filteredCards = cards.filter(matchesTagFilter)
+  const filteredLoans = loans.filter(matchesTagFilter)
+  const filteredDepository = depository.filter(matchesTagFilter)
 
   const manualAssets = state.accounts.filter((a) => a.type !== 'credit' && a.type !== 'loan').reduce((s, a) => s + a.balance, 0)
   const plaidAssets = plaidAssetAccounts.reduce((s, a) => s + (a.balance || 0), 0)
@@ -130,23 +146,37 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
         </div>
       </Card>
 
-      {cards.length > 0 && (
-        <Section title="Credit cards" total={fmt0(cards.reduce((s, a) => s + a.balance, 0))} addHref="/debts">
-          {cards.map((a) => <CardRow key={a.key} account={a} />)}
+      {/* Tag filter pills — hidden entirely until at least one tag exists
+          anywhere in this space (personal or shared). Friendlier than a
+          dropdown for "show me which accounts are mine vs. my wife's". */}
+      {allTags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          <TagFilterPill label="All" active={!tagFilter} onClick={() => setTagFilter(null)} />
+          {allTags.map((t) => (
+            <TagFilterPill key={t} label={t} active={tagFilter === t} onClick={() => setTagFilter(t)} tone={tagTone(t)} />
+          ))}
+        </div>
+      )}
+
+      {filteredCards.length > 0 && (
+        <Section title="Credit cards" total={fmt0(filteredCards.reduce((s, a) => s + a.balance, 0))} addHref="/debts">
+          {filteredCards.map((a) => <CardRow key={a.key} account={a} tags={tagsByKey[accountUrlId(a)] || []} />)}
         </Section>
       )}
 
-      {loans.length > 0 && (
-        <Section title="Loans" total={fmt0(loans.reduce((s, a) => s + a.balance, 0))} addHref="/debts">
-          {loans.map((a) => <LoanRow key={a.key} account={a} />)}
+      {filteredLoans.length > 0 && (
+        <Section title="Loans" total={fmt0(filteredLoans.reduce((s, a) => s + a.balance, 0))} addHref="/debts">
+          {filteredLoans.map((a) => <LoanRow key={a.key} account={a} tags={tagsByKey[accountUrlId(a)] || []} />)}
         </Section>
       )}
 
-      <Section title="Depository" total={fmt0(depository.reduce((s, a) => s + a.balance, 0))} onAdd={() => setEditing(null)}>
-        {depository.length ? (
-          depository.map((a) => <DepositoryRow key={a.key} account={a} />)
+      <Section title="Depository" total={fmt0(filteredDepository.reduce((s, a) => s + a.balance, 0))} onAdd={() => setEditing(null)}>
+        {filteredDepository.length ? (
+          filteredDepository.map((a) => <DepositoryRow key={a.key} account={a} tags={tagsByKey[accountUrlId(a)] || []} />)
         ) : (
-          <div className="p-6 text-center text-[0.78125rem] text-muted-foreground">No depository accounts yet — add one or connect a bank.</div>
+          <div className="p-6 text-center text-[0.78125rem] text-muted-foreground">
+            {tagFilter ? `No depository accounts tagged "${tagFilter}".` : 'No depository accounts yet — add one or connect a bank.'}
+          </div>
         )}
       </Section>
 
@@ -168,6 +198,26 @@ function ChangePill({ pct, invert = false }) {
 
 function StatLabel({ children }) {
   return <div className="truncate text-[0.65rem] font-bold uppercase tracking-wide" style={{ color: LABEL_COLOR }}>{children}</div>
+}
+
+// "All" + one pill per tag in the space, filtering the Credit cards/Loans/
+// Depository sections below. Tinted to match the same tag's TagPill color
+// (via `tone`) so the active filter reads as "this color is selected".
+function TagFilterPill({ label, active, onClick, tone }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'shrink-0 rounded-full border px-2.5 py-1 text-[0.71875rem] font-semibold transition',
+        active
+          ? tone ? cn(tone.bg, tone.text, tone.border) : 'border-primary/50 bg-primary/10 text-primary'
+          : 'border-border/70 bg-secondary/40 text-muted-foreground hover:text-foreground'
+      )}
+    >
+      {label}
+    </button>
+  )
 }
 
 // Collapsible Copilot-style section header: "▾ Title  $total" with an optional
@@ -197,7 +247,7 @@ function Section({ title, total, addHref, onAdd, children, defaultOpen = true })
 // Rows now navigate to /accounts/{id} — a Notion-style modal on in-app clicks
 // (intercepted route, app/(app)/@modal/(.)accounts/[id]) or the full detail
 // page on direct load/refresh. See views/AccountDetail.jsx.
-function CardRow({ account }) {
+function CardRow({ account, tags = [] }) {
   const hasLimit = !!account.limit
   const util = hasLimit ? Math.min(999, Math.round((account.balance / account.limit) * 100)) : null
   return (
@@ -205,6 +255,7 @@ function CardRow({ account }) {
       <CardChip institution={account.institution} name={account.name} mask={account.mask} />
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex justify-center gap-1.5"><SourceBadge accountId={account.account_id} institution={account.institution} />{account.status === 'syncing' && <SyncingPill />}</div>
+        {tags.length > 0 && <div className="flex flex-wrap justify-center gap-1">{tags.map((t) => <TagPill key={t} tag={t} />)}</div>}
         {hasLimit ? (
           <div className="grid grid-cols-3 items-center gap-1 text-center">
             <div><StatLabel>Balance</StatLabel><Money value={fmt0(account.balance)} className="text-sm font-extrabold sm:text-base" /></div>
@@ -230,12 +281,13 @@ function CardRow({ account }) {
   )
 }
 
-function LoanRow({ account }) {
+function LoanRow({ account, tags = [] }) {
   return (
     <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
       <CardChip institution={account.institution} name={account.name} mask={account.mask} />
       <div className="min-w-0 flex-1 space-y-1.5 text-center">
         <div className="flex justify-center gap-1.5"><SourceBadge accountId={account.account_id} institution={account.institution} />{account.status === 'syncing' && <SyncingPill />}</div>
+        {tags.length > 0 && <div className="flex flex-wrap justify-center gap-1">{tags.map((t) => <TagPill key={t} tag={t} />)}</div>}
         <StatLabel>Balance</StatLabel>
         <Money value={fmt0(account.balance)} className="text-xl font-extrabold sm:text-2xl" />
       </div>
@@ -243,7 +295,7 @@ function LoanRow({ account }) {
   )
 }
 
-function DepositoryRow({ account }) {
+function DepositoryRow({ account, tags = [] }) {
   const pct = pctChange30(account.history, account.balance)
   const available = account.available ?? account.balance
   return (
@@ -251,6 +303,7 @@ function DepositoryRow({ account }) {
       <CardChip institution={account.institution} name={account.name} mask={account.mask} />
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex justify-center gap-1.5"><SourceBadge accountId={account.account_id} institution={account.institution} />{account.status === 'syncing' && <SyncingPill />}</div>
+        {tags.length > 0 && <div className="flex flex-wrap justify-center gap-1">{tags.map((t) => <TagPill key={t} tag={t} />)}</div>}
         <div className="grid grid-cols-3 items-center gap-1 text-center">
           <div><StatLabel>Available</StatLabel><Money value={fmt0(available)} className="text-sm font-extrabold sm:text-base" /></div>
           <div><StatLabel>Current</StatLabel><Money value={fmt0(account.balance)} className="text-sm font-extrabold sm:text-base" /></div>

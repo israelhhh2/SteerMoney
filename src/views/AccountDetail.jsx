@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Loader2, Trash2, Link2Off } from 'lucide-react'
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Segmented } from '@/components/ui/segmented'
-import { Money, CardChip, CatIcon, CatChip, SourceBadge, ConfirmDialog, TransactionsSkeleton, ChartSkeleton } from '@/components/shared'
+import { Money, CardChip, CatIcon, CatChip, SourceBadge, ConfirmDialog, TransactionsSkeleton, ChartSkeleton, AccountTagsEditor } from '@/components/shared'
 import { useApp } from '@/store'
 import { useCenterToast } from '@/components/toast'
 import { fmt, fmt0, prettyDate } from '@/lib/utils'
@@ -105,6 +105,11 @@ export default function AccountDetail({ id }) {
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || "Couldn't disconnect that bank")
+        // Best-effort tag cleanup for this one account_id — a full item can have
+        // several accounts, but this is the only one we have in hand here; any
+        // sibling account's tags are harmlessly orphaned (never shown again since
+        // nothing will match their accountKey once this item is gone).
+        if (account.account_id) update((s) => { s.accountTags = (s.accountTags || []).filter((t) => t.accountKey !== account.account_id) })
         centerToast(`${account.institution || 'Bank'} disconnected`)
         setConfirmDelete(false)
         setDeleting(false)
@@ -198,6 +203,12 @@ export default function AccountDetail({ id }) {
           {account.last_synced ? `Latest update received ${relTime(account.last_synced)}` : 'Manual account'}
         </p>
       </div>
+
+      {/* Tags: per-account labels ("Mine"/"Julia's"/"Business") — see
+          lib/accounts.js's tag helpers and CLAUDE.md 2026-08-08 (10). Works
+          for every account type since `id` here is already the canonical
+          accountUrlId() this row was looked up by. */}
+      <AccountTagsEditor accountKey={id} className="w-full max-w-sm" />
 
       <div className="w-full max-w-sm space-y-2">
         {isPlaid ? (

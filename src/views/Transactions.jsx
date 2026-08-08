@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Landmark, Pencil, Plus, Search, Upload, X } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -14,14 +14,19 @@ import { fmt, fmt0, today, ymLabel, prettyDate, uid } from '@/lib/utils'
 import { parseWescomCSV, guessCat } from '@/lib/wescom'
 import { usePlaidItems } from '@/lib/accounts'
 
-export default function Transactions({ preset, clearPreset, accountFilter, setAccountFilter }) {
+export default function Transactions({ accountFilter, setAccountFilter, catFilter, setCatFilter }) {
   const { state, update, catInfo } = useApp()
   const toast = useToast()
   const centerToast = useCenterToast()
   const fileRef = useRef(null)
   const [ym, setYm] = useState(today().slice(0, 7))
   const [q, setQ] = useState('')
-  const [cat, setCat] = useState('all')
+  // `cat` mirrors the `?cat=` param exactly the way `accountFilter` mirrors
+  // `?account=` — no local-only state, so a deep link (Dashboard's "Where
+  // the money went" rows, Budgets' category rows, AccountDetail's account
+  // links) and the select itself always agree on what's selected.
+  const cat = catFilter || 'all'
+  const setCat = (id) => setCatFilter(id === 'all' ? null : id)
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
   const [importRows, setImportRows] = useState(null) // null closed · [] -> preview dialog
   const [confirmDelId, setConfirmDelId] = useState(null) // transaction id pending delete confirmation
@@ -80,10 +85,6 @@ export default function Transactions({ preset, clearPreset, accountFilter, setAc
     }
     rd.readAsText(file)
   }
-
-  useEffect(() => {
-    if (preset) { setCat(preset); setQ(''); clearPreset && clearPreset() }
-  }, [preset])
 
   const shift = (n) => {
     const d = new Date(+ym.slice(0, 4), +ym.slice(5, 7) - 1 + n, 1)

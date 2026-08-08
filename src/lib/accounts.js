@@ -5,7 +5,7 @@
 // build the exact same merged list (manual debts/accounts + connected Plaid
 // accounts) and agree on one stable, URL-safe id per account.
 import { useEffect, useState } from 'react'
-import { today, isoDate, prettyDate } from '@/lib/utils'
+import { today, isoDate, prettyDate, uid } from '@/lib/utils'
 import { matchesBankAccount } from '@/lib/finance'
 
 export const RANGE_KEYS = ['1W', '1M', '3M', 'YTD', '1Y']
@@ -255,13 +255,21 @@ export function findAccountByUrlId(id, state, plaidItems) {
 // AccountDetail's Delete/Disconnect action (used by both the full page and
 // the modal) reuses the exact logic instead of duplicating it.
 export function deleteManualAccount(update, accountRowId) {
-  update((s) => { s.accounts = s.accounts.filter((a) => a.id !== accountRowId) })
+  const key = manualAcctUrlId(accountRowId)
+  update((s) => {
+    s.accounts = s.accounts.filter((a) => a.id !== accountRowId)
+    // drop any tags pinned to this account so account_tags doesn't accumulate
+    // orphaned rows for deleted accounts — see the tag helpers below.
+    if (s.accountTags) s.accountTags = s.accountTags.filter((t) => t.accountKey !== key)
+  })
 }
 
 export function deleteDebt(update, debtId) {
+  const key = debtUrlId(debtId)
   update((s) => {
     const i = s.debts.findIndex((d) => d.id === debtId)
     if (i !== -1) s.debts.splice(i, 1)
+    if (s.accountTags) s.accountTags = s.accountTags.filter((t) => t.accountKey !== key)
   })
 }
 
@@ -333,4 +341,46 @@ export function usePlaidItems() {
   }, [hasSyncingItem])
 
   return { plaidItems, plaidChecked }
+}
+
+// ---- account tags ("Mine"/"Julia's"/etc. — shared-space account labels) ----
+// One row per {account, tag} in the `accountTags` store slice (table
+// `account_tags`; see CLAUDE.md 2026-08-08 (10) for the migration SQL).
+// `accountKey` is always accountUrlId()'s output, so a tag works identically
+// on a manual account, a manual debt, or a Plaid-linked account. Nothing here
+// is aware of shared spaces — store.jsx already re-points the entire `state`
+// (every slice, tags included) at the active space's rows, so two partners
+// viewing the same shared space automatically see and edit the same tags;
+// switching back to a personal space shows only that person's own tags.
+export function tagsForAccount(state, accountKey) {
+  return (state?.accountTags || []).filter((t) => t.accountKey === accountKey)
+}
+
+// Every distinct tag name in use anywhere in this space, case-insensitively
+// deduped (first-seen casing wins) and alphabetized — feeds the Accounts
+// page's filter-pill row and the "reuse an existing tag" suggestions shown
+// while adding a new one (so "Julia" gets reused, not retyped as "julia").
+export function allAccountTags(state) {
+  const seen = new Map() // lowercase -> first-seen-casing
+  ;(state?.accountTags || []).forEach((t) => {
+    const k = t.tag.toLowerCase()
+    if (!seen.has(k)) seen.set(k, t.tag)
+  })
+  return [...seen.values()].sort((a, b) => a.localeCompare(b))
+}
+
+// No-op on an empty/whitespace tag name or a duplicate (case-insensitive) on
+// the same account — the UI never needs to check first.
+export function addAccountTag(update, accountKey, tagName) {
+  const tag = String(tagName || '').trim().slice(0, 24)
+  if (!tag) return
+  update((s) => {
+    if (!s.accountTags) s.accountTags = []
+    const dup = s.accountTags.some((t) => t.accountKey === accountKey && t.tag.toLowerCase() === tag.toLowerCase())
+    if (!dup) s.accountTags.push({ id: uid('at'), accountKey, tag })
+  })
+}
+
+export function removeAccountTag(update, tagId) {
+  update((s) => { s.accountTags = (s.accountTags || []).filter((t) => t.id !== tagId) })
 }

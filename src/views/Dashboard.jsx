@@ -188,15 +188,33 @@ export default function Dashboard() {
               <button onClick={() => setCfView(null)} className="text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>
             </div>
             <div className="divide-y divide-border/60">
-              {breakdown.length ? breakdown.map((r) => (
-                <div key={r.label} className="flex items-center gap-3 py-2 text-[0.8125rem]">
-                  {r.cat && <CatIcon cat={r.cat} className="h-3.5 w-3.5 shrink-0" />}
-                  <span className="min-w-0 flex-1 truncate text-foreground/90 sm:w-56 sm:flex-none">{r.label}</span>
-                  <div className="track hidden flex-1 sm:block"><div style={{ width: `${Math.round((r.sum / bTot) * 100)}%`, background: r.color }} /></div>
-                  <span className="hidden w-16 shrink-0 text-right text-[0.6875rem] text-muted-foreground sm:inline">{r.n}× · {Math.round((r.sum / bTot) * 100)}%</span>
-                  <span className={`w-20 shrink-0 text-right font-semibold ${cfView === 'in' ? 'text-emerald-400' : ''}`}>{fmt0(r.sum)}</span>
-                </div>
-              )) : <div className="py-4 text-center text-xs text-muted-foreground">Nothing recorded in this period.</div>}
+              {breakdown.length ? breakdown.map((r) => {
+                const inner = (
+                  <>
+                    {r.cat && <CatIcon cat={r.cat} className="h-3.5 w-3.5 shrink-0" />}
+                    <span className="min-w-0 flex-1 truncate text-foreground/90 sm:w-56 sm:flex-none">{r.label}</span>
+                    <div className="track hidden flex-1 sm:block"><div style={{ width: `${Math.round((r.sum / bTot) * 100)}%`, background: r.color }} /></div>
+                    <span className="hidden w-16 shrink-0 text-right text-[0.6875rem] text-muted-foreground sm:inline">{r.n}× · {Math.round((r.sum / bTot) * 100)}%</span>
+                    <span className={`w-20 shrink-0 text-right font-semibold ${cfView === 'in' ? 'text-emerald-400' : ''}`}>{fmt0(r.sum)}</span>
+                  </>
+                )
+                // Only expense rows carry a category id (`r.cat`) — those are
+                // the ones the user can jump to Transactions and recategorize.
+                // "Where the money came from" rows (cfView 'in') have no
+                // category, so they stay plain/inert like before.
+                return r.cat ? (
+                  <Link
+                    key={r.label}
+                    href={`/transactions?cat=${encodeURIComponent(r.cat)}`}
+                    title={`View ${r.label} transactions`}
+                    className="-mx-2 flex items-center gap-3 rounded-lg px-2 py-2 text-[0.8125rem] transition hover:bg-secondary/60"
+                  >
+                    {inner}
+                  </Link>
+                ) : (
+                  <div key={r.label} className="flex items-center gap-3 py-2 text-[0.8125rem]">{inner}</div>
+                )
+              }) : <div className="py-4 text-center text-xs text-muted-foreground">Nothing recorded in this period.</div>}
             </div>
           </div>
         )}

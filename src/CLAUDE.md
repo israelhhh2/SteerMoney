@@ -21,7 +21,8 @@ Next.js (App Router, JS/JSX) personal-finance app.
   allowed to touch `plaid_items`, which has RLS with no policies).
 - **State:** single context in `store.jsx` — localStorage cache + debounced
   diff-sync to Supabase. Tables: debts, payments, budgets, recurring,
-  transactions, goals, accounts, settings, workspaces/invites, plaid_items.
+  transactions, goals, accounts, account_tags, settings, workspaces/invites,
+  plaid_items.
 - **Views:** `views/*.jsx` (Dashboard, Accounts, Debts, Budgets, Goals,
   Charts, Simulator, Transactions, Settings, Admin). UI primitives in
   `components/ui/`.
@@ -117,6 +118,459 @@ Costs note: production Plaid is pay-per-item/product — check current pricing
 before flipping the switch.
 
 ## Session log (newest first)
+
+### 2026-08-08 (13)
+- **Recurring-charge/subscription detector** (Sonnet worker), per Israel's
+  verbatim request: "start building a recurring script that checks all
+  recurring based on the accounts. Check for subscriptions — Netflix,
+  Claude, Spotify etc. And keep the tag of who the account belongs to, and
+  which account it is." Runs client-side on demand (opening Recurring.jsx),
+  not a cron/scheduled job — no new backend surface, no roadmap-7-style
+  infra needed; re-detects fresh every time `state.transactions`/
+  `state.recurring` change.
+  - **`lib/recurring-detect.js`** (new, pure functions): `detectRecurring(transactions,
+    existingRecurring)` groups expense transactions (excludes income/
+    transfer/debt categories) by a normalized merchant key —
+    `merchantKey()`/`normalizeMerchant()` strip domain suffixes, store/POS/
+    terminal/ref numbers, punctuation, and long numeric tails, then collapse
+    whitespace (e.g. "NETFLIX.COM *A1B2C3" and "Netflix 04/12" both key to
+    `netflix`). A ~35-entry `KNOWN_SUBS` substring list (netflix, spotify,
+    hulu, disney+, max, youtube, amazon prime, apple/icloud, claude.ai/
+    anthropic, openai/chatgpt, audible, dropbox, google one, several gym
+    chains, nytimes, github, adobe, microsoft 365, xbox/playstation,
+    paramount+/peacock, siriusxm, …) collapses onto a canonical display name
+    so near-variants ("hbo max"/"hbomax") group together and get a clean
+    label instead of the raw statement string; anything not on the list
+    falls back to a title-cased version of the cleaned merchant string.
+    For each group with ≥2 charges: median interval in days classifies
+    cadence (`weekly` 6–8d, `biweekly` 12–16d, `monthly` 26–35d, `yearly`
+    350–380d — anything outside those bands is dropped, not guessed at);
+    amounts must be consistent (within ~20% of the median, floor $0.50) or
+    the group is dropped — catches "same merchant, unrelated one-off
+    purchases" (e.g. two different Amazon orders) from being mistaken for a
+    subscription. Groups fuzzy-matching an existing `state.recurring` desc
+    (substring either direction against the normalized name) are excluded —
+    already-tracked bills don't get re-suggested. Output per suggestion:
+    `{key, displayName, cadence, avgAmount, lastDate, nextEstDate, count,
+    accountId, cat, confidence}` — `accountId` is the *last* matching
+    transaction's Plaid `account_id` (or null for manual/CSV-imported
+    transactions with no account link); `cat` is that transaction's own
+    category (real data, not guessed). `confidence` (0–1) only drives sort
+    order, not a hard cutoff — nothing is silently hidden from the list.
+  - **UI — `views/Recurring.jsx`**: new "Suggested subscriptions" Card,
+    rendered only when `suggestions.length > 0`, placed right before the
+    filters Card (after the what-if simulator, before the manual bills
+    list). Each row: `CatIcon`, display name, `"$avgAmount · cadence"`
+    (`CADENCE_LABEL` maps `biweekly` → "every 2 weeks", others are used
+    as-is), the charging account's `institution ••mask` (via the same
+    `buildAccountInventory`/`usePlaidItems` merged inventory
+    Accounts.jsx/AccountDetail.jsx already build — resolves a Plaid
+    `account_id` to its institution/mask *and* correctly falls back to a
+    manual debt's own `accountUrlId()` when that debt is fuzzy-matched to
+    the Plaid account, same logic AccountDetail already relies on) plus
+    that account's `TagPill`s via `tagsForAccount(state, accountUrlId(acctRow))`
+    — this is what satisfies "keep the tag of who the account belongs to,
+    and which account it is." No account line renders at all when
+    `accountId` is null (manual/CSV transactions). "Add" and "Dismiss"
+    buttons per row.
+  - **"Add"**: pushes a normal `state.recurring` item — `desc` (the
+    suggestion's display name), `amount` (rounded to cents), `dueDay`
+    (day-of-month from `lastDate`), `cat` (the transactions' own category,
+    fallback `'other'`), `every: 1`, `active: true`, plus `accountId` when
+    the suggestion has one — then immediately dismisses that suggestion (it's
+    now a tracked bill, shouldn't keep suggesting itself) and shows a
+    `centerToast`. **Limitation, called out deliberately rather than faked**:
+    every suggestion is added as a monthly (`every: 1`) bill regardless of
+    detected cadence — the store's recurring schema (see
+    `RecurringDialog` in the same file) only supports "every N months," so a
+    detected `weekly`/`biweekly` cadence has no native slot to go into yet;
+    it's still detected and its real cadence is shown in the Suggested
+    Subscriptions row, but "Add" necessarily downgrades it to the closest
+    thing the schema supports rather than leaving it un-addable.
+  - **"Dismiss"**: adds the suggestion's `key` to a plain `localStorage`
+    array (`fin-recur-dismissed`) so it won't reappear in this browser.
+    Deliberately **not** a new store/DB slice: this is a disposable
+    per-browser "don't ask again," not data needing cross-device sync, and
+    piggybacking it onto `store.jsx`'s `sim`/`mSim` settings-slice sync (the
+    only generic key/value slice that exists) would have meant widening that
+    diff check for something this low-stakes. Same convention this file
+    already used for its view-mode toggle (`fin-rec-view`).
+  - **Existing recurring rows also show the account + tags now**: the main
+    bills list's row (the `min-w-0 flex-1` block with desc + cadence line)
+    gained `{accountLineFor(r.accountId)}` right under the existing cadence
+    line — resolves via the same merged inventory + `tagsForAccount`, and
+    renders nothing when `r.accountId` is absent (every pre-existing manual
+    bill, unaffected/unchanged in appearance).
+  - **`store.jsx`**: `mappers.recurring.toRow`/`fromRow` now carry
+    `account_id`/`accountId` using the exact same "only include the key when
+    already present" convention `mappers.transactions` already established
+    (2026-08-05 (2) entry) — so a plain manually-added bill (no `accountId`
+    key at all) round-trips completely unaffected. **Needs a migration**,
+    same situation as `transactions.account_id` before it:
+    `ALTER TABLE recurring ADD COLUMN IF NOT EXISTS account_id text;` — until
+    that runs, the only path that ever sets `accountId` (clicking "Add" on a
+    suggestion tied to a Plaid account) will fail to upsert like any other
+    not-yet-migrated column write in this app.
+  - **Files changed**: `lib/recurring-detect.js` (new),
+    `views/Recurring.jsx`, `store.jsx`.
+  - **Left off / not verified**: no dev server, no npm installs, nothing
+    clicked in a real browser (standing instruction) — all three touched/new
+    files were checked with `npx esbuild <file> --bundle=false
+    --outfile=/dev/null` and parse cleanly; the detection heuristics
+    themselves were not run against any real transaction history (sandbox or
+    production). Next session with real data should: (a) open Recurring.jsx
+    against an account with real Netflix/Spotify/etc. charges and confirm
+    they surface with sensible cadence/amount and don't also show up as
+    "already tracked" false negatives; (b) click Add on a Plaid-linked
+    suggestion and confirm the `recurring` upsert either succeeds (migration
+    already run) or fails cleanly and visibly rather than silently (migration
+    not yet run) — the fromRow/toRow defensive-inclusion pattern doesn't
+    retry-without-the-column the way some API routes do, so an un-migrated
+    DB will surface as `syncError`, not a silent skip; (c) confirm Dismiss
+    actually survives a refresh (localStorage) and Add's dueDay/amount
+    prefill look right in the edit dialog afterward; (d) decide whether the
+    "downgrade weekly/biweekly to monthly on Add" limitation above is worth
+    a real schema change (a `cadenceUnit` field) in a future session, or is
+    fine left as-is given how rare non-monthly subscriptions are in practice.
+
+### 2026-08-08 (12)
+- **Floating feedback/bug-report widget** (Sonnet worker), per Israel's
+  verbatim request: "Add a floating like chat thing where users can send
+  feedback or if they found a bug. And let it email
+  info@wagewatchcompliance.com." Read this file, `app/(app)/layout.jsx`
+  (`Frame`/`BottomNav`, to place the button above the mobile tab bar and
+  below the z-index ladder below), `components/toast.jsx` (`centerToast`),
+  `components/shared.jsx`'s `ConfirmDialog`/`Segmented` conventions, and
+  `lib/plaid-server.js`'s `supabaseAdmin` before writing anything.
+  - **`components/feedback-widget.jsx`** (new) — `FeedbackWidget`: a small
+    circular `MessageCircle` button, `fixed right-4`, positioned above
+    `BottomNav` on mobile (`bottom-[calc(4.75rem+env(safe-area-inset-bottom))]`,
+    matching `BottomNav`'s own `env(safe-area-inset-bottom)` pattern) and
+    lower on desktop (`md:bottom-6`, same `md:hidden` breakpoint `BottomNav`
+    itself uses). Both the button and the panel are **z-[55]** — deliberately
+    below every rung of the dialog ladder this file documents (`@modal`
+    `z-[60]` < `ui/dialog.jsx` Overlay `z-[65]`/Content `z-[70]` <
+    `toast.jsx` centerToast `z-[80]`) — so any real modal/dialog always wins,
+    and the success `centerToast` fired on send still paints above the
+    now-closed panel. Panel: bottom sheet on mobile (`inset-x-0 bottom-0
+    rounded-t-2xl`, with a `md:hidden` tap-to-close backdrop at `z-[54]`),
+    small floating card `md:bottom-24 md:right-4 md:w-80` on desktop. Content:
+    title "Send us feedback", a `Segmented` [Feedback | Bug] pill pair, a
+    plain `<textarea>` (no dedicated `Textarea` component exists in
+    `components/ui/`, so it borrows `Input`'s exact border/shadow/
+    `[color-scheme:dark]` classes), a non-tech-friendly helper line ("No need
+    for a screenshot — just describe it in your own words."), and — only
+    when Clerk's `useUser()` has an email — a checked-by-default checkbox
+    "Email me back at `{email}` if needed" (`wantsReply` state; sent to the
+    API so it can decide whether to set the outgoing email's `reply_to`).
+    Send button shows a `Loader2` spinner + "Sending…" while busy (same
+    shape as `ConfirmDialog`'s busy button). Success closes the panel and
+    fires the shared `useCenterToast()` ("Thanks — we read every one!");
+    failure keeps the panel open with the typed message intact and shows an
+    inline red error line instead, so nothing typed is lost. Esc key and the
+    mobile backdrop both close (blocked while `sending`, same
+    can't-dismiss-mid-request pattern `ConfirmDialog` already uses).
+  - **`app/api/feedback/route.js`** (new) — `POST`, Clerk-authed (401 if no
+    `userId`). Body: `{ type, message, page, userAgent, wantsReply }` — no
+    email field; the route looks the user's email up itself via
+    `clerkClient()` (`await clerkClient(); client.users.getUser(userId)`,
+    the exact pattern `app/api/admin/users/route.js` already uses) rather
+    than trusting the client, so the stored/emailed address is always the
+    real Clerk one regardless of what the widget sent. Two independent
+    best-effort channels, per the request that this should never fail the
+    user over an infra gap:
+    1. **DB**: `supabaseAdmin.from('feedback').insert({ user_id, email,
+       type, message, page, user_agent })` — `type` normalized to exactly
+       `'feedback'`|`'bug'`. Wrapped in try/catch; a failure (most likely:
+       the migration below hasn't run yet) just logs loudly
+       (`console.error`) and falls through to the email channel instead of
+       aborting.
+    2. **Email**: plain `fetch('https://api.resend.com/emails', ...)` — no
+       Resend SDK, no npm install, per this file's standing instruction and
+       the design brief. `Authorization: Bearer ${RESEND_API_KEY}`, `from:
+       'SteerMoney Feedback <onboarding@resend.dev>'` (until a sending
+       domain is verified in Resend — see below), `to:
+       ['info@wagewatchcompliance.com']`, subject `[SteerMoney {type}] from
+       {email}`, plain-text body with type/from/page/user-agent/message.
+       Sets `reply_to` to the user's email only when one exists and
+       `wantsReply !== false`. If `RESEND_API_KEY` isn't set, skips the
+       email entirely (`emailSkipped: true`) and logs loudly — the DB row
+       (if that half succeeded) is the only record until the env var is
+       added.
+    Response is always `{ ok: true, dbOk, emailOk, emailSkipped }` with
+    HTTP 200 as long as *either* channel succeeded; only returns a real
+    error (500) if both failed, or 400 if the message was empty.
+  - **Mounted once**, in `app/(app)/layout.jsx`'s `Frame`, right next to
+    `{modal}` at the end of the root flex div, gated on `{state ? ... :
+    null}` — same gate `RemindersBell` already uses, so it doesn't render
+    before the store's initial load finishes (and thus never renders on the
+    signed-out `/home`/`/sign-in` routes, which use the separate root
+    `app/layout.jsx`, not this authed one).
+  - **Migration required — nothing persists to Supabase until this runs**
+    (the route degrades to email-only without it, per the defensive design
+    above). This app's post-launch tables live in a `supabase/` folder
+    outside the mounted `src/` root (same situation as `account_tags.sql`,
+    2026-08-06-ish entry above), so add `supabase/feedback.sql` and run in
+    the Supabase SQL editor:
+    ```sql
+    create table if not exists public.feedback (
+      id uuid primary key default gen_random_uuid(),
+      user_id text not null,
+      email text,
+      type text not null,
+      message text not null,
+      page text,
+      user_agent text,
+      created_at timestamptz not null default now()
+    );
+    create index if not exists feedback_user_id_idx on public.feedback (user_id);
+    alter table public.feedback enable row level security;
+    -- No policies, deliberately — same as plaid_items. Only
+    -- lib/plaid-server.js's service-role supabaseAdmin (used from
+    -- app/api/feedback/route.js) ever touches this table; there is no
+    -- client-side read/write path and none is planned (this is a one-way
+    -- inbox, not app state), so RLS-with-no-policies is correct here, not
+    -- a placeholder to fill in later like account_tags' was.
+    ```
+  - **Manual steps for Israel:**
+    1. Run the `supabase/feedback.sql` migration above against the prod DB.
+    2. Add `RESEND_API_KEY` to Vercel's env vars (get one from
+       resend.com — free tier is plenty for this volume). Without it, the
+       route still saves feedback to the DB (once the migration above is
+       run) but never emails anyone.
+    3. Email will arrive from `onboarding@resend.dev` (Resend's shared
+       sending address) until a real domain is verified in the Resend
+       dashboard — cosmetic only, doesn't block delivery, but worth
+       verifying a domain (e.g. `steermoney.app` or whatever the eventual
+       domain is) later so it doesn't look like a stranger's address and so
+       `reply_to` round-trips cleanly.
+  - **Left off / not verified**: no dev server, no npm installs, nothing
+    clicked in a real browser (standing instruction) — every changed/new
+    file was checked with `npx esbuild <file> --bundle=false
+    --outfile=/dev/null` and parses clean, but the widget's mobile bottom-
+    sheet placement relative to the real `BottomNav` height, the Resend API
+    call, and the Supabase insert are all unexercised against anything
+    live. Next session with real access should: submit one real piece of
+    feedback and confirm (a) a row lands in `public.feedback`, (b) an email
+    actually arrives at info@wagewatchcompliance.com from
+    onboarding@resend.dev, (c) the button sits clear of the bottom tab bar
+    on an actual ~390px viewport, (d) `RESEND_API_KEY` missing still returns
+    a clean success-with-`emailSkipped:true` instead of an error.
+
+### 2026-08-08 (11)
+- **"Click a category on Dashboard's money-out breakdown → land on
+  Transactions pre-filtered by that category, so I can recategorize"**
+  (Sonnet worker), per Israel's verbatim request. Read `views/Dashboard.jsx`
+  (the "Where the money went" breakdown inside the Cash Flow card),
+  `views/Transactions.jsx` + `app/(app)/transactions/page.jsx` (the existing
+  `?account=` param pattern from 2026-08-08 (9)), and `views/Budgets.jsx`
+  (already had its own `onViewTx` → `router.push('/transactions?cat=' +
+  cat)` — this session's `?cat=` plumbing plugs into that unchanged).
+  - **`?cat=` is now a first-class, bidirectional query param, exactly
+    mirroring `?account=`** — previously it was a one-shot "preset" (
+    `app/(app)/transactions/page.jsx` read `params.get('cat')` once,
+    `views/Transactions.jsx` had a `useEffect` that copied it into local
+    `cat` state then immediately stripped the whole query string via
+    `clearPreset`), so the category `<Select>` itself never wrote back to
+    the URL — changing it in the dropdown didn't update `?cat=`, and a
+    deep link + a later `?account=` deep link couldn't coexist (clearing
+    one wiped the other). Replaced with the same shape as `setAccount`:
+    `app/(app)/transactions/page.jsx`'s `TxPage` now has one generic
+    `setParam(key)(id)` (sets/deletes just that one param, preserves the
+    other) backing both `setCatFilter`/`setAccountFilter`; `Transactions`
+    no longer owns local `cat` state — `catFilter`/`setCatFilter` props
+    are the source of truth (`const cat = catFilter || 'all'`), same
+    pattern as `accountFilter`. Removed the now-dead `preset`/`clearPreset`
+    props and the `useEffect` that consumed them.
+  - **Dashboard**: in the Cash Flow card's expense breakdown (`cfView ===
+    'out'`, `views/Dashboard.jsx`), each row with a `r.cat` (i.e. every
+    expense-category row — "Other"/"Debt Payment"/"Dining Out"/etc.) is now
+    a `<Link href={`/transactions?cat=${r.cat}`}>` wrapping the exact same
+    row content, with `-mx-2 rounded-lg px-2 hover:bg-secondary/60`
+    hover affordance (matches the row-hover convention used elsewhere on
+    this page, e.g. the per-month cash-flow rows just below it). The
+    "Where the money came from" breakdown (`cfView === 'in'`) has no
+    category id (grouped by `srcLabel`, not `t.cat`) so those rows are
+    deliberately left as plain, non-interactive `<div>`s, unchanged.
+  - **Recategorizing was already possible and needed no changes**: verified
+    `views/Transactions.jsx`'s per-row Pencil button (`onClick={() =>
+    setEditing(t.id)}`) opens `TxDialog`, whose Category `<Select>` is
+    bound to `state.budgets` + `debt`/`income`/`transfer` and saves via the
+    normal `update(fn)` mutator — clicking "Other" on Dashboard → lands on
+    `/transactions?cat=other` with the Select already showing "Other" →
+    click the pencil on any row → change its category → Save. End-to-end
+    flow works with no dialog/store changes.
+  - **Files changed**: `views/Dashboard.jsx` (breakdown rows → conditional
+    `Link`), `views/Transactions.jsx` (`catFilter`/`setCatFilter` props
+    replacing local `cat` state + `preset`/`clearPreset`, dropped the now-
+    unused `useEffect` import), `app/(app)/transactions/page.jsx`
+    (`setParam(key)` generalizing the old single-purpose `setAccount`).
+    `views/Budgets.jsx` / `app/(app)/budgets/page.jsx` untouched — their
+    existing `?cat=` navigation continues to work unchanged against the new
+    plumbing.
+  - **Verification**: no dev server/npm installs (standing instruction);
+    all three changed files parse clean via `npx esbuild <file>
+    --bundle=false --outfile=/dev/null`. Not clicked in a real browser —
+    next session should confirm (a) clicking a Dashboard category row lands
+    on Transactions with that category already selected and the URL showing
+    `?cat=<id>`; (b) changing the Select afterward updates `?cat=` live
+    (and clears it back to no param on "All categories"); (c) `?cat=` and
+    `?account=` deep links can be combined/changed independently without
+    clobbering each other; (d) Budgets' existing category-row → Transactions
+    link still works unchanged.
+
+### 2026-08-08 (10)
+- **Account tags** ("Mine"/"Julia's"/"Business"), per Israel's verbatim
+  request: "if we are sharing the budget I want to be able to see which
+  accounts belong to my wife and to me. I think tags could be good." Read
+  `store.jsx` (row↔state mapping, the single `update(fn)` mutator, the
+  debounced diff-sync, how a shared space just swaps the effective
+  `userId`), `lib/accounts.js` (`buildAccountInventory`, `accountUrlId`/
+  `findAccountByUrlId`), `views/Accounts.jsx`, `views/AccountDetail.jsx`,
+  and `components/shared.jsx` before changing anything, per the "keep it
+  dead simple" design brief.
+  - **New store slice `accountTags`** (mirrors every other slice's shape:
+    a mapper in `store.jsx`'s `mappers`, included in `freshState()`,
+    `normalize()`, `stateRows()`), table `account_tags`, one row per
+    `{account, tag}`. `account_key` is always the same canonical id
+    `lib/accounts.js`'s `accountUrlId()` already produces for every account
+    type — Plaid accounts by `account_id`, manual accounts `acc_<id>`,
+    manual debts `debt_<id>` — so a tag works identically regardless of
+    account type, no branching anywhere.
+  - **Shared-space behavior (the actual ask): nothing tag-specific was
+    needed.** `store.jsx` already re-points its entire `state` (every
+    slice) at a shared space's rows by swapping the effective `userId` to
+    the space id — `accountTags` is just one more slice riding along, so
+    two partners in the same shared space automatically see and edit the
+    same tags, and switching back to a personal space shows only that
+    person's own tags. Confirmed by reading the existing space-switch code
+    (`setSpace`/`userId = viewAs?.id || space?.id || user?.id`), not
+    assumed.
+  - **Defensive against the table not existing yet** (explicit requirement,
+    since this table is newer than every other slice and Israel hasn't run
+    the migration below yet): the initial-load `Promise.all` selects
+    `account_tags` alongside everything else, but a failure there only
+    logs a `console.warn` and falls back to `accountTags: []` — never sets
+    `syncError` (tags are a nicety, not core data, unlike the Goals/Accounts
+    tables' setup-needed banners). More importantly, the diff-sync effect's
+    delete/upsert loops now check each table's error against a new
+    `OPTIONAL_TABLES` set (`{'account_tags'}`) — if `account_tags` errors
+    (missing table), that one table's failure is logged and skipped with
+    `continue`, instead of `throw`ing and aborting every other table's sync
+    for the rest of that pass. This is strictly safer than the precedent:
+    the pre-existing `accounts`/`goals` tables have no such guard in the
+    diff-sync loops (only their initial-load `select` is guarded) — not
+    fixed this session since it's out of scope, but worth knowing the new
+    `OPTIONAL_TABLES` pattern exists if a future table needs the same
+    treatment.
+    - **Known caveat**: if tags are added *before* the migration is run,
+      they work fine locally (localStorage cache, `update(fn)`) but silently
+      fail to persist to Supabase (logged, not surfaced). Once the migration
+      runs, those earlier tags won't auto-retry syncing until something
+      about `accountTags` changes again (the diff-sync only re-attempts a
+      table when its rows differ from the last-synced snapshot, and a
+      swallowed failure still advances that snapshot). Practical fix: run
+      the migration first; if tags were already added, add or remove any
+      one tag afterward to force a fresh diff.
+  - **`lib/accounts.js` additions**: `tagsForAccount(state, accountKey)`,
+    `allAccountTags(state)` (unique tag names in the space, case-
+    insensitively deduped keeping first-seen casing, alphabetized — feeds
+    both the filter pills and the "reuse an existing tag" suggestions),
+    `addAccountTag(update, accountKey, tagName)` (trims, caps at 24 chars,
+    no-ops on empty/duplicate), `removeAccountTag(update, tagId)`. All three
+    mutators go through the store's existing generic `update(fn)` — no new
+    API surface, matching how every other mutation in this app already
+    works. Also: `deleteManualAccount`/`deleteDebt` now also strip any tags
+    pinned to that account/debt's key (orphan cleanup on delete), and
+    `AccountDetail.jsx`'s Plaid "Disconnect bank" does the same best-effort
+    cleanup for that one `account_id` (a multi-account item's *other*
+    accounts' tags are left harmlessly orphaned — never shown again since
+    nothing will match their key once the item's gone).
+  - **UI — `components/shared.jsx`**: `tagTone(tag)` (hashes the tag name
+    into a small fixed 6-color muted palette — same "deterministic, no real
+    data needed" trick as the existing `cardHue()`, just onto curated pill
+    tones instead of an arbitrary hue), `TagPill` (read-only pill, optional
+    `onRemove` for an ×), `AccountTagsEditor({ accountKey })` — existing
+    tags as removable pills, a dashed "+ Add tag" ghost button that reveals
+    a small inline text input (not a Dialog — an inline input is fewer taps
+    on mobile than an inner modal on top of the already-open account-detail
+    modal), Enter/Escape handling, and tap-to-add suggestion chips: existing
+    tags in the space not yet on this account (so "Julia" gets reused, not
+    retyped), or — the very first time, before any tag exists anywhere in
+    the space — the signed-in user's own first name (via `@clerk/nextjs`'s
+    `useUser()`, already used the same way in `store.jsx`) plus a generic
+    "Shared" second suggestion; falls back to plain placeholder text
+    ("e.g. Mine, Julia's, Business") in the input if no first name is
+    available, per the design brief's fallback.
+  - **UI — `views/AccountDetail.jsx`**: `<AccountTagsEditor accountKey={id}
+    />` under the existing SourceBadge/last-synced block — `id` is already
+    the exact `accountUrlId()` this detail view was looked up by, so no
+    recomputation needed. Also wired the Plaid-disconnect tag cleanup
+    mentioned above into `handleDelete`.
+  - **UI — `views/Accounts.jsx`**: each row (`CardRow`/`LoanRow`/
+    `DepositoryRow`) now takes a `tags` prop and renders read-only `TagPill`s
+    (wrapped, `flex-wrap`, so they can't force the row wider than a 390px
+    viewport) under the SourceBadge line — computed once at the page level
+    via a `tagsByKey` map (`state.accountTags` grouped by `accountKey`) and
+    passed down, rather than each row re-deriving it. A new tag **filter
+    pill row** ("All" + one pill per distinct tag, tinted via `tagTone` to
+    match that tag's `TagPill` color) sits above the Credit cards/Loans/
+    Depository sections, filtering all three; entirely hidden
+    (`allTags.length > 0` gate) until at least one tag exists anywhere in
+    the space — a brand-new/untagged user's Accounts page is byte-identical
+    to before this session. Filtering a section down to zero rows just
+    hides that section (Credit cards/Loans) or shows a tag-aware empty
+    state instead of the generic one (Depository) — deliberately no other
+    empty-state polish, per "keep it dead simple."
+  - **Migration required — nothing above works against Supabase until this
+    runs.** This app's other post-launch tables (`accounts`, `goals`) live
+    in a `supabase/` folder outside the mounted `src/` root (per the Plaid
+    section above, `supabase/plaid.sql` is the same setup), so this wasn't
+    written to a `.sql` file in this session — add it as
+    `supabase/account_tags.sql` next to `accounts.sql`/`goals.sql` and run
+    in the Supabase SQL editor:
+    ```sql
+    create table if not exists public.account_tags (
+      id text primary key,
+      user_id text not null,
+      account_key text not null,
+      tag text not null,
+      created_at timestamptz not null default now()
+    );
+    create index if not exists account_tags_user_id_idx
+      on public.account_tags (user_id);
+    create index if not exists account_tags_user_account_idx
+      on public.account_tags (user_id, account_key);
+    alter table public.account_tags enable row level security;
+    -- IMPORTANT: copy the exact RLS policy the `accounts` table already
+    -- uses (Supabase Dashboard -> Authentication -> Policies -> accounts)
+    -- and adapt it to this table name. Don't hand-roll a new predicate —
+    -- every other per-user table in this app (debts/accounts/goals/etc.)
+    -- resolves both "this row belongs to me" AND "this row belongs to a
+    -- shared space I'm a member of" (since `user_id` holds a workspace id
+    -- for shared-space rows, not always the real Clerk user id — see
+    -- store.jsx's `userId = viewAs?.id || space?.id || user?.id`), and that
+    -- exact shared-space predicate lives in SQL this session couldn't read
+    -- (outside the mounted src/ root). Getting it wrong either locks
+    -- couples out of shared tags (defeats the whole point of this feature)
+    -- or, worse, under-restricts access — copy, don't guess.
+    ```
+  - **Left off / not verified**: no dev server, no npm installs, nothing
+    clicked in a real browser (standing instruction) — every changed file
+    was checked with `npx esbuild <file> --bundle=false --outfile=/dev/null`
+    (parses clean) but none of this ran against a live Supabase project or
+    a real shared space with two accounts. Next session with real access
+    should: (a) run the migration above (after copying the real RLS policy
+    from `accounts`); (b) add a tag from one partner's session in a shared
+    space and confirm it appears for the other partner without a manual
+    refresh (or after their next natural reload — this app doesn't have
+    live realtime subscriptions for any table, so "instant" cross-device
+    sync isn't expected, just "shows up on next load" like every other
+    shared-space edit); (c) confirm the filter-pill row and per-row pills
+    don't crowd a real ~390px viewport, especially a card row with a long
+    institution name AND two tags; (d) confirm deleting a tagged manual
+    account/debt/Plaid-disconnect actually removes its `account_tags` rows
+    from Supabase, not just local state.
 
 ### 2026-08-08 (9)
 - **Transactions: show which account each row is from + filter by account**

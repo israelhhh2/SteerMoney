@@ -11,6 +11,7 @@ import { AppProvider, useApp } from '@/store'
 import { ToastProvider, useToast } from '@/components/toast'
 import { RemindersBell } from '@/components/reminders'
 import { Onboarding } from '@/components/onboarding'
+import { FeedbackWidget } from '@/components/feedback-widget'
 import { Logo, Wordmark } from '@/components/logo'
 import { useIsAdmin } from '@/lib/useIsAdmin'
 import { SpaceNameDialog, InviteLinkDialog } from '@/components/space-name-dialog'
@@ -277,6 +278,7 @@ function Frame({ children, modal }) {
         />
       )}
       {inviteUrl && <InviteLinkDialog url={inviteUrl} onClose={() => setInviteUrl(null)} />}
+      {state ? <FeedbackWidget /> : null}
       {modal}
     </div>
   )
