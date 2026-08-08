@@ -52,6 +52,13 @@ export async function POST(req) {
       params.access_token = row.access_token
     } else {
       params.products = ['transactions']
+      // Request the maximum available history (Plaid's cap is 730 days) so a
+      // freshly connected account backfills as much of the user's real
+      // transaction history as the institution will give up, instead of the
+      // 90-day default. Only meaningful for brand-new Items — update mode
+      // (the `item_id` branch above) can't change history depth on an Item
+      // that already has Transactions added, so it's omitted there.
+      params.transactions = { days_requested: 730 }
     }
 
     const { data } = await plaidClient.linkTokenCreate(params)

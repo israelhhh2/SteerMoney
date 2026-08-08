@@ -9,9 +9,9 @@ import { Input, Label } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Segmented } from '@/components/ui/segmented'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { SectionHead, Kpi, StatTile, Bar } from '@/components/shared'
+import { SectionHead, Kpi, StatTile, Bar, ConfirmDialog } from '@/components/shared'
 import { useApp } from '@/store'
-import { useToast } from '@/components/toast'
+import { useToast, useCenterToast } from '@/components/toast'
 import { fmt, fmt0, today, monthLabel, prettyDate, uid } from '@/lib/utils'
 import { simulatePlan, simCardPlan, parseAPR, payoffMonths, fmtMonths, matchesBankAccount } from '@/lib/finance'
 import { deleteDebt } from '@/lib/accounts'
@@ -267,7 +267,7 @@ export default function Debts() {
           <DebtCard key={d.name + i} d={d} i={i} open={openDebt === d.name} plan={plan} total={total} plaidAccounts={plaidAccounts}
             onToggle={() => setOpenDebt(openDebt === d.name ? null : d.name)}
             onEdit={() => setEditIdx(i)}
-            onDelete={() => { if (confirm(`Delete "${d.name}"?`)) { deleteDebt(update, d.id); toast('Debt deleted') } }}
+            onDelete={() => deleteDebt(update, d.id)}
             onPay={submitPayment}
             onDeletePayment={(pi) => update((s) => { const p = s.debts[i].payments.splice(pi, 1)[0]; s.debts[i].balance = +(s.debts[i].balance + p.amount).toFixed(2) })}
           />
@@ -280,9 +280,12 @@ export default function Debts() {
 }
 
 function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, onDelete, onPay, onDeletePayment }) {
+  const centerToast = useCenterToast()
   const [amt, setAmt] = useState(d.min || '')
   const [date, setDate] = useState(today())
   const [note, setNote] = useState('')
+  const [confirmDel, setConfirmDel] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const util = d.limit ? Math.min(100, Math.round((d.balance / d.limit) * 100)) : null
   const pm = payoffMonths(d.balance, d.apr, d.min)
   const bankMatch = useMemo(() => matchesBankAccount(d, plaidAccounts), [d, plaidAccounts])
@@ -291,7 +294,25 @@ function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, on
   const pays = d.payments || []
   const paidTotal = pays.reduce((s, p) => s + p.amount, 0)
 
+  // Deletion itself is a synchronous store mutation; the deliberate short
+  // delay + busy spinner in ConfirmDialog matches the "it's working"
+  // feedback the async Plaid-disconnect path gets elsewhere in the app.
+  const handleDelete = async () => {
+    setDeleting(true)
+    await new Promise((r) => setTimeout(r, 350))
+    try {
+      onDelete()
+      centerToast('Debt deleted')
+      setDeleting(false)
+      setConfirmDel(false)
+    } catch (e) {
+      centerToast(e?.message || 'Something went wrong', 'error')
+      setDeleting(false)
+    }
+  }
+
   return (
+    <>
     <Card className={`${open ? 'md:col-span-2' : ''} transition-colors hover:border-accent`}>
       <div className="cursor-pointer p-5 pb-0" onClick={onToggle}>
         <div className="mb-2 flex items-start justify-between">
@@ -342,7 +363,7 @@ function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, on
       <div className="flex gap-2 px-5 py-3.5">
         <Button size="sm" variant={open ? 'secondary' : 'default'} onClick={onToggle}>{open ? 'Close' : <><DollarSign />Make payment</>}</Button>
         <Button size="sm" variant="outline" onClick={onEdit}><Pencil />Edit</Button>
-        <Button size="sm" variant="destructive" onClick={onDelete}>Delete</Button>
+        <Button size="sm" variant="destructive" onClick={() => setConfirmDel(true)}>Delete</Button>
       </div>
       {open && (
         <div className="grid gap-6 border-t px-5 pb-5 pt-4 lg:grid-cols-2">
@@ -382,6 +403,16 @@ function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, on
         </div>
       )}
     </Card>
+    {confirmDel && (
+      <ConfirmDialog
+        title={`Delete "${d.name}"?`}
+        desc="This removes the debt and its payment history. This can't be undone."
+        busy={deleting}
+        onConfirm={handleDelete}
+        onClose={() => setConfirmDel(false)}
+      />
+    )}
+    </>
   )
 }
 

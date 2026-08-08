@@ -33,7 +33,11 @@ export function ToastProvider({ children }) {
   // Centered overlay toast for "did the destructive/async action succeed?"
   // moments (delete, disconnect, erase-all-data) — distinct from the corner
   // toasts above, which are for routine confirmations. Only one shows at a
-  // time; a new call replaces whatever's currently showing.
+  // time; a new call replaces whatever's currently showing. z-[80] (bumped
+  // 2026-08-08 from z-[70]) — must paint above ui/dialog.jsx's Radix
+  // Content (z-[70], itself bumped that session so it paints above the
+  // @modal overlay's z-[60]), since a ConfirmDialog's onConfirm often
+  // fires a centerToast right as the dialog is closing.
   const [centerToastState, setCenterToastState] = useState(null)
   const centerTimer = useRef(null)
   const centerFadeTimer = useRef(null)
@@ -75,7 +79,7 @@ export function ToastProvider({ children }) {
           })}
         </div>
         {centerToastState && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center px-6" role="status" aria-live="polite">
+          <div className="fixed inset-0 z-[80] flex items-center justify-center px-6" role="status" aria-live="polite">
             <div
               className={cn(
                 'flex flex-col items-center gap-2.5 rounded-2xl border bg-card px-7 py-6 text-center shadow-2xl transition-all duration-200',

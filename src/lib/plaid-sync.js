@@ -1,8 +1,11 @@
 import { plaidClient, supabaseAdmin } from '@/lib/plaid-server'
+import { mapPlaidCategory } from '@/lib/plaid-categories'
 
 // Small keyword map from Plaid's merchant/transaction name to this app's
-// category ids. Deliberately simple (v1); users can always re-categorize
-// in the Transactions view afterward.
+// category ids. Kept only as a defensive fallback for the rare transaction
+// Plaid doesn't enrich with a `personal_finance_category` at all — the
+// primary categorization path is mapPlaidCategory() (lib/plaid-categories.js),
+// which reads Plaid's actual PFC taxonomy instead of guessing from the name.
 const CATEGORY_RULES = [
   ['housing', /rent|mortgage/i],
   ['groceries', /grocery|market|supermarket/i],
@@ -39,8 +42,20 @@ export async function syncPlaidItem(item) {
     cursor = resp.data.next_cursor
   }
 
+  // Store pending transactions too (previously filtered out entirely) — the
+  // user wants to see a charge the moment it happens, not just once it
+  // settles days later, and Plaid's sync semantics make this safe without
+  // any extra bookkeeping: when a pending transaction posts, Plaid either
+  // (a) sends a `modified` entry for the *same* transaction_id with
+  // `pending: false` — which just upserts over the row already stored, or
+  // (b) sends the old pending transaction_id in `removed` and a brand-new
+  // posted transaction in `added` — the removed-handling below deletes the
+  // stale pending row either way (a no-op delete if it was never one).
+  // There's no `pending` column on public.transactions, so a pending row is
+  // indistinguishable from a posted one once stored — acceptable for v1
+  // (this app doesn't have a "pending" badge anywhere yet); it will simply
+  // get replaced/removed on the next sync once the bank settles it.
   const upsertRows = [...allAdded, ...allModified]
-    .filter((tx) => !tx.pending)
     .map((tx) => ({
       user_id: userId,
       id: 'pl_' + tx.transaction_id,
@@ -49,7 +64,7 @@ export async function syncPlaidItem(item) {
       amount: Math.abs(tx.amount),
       // Plaid convention: a positive amount is money leaving the account.
       type: tx.amount < 0 ? 'income' : 'expense',
-      category: guessCategory(tx),
+      category: mapPlaidCategory(tx, guessCategory),
       // Lets the Accounts detail sheet / Transactions page filter by account.
       account_id: tx.account_id || null,
     }))
@@ -67,8 +82,8 @@ export async function syncPlaidItem(item) {
     if (error) throw error
   }
 
-  const added = allAdded.filter((t) => !t.pending).length
-  const modified = allModified.filter((t) => !t.pending).length
+  const added = allAdded.length
+  const modified = allModified.length
   let removed = 0
 
   if (allRemoved.length) {

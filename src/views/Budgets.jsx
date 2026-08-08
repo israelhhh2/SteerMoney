@@ -7,9 +7,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Bar, Ring, Money, CatIcon, budgetTone, ViewToggle } from '@/components/shared'
+import { Bar, Ring, Money, CatIcon, budgetTone, ViewToggle, ConfirmDialog } from '@/components/shared'
 import { useApp, monthTx, spentIn } from '@/store'
-import { useToast } from '@/components/toast'
+import { useToast, useCenterToast } from '@/components/toast'
 import { fmt0, today, ymLabel, uid } from '@/lib/utils'
 
 const VIEW_KEY = 'fin-bud-view'
@@ -185,8 +185,11 @@ export default function Budgets({ onViewTx }) {
 function BudgetDialog({ id, onClose }) {
   const { state, update } = useApp()
   const toast = useToast()
+  const centerToast = useCenterToast()
   const b = id ? state.budgets.find((x) => x.id === id) : { name: '', limit: '' }
   const [f, setF] = useState({ ...b })
+  const [confirmDel, setConfirmDel] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const save = () => {
     if (!String(f.name).trim()) return toast('Enter a name', 'error')
     update((s) => {
@@ -197,10 +200,22 @@ function BudgetDialog({ id, onClose }) {
     toast(id ? 'Budget updated' : 'Budget added')
     onClose()
   }
-  const del = () => {
-    if (!confirm(`Delete the "${b.name}" budget? Its transactions are kept and will show as unbudgeted.`)) return
-    update((s) => { s.budgets = s.budgets.filter((x) => x.id !== id) })
-    onClose()
+  const del = async () => {
+    // Deletion itself is a synchronous store mutation, but a brief busy state
+    // (spinner in ConfirmDialog's `busy` prop) gives the same "it's working"
+    // feedback as the async Plaid-disconnect path elsewhere in the app.
+    setDeleting(true)
+    await new Promise((r) => setTimeout(r, 350))
+    try {
+      update((s) => { s.budgets = s.budgets.filter((x) => x.id !== id) })
+      centerToast('Budget deleted')
+      setDeleting(false)
+      setConfirmDel(false)
+      onClose()
+    } catch (e) {
+      centerToast(e?.message || 'Something went wrong', 'error')
+      setDeleting(false)
+    }
   }
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -211,11 +226,20 @@ function BudgetDialog({ id, onClose }) {
           <div><Label>Monthly limit ($) <span className="opacity-60">0 = no limit</span></Label><Input type="number" min="0" step="1" value={f.limit} onChange={(e) => setF({ ...f, limit: e.target.value })} /></div>
         </div>
         <DialogFooter>
-          {id && <Button variant="destructive" className="mr-auto" onClick={del}>Delete</Button>}
+          {id && <Button variant="destructive" className="mr-auto" onClick={() => setConfirmDel(true)}>Delete</Button>}
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={save}>Save</Button>
         </DialogFooter>
       </DialogContent>
+      {confirmDel && (
+        <ConfirmDialog
+          title={`Delete the "${b.name}" budget?`}
+          desc="Its transactions are kept and will show as unbudgeted."
+          busy={deleting}
+          onConfirm={del}
+          onClose={() => setConfirmDel(false)}
+        />
+      )}
     </Dialog>
   )
 }

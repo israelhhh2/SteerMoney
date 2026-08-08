@@ -186,7 +186,25 @@ export default function AccountDetail({ id }) {
       </div>
 
       <div className="w-full max-w-sm space-y-2">
-        {manageHref ? (
+        {isPlaid ? (
+          // Hard navigation on purpose: this button renders both as the full
+          // page AND inside the Notion-style @modal overlay. A soft <Link>
+          // to /settings did nothing visible when the modal was opened while
+          // /settings was already the page underneath it (the URL bar shows
+          // /accounts/[id] due to the interception, so Next has no way to
+          // know "we're already there" and the overlay just sat in place).
+          // window.location.assign() always tears the whole app down and
+          // reloads straight into /settings, so it closes the modal and
+          // lands on the right page in both contexts, at the cost of a full
+          // reload for this one (infrequent) action.
+          <button
+            type="button"
+            onClick={() => { if (typeof window !== 'undefined') window.location.assign('/settings') }}
+            className="block w-full rounded-xl bg-primary px-4 py-3 text-center text-[0.84375rem] font-bold text-primary-foreground transition hover:bg-primary/90"
+          >
+            {manageLabel}
+          </button>
+        ) : manageHref ? (
           <Link href={manageHref} className="block w-full rounded-xl bg-primary px-4 py-3 text-center text-[0.84375rem] font-bold text-primary-foreground transition hover:bg-primary/90">{manageLabel}</Link>
         ) : account.source === 'manual' ? (
           <Link href={`/accounts?edit=${encodeURIComponent(account.accountRowId)}`} className="block w-full rounded-xl bg-primary px-4 py-3 text-center text-[0.84375rem] font-bold text-primary-foreground transition hover:bg-primary/90">{manageLabel}</Link>

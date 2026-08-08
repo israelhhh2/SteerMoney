@@ -39,7 +39,16 @@ export default function PlaidOAuthPage() {
     try { sessionStorage.removeItem(PLAID_LINK_TOKEN_KEY) } catch { /* harmless */ }
     try {
       await exchangeAndSync(public_token, metadata?.institution?.name, toast)
-      router.push('/accounts')
+      // Hard navigation, not router.push: the store (store.jsx) only loads
+      // from Supabase once per userId (`freshFor` ref) and this page's own
+      // mount already consumed that load, so a client-side route change
+      // would land on /accounts still showing pre-sync data — the newly
+      // backfilled transactions/accounts wouldn't appear until the user
+      // manually refreshed. A full navigation remounts the whole app, which
+      // re-triggers that load effect with the just-synced rows already in
+      // Supabase. Matches the same reload-based refresh ConnectBankButton's
+      // non-OAuth path already uses (components/connect-bank.jsx).
+      window.location.assign('/accounts')
     } catch (e) {
       toast(e.message, 'error')
       setStatus('error')

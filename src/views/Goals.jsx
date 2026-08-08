@@ -9,9 +9,9 @@ import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Segmented } from '@/components/ui/segmented'
-import { Bar, Ring, Money, SectionLabel, ViewToggle } from '@/components/shared'
+import { Bar, Ring, Money, SectionLabel, ViewToggle, ConfirmDialog } from '@/components/shared'
 import { useApp } from '@/store'
-import { useToast } from '@/components/toast'
+import { useToast, useCenterToast } from '@/components/toast'
 import { fmt0, today, prettyDate, ymLabel, uid } from '@/lib/utils'
 
 export const ICONS = {
@@ -363,8 +363,11 @@ function GoalEditorDialog({ id, onClose }) {
   const { state: appState, update } = useApp()
   const goals = appState.goals || [] // guards stale caches from before the goals table existed
   const toast = useToast()
+  const centerToast = useCenterToast()
   const g = id ? goals.find((x) => x.id === id) : { name: '', icon: ICON_LIST[0], target: '', targetDate: '', status: 'active' }
   const [f, setF] = useState({ ...g, targetDate: g.targetDate || '' })
+  const [confirmDel, setConfirmDel] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const save = () => {
     const name = String(f.name).trim()
@@ -384,11 +387,22 @@ function GoalEditorDialog({ id, onClose }) {
     toast(g.status === 'archived' ? 'Goal unarchived' : 'Goal archived')
     onClose()
   }
-  const del = () => {
-    if (!confirm(`Delete the "${g.name}" goal? This can't be undone.`)) return
-    update((s) => { s.goals = s.goals.filter((x) => x.id !== id) })
-    toast('Deleted')
-    onClose()
+  const del = async () => {
+    // Deletion itself is a synchronous store mutation, but a brief busy state
+    // (spinner in ConfirmDialog's `busy` prop) gives the same "it's working"
+    // feedback as the async Plaid-disconnect path elsewhere in the app.
+    setDeleting(true)
+    await new Promise((r) => setTimeout(r, 350))
+    try {
+      update((s) => { s.goals = s.goals.filter((x) => x.id !== id) })
+      centerToast('Goal deleted')
+      setDeleting(false)
+      setConfirmDel(false)
+      onClose()
+    } catch (e) {
+      centerToast(e?.message || 'Something went wrong', 'error')
+      setDeleting(false)
+    }
   }
 
   return (
@@ -427,12 +441,21 @@ function GoalEditorDialog({ id, onClose }) {
           </div>
         </div>
         <DialogFooter>
-          {id && <Button variant="destructive" className="mr-auto" onClick={del}>Delete</Button>}
+          {id && <Button variant="destructive" className="mr-auto" onClick={() => setConfirmDel(true)}>Delete</Button>}
           {id && <Button variant="outline" onClick={toggleArchive}>{g.status === 'archived' ? 'Unarchive' : 'Archive'}</Button>}
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={save}>Save</Button>
         </DialogFooter>
       </DialogContent>
+      {confirmDel && (
+        <ConfirmDialog
+          title={`Delete the "${g.name}" goal?`}
+          desc="This can't be undone."
+          busy={deleting}
+          onConfirm={del}
+          onClose={() => setConfirmDel(false)}
+        />
+      )}
     </Dialog>
   )
 }

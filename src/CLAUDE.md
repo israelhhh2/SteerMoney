@@ -36,15 +36,28 @@ Next.js (App Router, JS/JSX) personal-finance app.
 - `lib/plaid-sync.js` — `syncPlaidItem(item)` (per-item transactionsSync
   cursor loop + upsert + balance refresh, extracted so both the sync route
   and the webhook route share one implementation) and `setItemStatus(rowId,
-  status)` (defensive against a missing `status` column).
+  status)` (defensive against a missing `status` column). Stores pending
+  transactions too (not filtered out), and categorizes via
+  `lib/plaid-categories.js`'s `mapPlaidCategory()` (Plaid's
+  `personal_finance_category`, not just name-keyword guessing). See
+  2026-08-08 (5) session log entry.
+- `lib/plaid-categories.js` — `mapPlaidCategory(tx, fallback)` maps Plaid's
+  `personal_finance_category` (primary/detailed) onto this app's category
+  ids (`housing`, `groceries`, `dining`, `auto`, `utilities`, `debt`,
+  `income`, `transfer`, `other`). See 2026-08-08 (5).
 - `lib/plaid-client.js` — client-side `exchangeAndSync()` shared by
   `connect-bank.jsx` and `app/(app)/plaid-oauth/page.jsx` so both onSuccess
   paths behave identically; `PLAID_LINK_TOKEN_KEY` sessionStorage key used to
   survive the OAuth redirect round-trip.
 - `app/api/plaid/link-token` — linkTokenCreate; products `['transactions']`,
-  US; passes `redirect_uri`/`webhook` when `getAppUrl()` resolves; accepts
-  `{ item_id }` in the POST body for update-mode (re-auth) link tokens
-  (ownership verified against the signed-in Clerk user).
+  US; requests `transactions: { days_requested: 730 }` (Plaid's max) on new
+  connections so a fresh Item backfills as much real history as the
+  institution allows, not the 90-day default (see 2026-08-08 (5); only set
+  on the new-connection branch — update mode can't change history depth on
+  an Item that already has Transactions added); passes `redirect_uri`/
+  `webhook` when `getAppUrl()` resolves; accepts `{ item_id }` in the POST
+  body for update-mode (re-auth) link tokens (ownership verified against the
+  signed-in Clerk user).
 - `app/api/plaid/exchange` — public_token → access_token, stores row in
   `plaid_items` (token never sent to client). Unchanged this round — update
   mode doesn't call this (no new access_token is issued).
@@ -104,6 +117,192 @@ Costs note: production Plaid is pay-per-item/product — check current pricing
 before flipping the switch.
 
 ## Session log (newest first)
+
+### 2026-08-08 (6)
+- **Three production UX bugs fixed** (Sonnet worker): an invisible/frozen
+  confirm dialog over the account modal, a dead "Manage connection" button,
+  and lingering native `confirm()` dialogs.
+  - **Bug 1 — ConfirmDialog invisible over the @modal account overlay.**
+    Root cause confirmed by tracing z-index/DOM order, not guessed: the
+    Notion-style intercepting-route overlay
+    (`app/(app)/@modal/(.)accounts/[id]/page.jsx`) is an always-mounted
+    `fixed inset-0 z-[60]` div rendered directly in the React tree (inside
+    `Frame` in `app/(app)/layout.jsx`, via the `{modal}` slot) — it is *not*
+    a Radix portal. `components/ui/dialog.jsx`'s `DialogContent` **is** a
+    Radix `Portal`, so it always mounts as a fresh child appended straight
+    onto `document.body`, as a sibling — at the browser's root stacking
+    context — of that `z-[60]` modal div. Both `DialogOverlay` and
+    `DialogContent` were `z-50`. Since 50 < 60, the modal's opaque
+    `bg-black/70 backdrop-blur` div painted **on top of** the fully-open,
+    `opacity:1`, `data-state=open` Radix dialog every time — hence "clicking
+    the invisible button via JS works, paint doesn't." This only showed up
+    for confirms triggered *outside* another already-open Dialog (i.e. from
+    `AccountDetail.jsx`, used both standalone and inside `@modal`) — the
+    pre-existing Budgets/Goals/Accounts "delete" flows nest a `ConfirmDialog`
+    *inside* an already-open edit `Dialog`, so both were `z-50` siblings
+    appended back-to-back and resolved correctly via DOM order alone; there
+    was no `z-[60]` sibling in that case to lose to.
+    **Fix:** bumped `components/ui/dialog.jsx`'s `DialogOverlay` to
+    `z-[65]` and `DialogContent` to `z-[70]` (both still above the
+    `@modal`'s `z-[60]`, and `Content` above `Overlay` as before). Bumped
+    `components/toast.jsx`'s `centerToast` div from `z-[70]` to `z-[80]` so
+    it still paints above the now-higher dialog (a `centerToast` call often
+    fires in the same tick a `ConfirmDialog` closes). Corner toasts left at
+    `z-[60]` (untouched, not implicated — they're appended after the modal
+    in DOM order inside `ToastProvider`, so ties already resolved in their
+    favor; not part of this bug).
+    **Final z-index ladder (low → high):** `@modal` backdrop+panel
+    `z-[60]` < `ui/dialog.jsx` `DialogOverlay` `z-[65]` <
+    `ui/dialog.jsx` `DialogContent` `z-[70]` < `toast.jsx` centerToast
+    `z-[80]`. (Corner toasts sit at `z-[60]`, tied with the modal but
+    DOM-ordered after it — unchanged, not part of the ladder above.)
+  - **Bug 2 — "Manage connection" did nothing when the modal opened over
+    /settings.** `views/AccountDetail.jsx`'s Plaid "Manage connection"
+    button was a plain `<Link href="/settings">`. When the account modal is
+    opened while `/settings` is already the page underneath it, the URL bar
+    shows `/accounts/[id]` (interception), so there's no reliable way for a
+    soft client-side nav to know "the target route is already rendered
+    behind you" — it just sat there, looking broken. Changed that one
+    button (Plaid rows only — `/debts` and the manual-account edit link are
+    untouched, not reported as broken) to `onClick={() =>
+    window.location.assign('/settings')}` — an unconditional hard
+    navigation. This always tears down the whole app and reloads straight
+    into `/settings`, which reliably closes the modal and lands on the
+    right page in both the standalone full-page and `@modal` contexts, at
+    the cost of a full reload for this one, infrequent action (chosen over
+    trying to detect "are we already logically on /settings" from inside
+    the intercepted route, which `usePathname()` can't tell you — it
+    reports the intercepting URL, not the page underneath it).
+  - **Bug 3 — native `confirm()`/`alert()` still in use.** Grepped all of
+    `src/**/*.jsx`; found five `confirm(` call sites (no `alert(` calls
+    anywhere) and replaced every one with `components/shared.jsx`'s
+    `ConfirmDialog` + a busy spinner + `components/toast.jsx`'s
+    `useCenterToast()` success/error toast, matching the exact pattern
+    already established in `views/Accounts.jsx`'s `AccountDialog.del` (the
+    2026-08-08 (4) session): `setDeleting(true)` → deliberate `await new
+    Promise(r => setTimeout(r, 350))` (these are synchronous store
+    mutations; the delay makes the spinner actually visible) → mutate →
+    `centerToast(...)` → close. Behavior otherwise identical (same rows
+    still delete via the same store `update(fn)` mutator).
+    - `views/Debts.jsx` — `DebtCard`'s "Delete" button. Moved the confirm
+      state (`confirmDel`/`deleting`) and a new `handleDelete` into
+      `DebtCard` itself (it owns the button); the parent `Debts` component's
+      `onDelete` prop is now just `() => deleteDebt(update, d.id)` (no more
+      inline `confirm()` + `toast()` in the parent). Wrapped `DebtCard`'s
+      return in a fragment so the `ConfirmDialog` can render as a sibling of
+      the `<Card>`.
+    - `views/Transactions.jsx` — the per-row delete `X` button. Added
+      `confirmDelId`/`deleting` state to the top-level component, a
+      `handleDeleteTx`, and a `ConfirmDialog` rendered alongside the
+      existing `TxDialog`/`ImportDialog`.
+    - `views/Recurring.jsx` — same pattern, `confirmDelId` resolved back to
+      the bill via `state.recurring.find(...)` (`confirmDelBill`) so the
+      dialog title can show its `desc`.
+    - `views/Budgets.jsx`'s `BudgetDialog` and `views/Goals.jsx`'s
+      `GoalEditorDialog` — these already nest their delete confirm inside
+      an already-open edit `Dialog` (same shape as `Accounts.jsx`'s
+      `AccountDialog`), so converted `del()` to the same
+      busy-state-then-mutate-then-centerToast shape and added a nested
+      `ConfirmDialog`, gated on new local `confirmDel`/`deleting` state
+      instead of firing `window.confirm()` synchronously.
+  - **Left off / not verified:** no dev server, no npm installs, nothing
+    clicked in a real browser (standing instruction) — the z-index fix is
+    reasoned from the actual DOM structure and CSS stacking rules (confirmed
+    by reading every relevant file: `ui/dialog.jsx`, the `@modal` route,
+    `toast.jsx`, `app/(app)/layout.jsx`), not observed live. Next session
+    should reproduce the exact original repro (open an account modal, click
+    Disconnect/Delete, confirm the dialog now paints and is clickable in the
+    real DOM) and click through all five converted delete flows
+    (debt/transaction/recurring/budget/goal) to confirm the spinner and
+    centered toast both show correctly.
+
+### 2026-08-08 (5)
+- **"Connect a bank should bring all the transactions/data and populate
+  everything else"** (Sonnet worker), per Israel's verbatim request. Read
+  `lib/plaid-sync.js`, `app/api/plaid/link-token/route.js`, `store.jsx`
+  (row↔state mapping, the once-per-userId initial load effect), and every
+  view that derives from `state.transactions` (Dashboard's category donut,
+  Charts, Budgets, Transactions) before changing anything.
+  - **Max history (roadmap-adjacent):** `app/api/plaid/link-token/route.js`
+    now sets `params.transactions = { days_requested: 730 }` (Plaid's cap)
+    on the new-connection branch only — confirmed via Plaid's docs that this
+    field lives at the top level of the `/link/token/create` request body
+    (`transactions.days_requested`, not under `options`), and that setting
+    it via `/transactions/sync` instead doesn't work once an Item already
+    has Transactions initialized, which is exactly the update-mode
+    (`item_id`) branch, so it's deliberately omitted there.
+  - **Confirmed the existing upsert already writes every field the client's
+    `mappers.transactions.fromRow` (store.jsx) expects** (id, date,
+    description, amount, type, account_id) with the correct sign convention
+    (amount always stored positive via `Math.abs`, direction via
+    `type: 'income'|'expense'`, matching how manual transactions are
+    entered in Transactions.jsx) — no mismatch found, no fix needed there.
+  - **Category mapping (new): `lib/plaid-categories.js`** —
+    `mapPlaidCategory(tx, fallback)` reads Plaid's `personal_finance_category`
+    (confirmed via Plaid's docs that `transactionsSync` returns this by
+    default, no `options` flag needed, unlike e.g.
+    `include_original_description`) and maps it onto this app's *existing*
+    category ids: `detailed` checked first for the primaries that straddle
+    more than one app category (`RENT_AND_UTILITIES` → `housing` vs.
+    `utilities` depending on rent/mortgage vs. the bill sub-types;
+    `TRANSPORTATION` sub-types; groceries, which Plaid files under
+    `GENERAL_MERCHANDISE` not `FOOD_AND_DRINK`), then `primary` as a coarser
+    fallback (`INCOME`→`income`, `TRANSFER_IN`/`TRANSFER_OUT`→`transfer`,
+    `LOAN_PAYMENTS`→`debt`, `FOOD_AND_DRINK`→`dining`,
+    `TRANSPORTATION`→`auto`, `RENT_AND_UTILITIES`/`HOME_IMPROVEMENT`→
+    `housing`), else `'other'`. The `income`/`transfer`/`debt` ids aren't
+    guesses — `store.jsx`'s `catInfo()` already special-cases exactly those
+    three non-budget ids, and every spending view (Dashboard, Charts,
+    Budgets) already explicitly excludes `t.cat === 'transfer'`/`'debt'`
+    from expense totals — so this mapping plugs directly into logic that
+    was seemingly built anticipating this. `lib/plaid-sync.js`'s old
+    keyword-regex `guessCategory()` is kept, demoted to a defensive fallback
+    only used when Plaid returns no `personal_finance_category` at all.
+  - **Pending transactions are no longer dropped.** `syncPlaidItem()`
+    previously `.filter((tx) => !tx.pending)`'d both `added` and `modified`
+    before upserting, so a charge was invisible until it fully settled.
+    Removed that filter — verified this is safe without any new
+    bookkeeping (no `pending` column exists or was added): when a pending
+    transaction posts, Plaid either sends a `modified` entry for the *same*
+    `transaction_id` with `pending: false` (upserts over the already-stored
+    row) or sends the old pending id in `removed` plus a new posted
+    transaction in `added` (the existing removed-handling deletes the stale
+    pending row either way — a harmless no-op delete if that id was never
+    stored under the old filtered behavior, a real cleanup now). `added`/
+    `modified` counts returned from `syncPlaidItem()` (surfaced in the
+    "Synced: N new transactions" toast) now count pending rows too.
+  - **Post-connect refresh without a manual hard refresh:** traced
+    `store.jsx`'s load effect — it only fetches from Supabase once per
+    `userId` (`freshFor` ref), so anything that reaches `/accounts` via a
+    client-side `router.push` after a sync keeps rendering the pre-sync
+    state. `components/connect-bank.jsx`'s `ConnectBankButton` already
+    handled this correctly for the non-OAuth path (`window.location.reload()`
+    as its default `onDone`, and `Settings.jsx`'s Connected Banks list
+    passes its own `onDone` that also ends in a reload) — the gap was
+    `app/(app)/plaid-oauth/page.jsx`'s `handleSuccess`, which did
+    `router.push('/accounts')` after `exchangeAndSync()`, landing on Accounts
+    with stale data until the user refreshed by hand. Changed it to
+    `window.location.assign('/accounts')` — a full navigation, remounting
+    the app and re-running the load effect against the just-synced rows —
+    matching the reload-based refresh every other connect path already used.
+  - **Files changed:** `app/api/plaid/link-token/route.js`,
+    `lib/plaid-sync.js`, `lib/plaid-categories.js` (new),
+    `app/(app)/plaid-oauth/page.jsx`.
+  - **Left off / not verified:** no dev server, no npm installs, nothing
+    clicked in a real browser or against a real Plaid Link session (standing
+    instruction) — none of this ran against sandbox or production. Next
+    session should connect a real test bank and confirm: (a) the historical
+    backfill actually pulls back further than 90 days (institution-dependent
+    — Plaid's `days_requested` is a request ceiling, not a guarantee); (b)
+    a sampling of synced transactions land in sensible categories on the
+    Dashboard donut/Charts/Budgets, not all dumped into "Other"; (c) a
+    pending charge shows up immediately in Transactions and cleanly
+    disappears/reconciles (no duplicate) once it posts a day or two later;
+    (d) the OAuth connect path (a bank that forces the redirect, e.g. Chase
+    sandbox) lands on `/accounts` already showing the new transactions with
+    no manual refresh. Deliberately did not add a `pending` UI indicator/
+    column — out of scope for "bring the data in," flagged here in case a
+    later session wants to distinguish pending from posted in the UI.
 
 ### 2026-08-08 (4)
 - **Deletion feedback (spinner + centered result toast) + Settings "Danger

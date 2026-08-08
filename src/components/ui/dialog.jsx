@@ -8,13 +8,24 @@ const Dialog = DialogPrimitive.Root
 const DialogTrigger = DialogPrimitive.Trigger
 const DialogClose = DialogPrimitive.Close
 
+// z-index: this Portal renders straight into document.body as a sibling of
+// everything else fixed-positioned in the app (the @modal intercepting-route
+// overlay at z-[60], the toast provider's corner toasts at z-[60]) — so its
+// z-index has to be compared globally, not just against its own children.
+// Bumped from z-50 → z-[65]/z-[70] (2026-08-08) because a ConfirmDialog
+// opened from inside the account detail modal (components/shared.jsx →
+// this file, used by views/AccountDetail.jsx) was rendering *underneath*
+// the @modal overlay's opaque z-[60] backdrop — Radix reported
+// data-state=open/opacity:1 in the DOM, but the modal's backdrop painted
+// over it, so the page looked frozen (clicks still hit the invisible
+// button). See CLAUDE.md session log for the full z-index ladder.
 const DialogContent = forwardRef(({ className, children, ...props }, ref) => (
   <DialogPrimitive.Portal>
-    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/70 backdrop-blur-[2px] data-[state=open]:fade-in" />
+    <DialogPrimitive.Overlay className="fixed inset-0 z-[65] bg-black/70 backdrop-blur-[2px] data-[state=open]:fade-in" />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border bg-card p-6 shadow-2xl rounded-xl max-h-[85vh] overflow-y-auto fade-in',
+        'fixed left-1/2 top-1/2 z-[70] grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border bg-card p-6 shadow-2xl rounded-xl max-h-[85vh] overflow-y-auto fade-in',
         className
       )}
       {...props}

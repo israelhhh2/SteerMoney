@@ -7,9 +7,9 @@ import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Ring, Money, SectionLabel, CatIcon, ViewToggle } from '@/components/shared'
+import { Ring, Money, SectionLabel, CatIcon, ViewToggle, ConfirmDialog } from '@/components/shared'
 import { useApp, monthTx, incomeIn } from '@/store'
-import { useToast } from '@/components/toast'
+import { useToast, useCenterToast } from '@/components/toast'
 import { fmt, fmt0, today, isoDate, prettyDate, ymLabel, ordinal, uid } from '@/lib/utils'
 import { recEvery, recMonthly, nextDueDate, simulatePlan, fmtMonths, findPaidTx } from '@/lib/finance'
 
@@ -18,9 +18,12 @@ const VIEW_KEY = 'fin-rec-view'
 export default function Recurring() {
   const { state, update, catInfo } = useApp()
   const toast = useToast()
+  const centerToast = useCenterToast()
   const [filter, setFilter] = useState({ cat: 'all', status: 'all', sort: 'due', q: '' })
   const [whatIf, setWhatIf] = useState(new Set())
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
+  const [confirmDelId, setConfirmDelId] = useState(null) // recurring bill id pending delete confirmation
+  const [deleting, setDeleting] = useState(false)
   const nowYm = today().slice(0, 7)
   const [ym, setYm] = useState(nowYm)
   const [view, setView] = useState('cards')
@@ -33,6 +36,26 @@ export default function Recurring() {
     const next = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
     if (next > nowYm) return
     setYm(next)
+  }
+
+  const confirmDelBill = confirmDelId ? state.recurring.find((x) => x.id === confirmDelId) : null
+
+  // Deletion is a synchronous store mutation; the deliberate short delay +
+  // busy spinner in ConfirmDialog matches the "it's working" feedback the
+  // async Plaid-disconnect path gets elsewhere in the app.
+  const handleDeleteRecurring = async () => {
+    const id = confirmDelId
+    setDeleting(true)
+    await new Promise((r) => setTimeout(r, 350))
+    try {
+      update((s) => { s.recurring = s.recurring.filter((x) => x.id !== id) })
+      centerToast('Recurring bill deleted')
+      setDeleting(false)
+      setConfirmDelId(null)
+    } catch (e) {
+      centerToast(e?.message || 'Something went wrong', 'error')
+      setDeleting(false)
+    }
   }
 
   const act = state.recurring.filter((r) => r.active !== false)
@@ -273,7 +296,7 @@ export default function Recurring() {
                     {off ? 'Enable' : 'Pause'}
                   </Button>
                   <button className="shrink-0 text-muted-foreground transition hover:text-foreground" onClick={() => setEditing(r.id)}><Pencil className="h-3.5 w-3.5" /></button>
-                  <button className="shrink-0 text-muted-foreground transition hover:text-red-400" onClick={() => { if (confirm(`Delete recurring "${r.desc}"?`)) { update((s) => { s.recurring = s.recurring.filter((x) => x.id !== r.id) }); toast('Deleted') } }}><X className="h-3.5 w-3.5" /></button>
+                  <button className="shrink-0 text-muted-foreground transition hover:text-red-400" onClick={() => setConfirmDelId(r.id)}><X className="h-3.5 w-3.5" /></button>
                 </div>
               </div>
             )
@@ -287,6 +310,15 @@ export default function Recurring() {
       <p className="text-[0.6875rem] text-muted-foreground/70">Recurring items show up in the dashboard's "due soon" list; "Log this month" records the charge as a transaction. Non-monthly bills advance their next date when logged.</p>
 
       {editing !== undefined && <RecurringDialog id={editing} onClose={() => setEditing(undefined)} />}
+      {confirmDelBill && (
+        <ConfirmDialog
+          title={`Delete recurring "${confirmDelBill.desc}"?`}
+          desc="This can't be undone."
+          busy={deleting}
+          onConfirm={handleDeleteRecurring}
+          onClose={() => setConfirmDelId(null)}
+        />
+      )}
     </div>
   )
 }

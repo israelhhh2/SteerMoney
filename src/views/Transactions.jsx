@@ -7,15 +7,16 @@ import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { CatIcon, CatChip } from '@/components/shared'
+import { CatIcon, CatChip, ConfirmDialog } from '@/components/shared'
 import { useApp, monthTx } from '@/store'
-import { useToast } from '@/components/toast'
+import { useToast, useCenterToast } from '@/components/toast'
 import { fmt, fmt0, today, ymLabel, prettyDate, uid } from '@/lib/utils'
 import { parseWescomCSV, guessCat } from '@/lib/wescom'
 
 export default function Transactions({ preset, clearPreset, accountFilter, clearAccountFilter }) {
   const { state, update, catInfo } = useApp()
   const toast = useToast()
+  const centerToast = useCenterToast()
   const fileRef = useRef(null)
   const [ym, setYm] = useState(today().slice(0, 7))
   const [q, setQ] = useState('')
@@ -23,6 +24,8 @@ export default function Transactions({ preset, clearPreset, accountFilter, clear
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
   const [importRows, setImportRows] = useState(null) // null closed · [] -> preview dialog
   const [filterAccount, setFilterAccount] = useState(null) // {mask, institution} resolved for the chip label
+  const [confirmDelId, setConfirmDelId] = useState(null) // transaction id pending delete confirmation
+  const [deleting, setDeleting] = useState(false)
 
   // Resolve a friendly label (mask/institution) for the ?account= filter chip.
   // The identifier itself is the Plaid account_id — matched against
@@ -67,6 +70,24 @@ export default function Transactions({ preset, clearPreset, accountFilter, clear
   const shift = (n) => {
     const d = new Date(+ym.slice(0, 4), +ym.slice(5, 7) - 1 + n, 1)
     setYm(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'))
+  }
+
+  // Deletion is a synchronous store mutation; the deliberate short delay +
+  // busy spinner in ConfirmDialog matches the "it's working" feedback the
+  // async Plaid-disconnect path gets elsewhere in the app.
+  const handleDeleteTx = async () => {
+    const id = confirmDelId
+    setDeleting(true)
+    await new Promise((r) => setTimeout(r, 350))
+    try {
+      update((s) => { s.transactions = s.transactions.filter((x) => x.id !== id) })
+      centerToast('Transaction deleted')
+      setDeleting(false)
+      setConfirmDelId(null)
+    } catch (e) {
+      centerToast(e?.message || 'Something went wrong', 'error')
+      setDeleting(false)
+    }
   }
 
   let list = monthTx(state, ym)
@@ -127,7 +148,7 @@ export default function Transactions({ preset, clearPreset, accountFilter, clear
                 </span>
                 <span className="flex w-12 shrink-0 justify-end gap-1.5">
                   <button className="text-muted-foreground transition hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100" title="Edit" onClick={() => setEditing(t.id)}><Pencil className="h-3.5 w-3.5" /></button>
-                  <button className="text-muted-foreground transition hover:text-red-400 sm:opacity-0 sm:group-hover:opacity-100" title="Delete" onClick={() => { if (confirm('Delete this transaction?')) { update((s) => { s.transactions = s.transactions.filter((x) => x.id !== t.id) }); toast('Deleted') } }}><X className="h-3.5 w-3.5" /></button>
+                  <button className="text-muted-foreground transition hover:text-red-400 sm:opacity-0 sm:group-hover:opacity-100" title="Delete" onClick={() => setConfirmDelId(t.id)}><X className="h-3.5 w-3.5" /></button>
                 </span>
               </div>
             ))}
@@ -142,6 +163,15 @@ export default function Transactions({ preset, clearPreset, accountFilter, clear
 
       {editing !== undefined && <TxDialog id={editing} onClose={() => setEditing(undefined)} />}
       {importRows && <ImportDialog rows={importRows} setRows={setImportRows} onClose={() => setImportRows(null)} />}
+      {confirmDelId && (
+        <ConfirmDialog
+          title="Delete this transaction?"
+          desc="This can't be undone."
+          busy={deleting}
+          onConfirm={handleDeleteTx}
+          onClose={() => setConfirmDelId(null)}
+        />
+      )}
     </div>
   )
 }
