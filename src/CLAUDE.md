@@ -118,6 +118,25 @@ before flipping the switch.
 
 ## Session log (newest first)
 
+### 2026-08-08 (7)
+- **Disconnect didn't refresh the Accounts list** (Fable, 1-line fix):
+  `views/AccountDetail.jsx`'s Plaid disconnect ended in `router.push('/accounts')`,
+  but Accounts fetches `/api/plaid/items` once on mount (`usePlaidItems`), so
+  the just-disconnected bank kept rendering until a manual refresh. Replaced
+  with `setTimeout(() => window.location.assign('/accounts'), 900)` — hard
+  navigation (matches every other connect/disconnect path's reload pattern),
+  delayed so the "disconnected" centerToast is visible first.
+- **Production status this session:** Plaid production fully working
+  end-to-end (link → exchange → sync verified live with Wescom). Root causes
+  fixed today, in order: env-var race with redeploys; duplicate hidden Plaid
+  Link iframes eating clicks; missing `SUPABASE_SERVICE_ROLE_KEY` in Vercel
+  (the persistent "Plaid is not configured yet" — exchange/items routes gate
+  on `supabaseAdmin`). Clerk is still on DEV keys in production (console
+  warning) — needs production Clerk instance before real users.
+- Migrations still outstanding on prod DB (run in Supabase SQL editor):
+  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_id text;` and
+  `ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS status text DEFAULT 'ok';`
+
 ### 2026-08-08 (6)
 - **Three production UX bugs fixed** (Sonnet worker): an invisible/frozen
   confirm dialog over the account modal, a dead "Manage connection" button,

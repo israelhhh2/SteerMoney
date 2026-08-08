@@ -102,7 +102,11 @@ export default function AccountDetail({ id }) {
         centerToast(`${account.institution || 'Bank'} disconnected`)
         setConfirmDelete(false)
         setDeleting(false)
-        router.push('/accounts')
+        // Hard navigation, not router.push: the Accounts page fetches
+        // /api/plaid/items once on mount (usePlaidItems), so a soft nav
+        // keeps showing the just-disconnected bank until a manual refresh.
+        // Short delay so the success toast is actually seen first.
+        setTimeout(() => window.location.assign('/accounts'), 900)
         return
       } catch (e) {
         centerToast(e.message, 'error')
