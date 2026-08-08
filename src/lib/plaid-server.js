@@ -28,6 +28,27 @@ export const supabaseAdmin = process.env.SUPABASE_SERVICE_ROLE_KEY
     })
   : null
 
+// "Move my data into this space" (Settings → Shared spaces, see
+// app/api/plaid/transfer) reassigns a connected bank's plaid_items.user_id
+// from the signed-in Clerk user's own id to a shared space's id. Every route
+// that looks up "this user's" plaid_items by a flat `.eq('user_id',
+// clerkUserId)` would otherwise lose track of a transferred connection —
+// this resolves every user_id a row could legitimately be filed under for
+// that Clerk user: their own id, plus every workspace they're a member of.
+// Falls back to just their own id if supabaseAdmin isn't configured or the
+// workspace_members lookup fails, matching this app's existing "personal
+// data only" behavior when shared spaces aren't in play.
+export async function ownerIdsFor(clerkUserId) {
+  if (!supabaseAdmin) return [clerkUserId]
+  try {
+    const { data, error } = await supabaseAdmin.from('workspace_members').select('workspace_id').eq('user_id', clerkUserId)
+    if (error || !data) return [clerkUserId]
+    return [clerkUserId, ...data.map((r) => r.workspace_id)]
+  } catch {
+    return [clerkUserId]
+  }
+}
+
 // Resolves the app's public base URL (no trailing slash) so routes can build
 // absolute `redirect_uri`/`webhook` URLs for Plaid. Priority: explicit
 // NEXT_PUBLIC_APP_URL env var, then Vercel's auto-injected VERCEL_URL, then

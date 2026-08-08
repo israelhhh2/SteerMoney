@@ -101,6 +101,18 @@ const mappers = {
     toRow: (t, userId) => ({ user_id: userId, id: t.id, account_key: t.accountKey, tag: t.tag }),
     fromRow: (r) => ({ id: r.id, accountKey: r.account_key, tag: r.tag }),
   },
+  // One row per account (at most one — unlike accountTags, which is many
+  // rows per account) — a card either has a custom color or it doesn't, so
+  // "reset to Auto" (see lib/accounts.js's setAccountColor) is just deleting
+  // the row rather than needing a separate flag. `accountKey` is the same
+  // canonical accountUrlId() every other per-account slice already uses.
+  // Same "newer table, defensive everywhere" treatment as account_tags
+  // (2026-08-08 (10)) — see OPTIONAL_TABLES and the initial-load/diff-sync
+  // effects below, and CLAUDE.md's session log for account_colors.sql.
+  accountColors: {
+    toRow: (c, userId) => ({ user_id: userId, id: c.id, account_key: c.accountKey, color: c.color }),
+    fromRow: (r) => ({ id: r.id, accountKey: r.account_key, color: r.color }),
+  },
 }
 
 // Every new account starts fresh: no data, just a small starter category list
@@ -119,6 +131,7 @@ function freshState() {
     goals: [],
     accounts: [],
     accountTags: [],
+    accountColors: [],
     sim: { budget: 0, strategy: 'avalanche', snowExtra: 0 },
     mSim: { income: '', items: [] },
   }
@@ -129,6 +142,7 @@ function normalize(s) {
   if (!s.goals) s.goals = [] // older cached states predate the goals table
   if (!s.accounts) s.accounts = [] // older cached states predate the accounts table
   if (!s.accountTags) s.accountTags = [] // older cached states predate the account_tags table
+  if (!s.accountColors) s.accountColors = [] // older cached states predate the account_colors table
   s.debts.forEach((d, i) => {
     if (!d.id) d.id = uid('d')
     d.position = i
@@ -141,6 +155,7 @@ function normalize(s) {
   s.goals.forEach((g, i) => { if (!g.id) g.id = uid('g'); g.position = i; if (!g.txs) g.txs = [] })
   s.accounts.forEach((a, i) => { if (!a.id) a.id = uid('a'); a.position = i; if (!a.history) a.history = [] })
   s.accountTags.forEach((t) => { if (!t.id) t.id = uid('at') })
+  s.accountColors.forEach((c) => { if (!c.id) c.id = uid('ac') })
 }
 
 const flatPayments = (s, userId) =>
@@ -156,6 +171,7 @@ function stateRows(s, userId) {
     goals: s.goals.map((g) => mappers.goals.toRow(g, userId)),
     accounts: s.accounts.map((a) => mappers.accounts.toRow(a, userId)),
     accountTags: s.accountTags.map((t) => mappers.accountTags.toRow(t, userId)),
+    accountColors: s.accountColors.map((c) => mappers.accountColors.toRow(c, userId)),
   }
 }
 
@@ -163,8 +179,9 @@ function stateRows(s, userId) {
 // migration shipped after the table was first introduced) — a sync failure
 // against one of these is swallowed (logged, not surfaced as `syncError`)
 // instead of aborting every other table's sync for the rest of this pass.
-// Only `account_tags` today; see CLAUDE.md 2026-08-08 (10).
-const OPTIONAL_TABLES = new Set(['account_tags'])
+// `account_tags` (2026-08-08 (10)) and `account_colors` (this session) — both
+// are per-account niceties, not core data.
+const OPTIONAL_TABLES = new Set(['account_tags', 'account_colors'])
 
 // Diff two row arrays by id -> {upserts, deletes}
 function diffRows(prev, next) {
@@ -261,7 +278,7 @@ export function AppProvider({ children }) {
     loadingFor.current = userId
     let cancelled = false
     ;(async () => {
-      const [de, pa, bu, re, go, tx, se, acc, tg] = await Promise.all([
+      const [de, pa, bu, re, go, tx, se, acc, tg, cl] = await Promise.all([
         supabase.from('debts').select('*').eq('user_id', userId).order('position'),
         supabase.from('payments').select('*').eq('user_id', userId).order('date', { ascending: false }),
         supabase.from('budgets').select('*').eq('user_id', userId).order('position'),
@@ -271,6 +288,7 @@ export function AppProvider({ children }) {
         supabase.from('settings').select('*').eq('user_id', userId).maybeSingle(),
         supabase.from('accounts').select('*').eq('user_id', userId).order('position'),
         supabase.from('account_tags').select('*').eq('user_id', userId),
+        supabase.from('account_colors').select('*').eq('user_id', userId),
       ])
       const err = [de, pa, bu, re, tx, se].find((r) => r.error)
       if (err) { if (!cancelled) setSyncError(err.error.message); return }
@@ -282,6 +300,8 @@ export function AppProvider({ children }) {
       // and deliberately doesn't even set syncError (tags are a nicety, not core data; a
       // console warning is enough until the migration is run).
       if (tg.error) console.warn('[store] account_tags table not available yet:', tg.error.message)
+      // account_colors is the same shape/vintage as account_tags — same treatment.
+      if (cl.error) console.warn('[store] account_colors table not available yet:', cl.error.message)
 
       let s
       if (!de.data.length && !bu.data.length && !tx.data.length && !re.data.length) {
@@ -308,6 +328,7 @@ export function AppProvider({ children }) {
           goals: go.error ? [] : go.data.map(mappers.goals.fromRow),
           accounts: acc.error ? [] : acc.data.map(mappers.accounts.fromRow),
           accountTags: tg.error ? [] : tg.data.map(mappers.accountTags.fromRow),
+          accountColors: cl.error ? [] : cl.data.map(mappers.accountColors.fromRow),
           sim: se.data?.sim || { budget: 2100, strategy: 'avalanche', snowExtra: 0 },
           mSim: se.data?.m_sim || { income: '', items: [] },
         }
@@ -334,9 +355,10 @@ export function AppProvider({ children }) {
           const prevRows = stateRows(prev, userId)
           const nextRows = stateRows(next, userId)
           // deletes first for payments (FK), debts last so payment FKs stay valid.
-          // account_tags has no FK relationship to anything else in this list, so
-          // its position doesn't matter — it's last purely for readability.
-          for (const table of ['payments', 'transactions', 'budgets', 'recurring', 'goals', 'accounts', 'debts', 'account_tags']) {
+          // account_tags/account_colors have no FK relationship to anything else in
+          // this list, so their position doesn't matter — they're last purely for
+          // readability.
+          for (const table of ['payments', 'transactions', 'budgets', 'recurring', 'goals', 'accounts', 'debts', 'account_tags', 'account_colors']) {
             const { deletes } = diffRows(prevRows[table], nextRows[table])
             if (!deletes.length) continue
             const { error } = await supabase.from(table).delete().eq('user_id', userId).in('id', deletes)
@@ -347,7 +369,7 @@ export function AppProvider({ children }) {
               throw error
             }
           }
-          for (const table of ['debts', 'payments', 'budgets', 'recurring', 'transactions', 'goals', 'accounts', 'account_tags']) {
+          for (const table of ['debts', 'payments', 'budgets', 'recurring', 'transactions', 'goals', 'accounts', 'account_tags', 'account_colors']) {
             const { upserts } = diffRows(prevRows[table], nextRows[table])
             if (!upserts.length) continue
             const { error } = await supabase.from(table).upsert(upserts, { onConflict: 'user_id,id' })
@@ -464,6 +486,149 @@ export function AppProvider({ children }) {
     return { ok: true }
   }
 
+  // "Move my data into this space" (Settings → Shared spaces → per-space
+  // "Move my data here"). A brand-new shared space starts empty (see
+  // freshState()'s brand-new-user branch above) — this is what lets Israel
+  // start a space WITH his existing personal data instead of re-entering
+  // everything by hand.
+  //
+  // Deliberately bypasses the reactive `state`/debounced diff-sync entirely
+  // and does its own direct Supabase reads/writes: relying on `update(fn)`
+  // + waiting for the debounced sync effect to settle would mean either
+  // guessing a delay or plumbing a new "is the sync effect idle" signal out
+  // of this closure, and it would only work at all while Personal happens to
+  // be the active view. Doing it directly means it works correctly no
+  // matter what's currently on screen (Personal, the target space, a third
+  // space, or admin view-as — blocked outright, see the guard below), and
+  // the two tables/spaces this actually touches are still refreshed
+  // immediately after via the same freshFor/synced reset setSpace() already
+  // uses when switching contexts.
+  //
+  // All tables get the exact same 'user_id,id' composite primary key as
+  // every other slice's upsert (see stateRows()/the diff-sync effect above)
+  // — copying a row from personal to a space's user_id is never a
+  // collision with anything the space already has (different user_id
+  // partition), so no id-remapping is needed anywhere in this function.
+  //
+  // Sequencing is deliberately all-or-nothing and irreversible-safety-first,
+  // per the explicit requirement: write everything into the space FIRST; a
+  // failure at that stage clears nothing from personal and can be retried.
+  // Only once every table's write into the space has succeeded do personal
+  // rows get deleted — and if *that* step partially fails, the data is
+  // already safely duplicated in the space (worst case: it shows up in both
+  // places until cleared by hand), never lost.
+  const CORE_TRANSFER_TABLES = ['debts', 'payments', 'budgets', 'recurring', 'transactions', 'goals']
+  const OPTIONAL_TRANSFER_TABLES = ['accounts', 'account_tags', 'account_colors'] // may not be migrated yet on an older project
+  // debts before payments (FK) going in; payments/transactions/etc. before
+  // debts coming out — same ordering convention as the diff-sync effect.
+  const TRANSFER_DELETE_ORDER = ['payments', 'transactions', 'budgets', 'recurring', 'goals', 'accounts', 'debts', 'account_tags', 'account_colors']
+
+  const transferPersonalDataToSpace = async (targetSpaceId) => {
+    if (viewAs) return { error: "Not available while viewing another customer" }
+    if (!supabase || !user?.id) return { error: 'Not signed in' }
+    if (!targetSpaceId || targetSpaceId === user.id) return { error: 'Invalid target space' }
+    if (!spaces.some((s) => s.id === targetSpaceId)) return { error: "You're not a member of that space" }
+
+    const sourceId = user.id
+    const allTables = [...CORE_TRANSFER_TABLES, ...OPTIONAL_TRANSFER_TABLES]
+
+    try {
+      // 1. Read every personal row for every table up front.
+      const results = await Promise.all(allTables.map((t) => supabase.from(t).select('*').eq('user_id', sourceId)))
+      const byTable = {}
+      for (let i = 0; i < allTables.length; i++) {
+        const table = allTables[i]
+        const { data, error } = results[i]
+        if (error) {
+          if (OPTIONAL_TRANSFER_TABLES.includes(table)) {
+            console.warn(`[transfer] ${table} not available yet, skipping:`, error.message)
+            byTable[table] = []
+            continue
+          }
+          return { error: `Couldn't read your ${table}: ${error.message}` }
+        }
+        byTable[table] = data || []
+      }
+
+      // 2. Write everything into the target space. Nothing is deleted from
+      //    personal until this step succeeds for that table — tracked in
+      //    `moved` so step 4 only ever clears personal rows that are
+      //    actually, confirmedly sitting in the space now.
+      //    CORE_TRANSFER_TABLES (real financial data) hard-abort the whole
+      //    operation on failure — "nothing cleared if the space write
+      //    failed." OPTIONAL_TRANSFER_TABLES (account_tags/account_colors —
+      //    per-account niceties, already treated leniently everywhere else
+      //    in this app; see OPTIONAL_TABLES above) instead skip-and-warn: a
+      //    color-picker table lagging a migration shouldn't block moving
+      //    someone's actual debts/transactions/budgets.
+      const moved = {}
+      let optionalWarning = null
+      for (const table of allTables) {
+        const rows = byTable[table]
+        if (!rows.length) { moved[table] = true; continue }
+        const movedRows = rows.map((r) => ({ ...r, user_id: targetSpaceId }))
+        const { error } = await supabase.from(table).upsert(movedRows, { onConflict: 'user_id,id' })
+        if (error) {
+          if (OPTIONAL_TRANSFER_TABLES.includes(table)) {
+            console.warn(`[transfer] ${table} failed to move, skipping (left in personal):`, error.message)
+            optionalWarning = optionalWarning || `Moved, but couldn't move your ${table}: ${error.message}`
+            moved[table] = false
+            continue
+          }
+          return { error: `Couldn't move your ${table} into that space: ${error.message}. Nothing was cleared.` }
+        }
+        moved[table] = true
+      }
+
+      // 3. Bank connections (plaid_items) are service-role only (RLS, no
+      //    policies — see lib/plaid-server.js) — hand off to the dedicated
+      //    API route instead of touching that table from the client.
+      let bankError = null
+      try {
+        const res = await fetch('/api/plaid/transfer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to_space_id: targetSpaceId }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) bankError = data.error || 'Failed to move bank connections'
+      } catch (e) {
+        bankError = e?.message || 'Failed to move bank connections'
+      }
+
+      // 4. Clear personal, but only for tables that actually landed in the
+      //    space (step 2) — a skipped optional table keeps its personal
+      //    rows untouched rather than being deleted with nowhere to go.
+      for (const table of TRANSFER_DELETE_ORDER) {
+        const rows = byTable[table]
+        if (!rows || !rows.length || !moved[table]) continue
+        const ids = rows.map((r) => r.id)
+        const { error } = await supabase.from(table).delete().eq('user_id', sourceId).in('id', ids)
+        if (error) {
+          // The copy already succeeded — worst case is duplicated data, not
+          // lost data. Surface it distinctly rather than claiming failure.
+          return { ok: true, warning: `Moved, but couldn't fully clear your personal ${table}: ${error.message}`, bankError }
+        }
+      }
+
+      // 5. Force a refetch of whichever side is the currently active view
+      //    (Personal or the space just filled) — same reset shape
+      //    setSpace()/setViewAs() already use when switching contexts.
+      if (userId === sourceId || userId === targetSpaceId) {
+        synced.current = null
+        freshFor.current = null
+        loadingFor.current = null
+        dirty.current = false
+        setState(null)
+      }
+      try { localStorage.removeItem(CACHE(sourceId)) } catch {}
+
+      return { ok: true, bankError, warning: optionalWarning }
+    } catch (e) {
+      return { error: e?.message || 'Failed to move your data' }
+    }
+  }
+
   const api = useMemo(() => ({
     state,
     syncError,
@@ -479,11 +644,12 @@ export function AppProvider({ children }) {
     joinSpace,
     fetchMembers,
     removeMember,
+    transferPersonalDataToSpace, // "Move my data into this space" — see definition above
     // update(fn): fn receives a deep clone, mutates freely, returns nothing
     // no-op while viewing another customer — support mode is strictly read-only
     update: viewAs
       ? () => {}
-      : (fn) => { dirty.current = true; setState((s) => { const c = JSON.parse(JSON.stringify(s)); if (!c.goals) c.goals = []; if (!c.accounts) c.accounts = []; if (!c.accountTags) c.accountTags = []; fn(c); normalize(c); return c }) },
+      : (fn) => { dirty.current = true; setState((s) => { const c = JSON.parse(JSON.stringify(s)); if (!c.goals) c.goals = []; if (!c.accounts) c.accounts = []; if (!c.accountTags) c.accountTags = []; if (!c.accountColors) c.accountColors = []; fn(c); normalize(c); return c }) },
     catInfo: (id) => state?.budgets.find((b) => b.id === id) || ({ debt: { name: 'Debt Payment' }, income: { name: 'Income' }, transfer: { name: 'Transfer' } }[id]) || { name: id || 'Other' },
     uid,
   }), [state, syncError, viewAs, space, spaces])

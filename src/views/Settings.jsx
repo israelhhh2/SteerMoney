@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useUser, useClerk } from '@clerk/nextjs'
-import { Eye, Pencil, Plus, Link2, Users, ChevronRight, Loader2, UserMinus, Landmark, RefreshCw, AlertTriangle, Trash2 } from 'lucide-react'
+import { Eye, Pencil, Plus, Link2, Users, ChevronRight, Loader2, UserMinus, Landmark, RefreshCw, AlertTriangle, Trash2, ArrowRightLeft } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
@@ -343,14 +343,17 @@ function RemoveBankDialog({ institution, onConfirm, onClose }) {
 
 function SharedSpacesSection() {
   const { user } = useUser()
-  const { spaces, createSpace, createInvite, renameSpace, fetchMembers, removeMember } = useApp()
+  const { spaces, createSpace, createInvite, renameSpace, fetchMembers, removeMember, transferPersonalDataToSpace } = useApp()
   const toast = useToast()
+  const centerToast = useCenterToast()
   const [showNewSpace, setShowNewSpace] = useState(false)
   const [renaming, setRenaming] = useState(null)
   const [inviteUrl, setInviteUrl] = useState(null)
   const [expanded, setExpanded] = useState(null) // id of the space whose members are shown
   const [membersBySpace, setMembersBySpace] = useState({}) // id -> 'loading' | array
   const [removing, setRemoving] = useState(null) // { space, member }
+  const [moving, setMoving] = useState(null) // space the user is about to move their personal data into
+  const [moveBusy, setMoveBusy] = useState(false)
 
   const saveNewSpace = async (name) => {
     const r = await createSpace(name)
@@ -398,6 +401,24 @@ function SharedSpacesSection() {
     setRemoving(null)
   }
 
+  // "Move my data here" — brings this person's personal debts, accounts,
+  // budgets, recurring bills, transactions, goals, tags, and connected banks
+  // into the shared space, then clears them out of Personal (see
+  // store.jsx's transferPersonalDataToSpace for the full sequencing/safety
+  // guarantees — nothing is cleared unless every write into the space
+  // already succeeded).
+  const confirmMove = async () => {
+    const sp = moving
+    setMoveBusy(true)
+    const r = await transferPersonalDataToSpace(sp.id)
+    setMoveBusy(false)
+    setMoving(null)
+    if (r.error) centerToast(r.error, 'error')
+    else if (r.warning) centerToast(r.warning, 'error')
+    else if (r.bankError) centerToast(`Your data moved into "${sp.name}" — one bank connection needs manual attention (${r.bankError})`, 'error')
+    else centerToast(`Your data moved into "${sp.name}"`)
+  }
+
   return (
     <div className="space-y-2.5">
       <SectionLabel title="Shared spaces" />
@@ -438,6 +459,14 @@ function SharedSpacesSection() {
                       onClick={(e) => { e.stopPropagation(); copyInvite(sp) }}
                     >
                       <Link2 />Copy invite link
+                    </span>
+                    <span
+                      role="button"
+                      title="Move your personal accounts, debts, budgets, transactions and bank connections into this space"
+                      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 text-xs font-medium shadow-sm transition-colors hover:bg-accent [&_svg]:h-3.5 [&_svg]:w-3.5"
+                      onClick={(e) => { e.stopPropagation(); setMoving(sp) }}
+                    >
+                      <ArrowRightLeft />Move my data here
                     </span>
                   </button>
 
@@ -505,6 +534,16 @@ function SharedSpacesSection() {
           spaceName={removing.space.name}
           onConfirm={confirmRemove}
           onClose={() => setRemoving(null)}
+        />
+      )}
+      {moving && (
+        <ConfirmDialog
+          title={`Move your data into "${moving.name}"?`}
+          desc={`Your accounts, debts, budgets, recurring bills, transactions, goals, and bank connections will move into "${moving.name}". Everyone in the space will be able to see them, and they'll no longer show up in your Personal space. This can take a few seconds — don't close this page.`}
+          confirmLabel="Move my data"
+          busy={moveBusy}
+          onConfirm={confirmMove}
+          onClose={() => !moveBusy && setMoving(null)}
         />
       )}
     </div>

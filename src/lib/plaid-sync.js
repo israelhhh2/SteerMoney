@@ -107,6 +107,14 @@ export async function syncPlaidItem(item, opts = {}) {
       type: a.type,
       subtype: a.subtype,
       balance: a.balances?.current ?? null,
+      // Credit-card limit and depository available-balance, straight from
+      // Plaid — previously dropped entirely, forcing views/Accounts.jsx's
+      // "Credit limit needed" amber pill even when Plaid actually has the
+      // limit, and AccountDetail/DepositoryRow to fall back AVAILABLE to
+      // CURRENT (see CLAUDE.md 2026-08-05 (2)). Both are flat on
+      // balances, no nesting beyond this.
+      limit: a.balances?.limit ?? null,
+      available: a.balances?.available ?? null,
     }))
   } catch { /* keep previously stored accounts */ }
 

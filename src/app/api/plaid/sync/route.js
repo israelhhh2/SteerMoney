@@ -1,19 +1,24 @@
 import { auth } from '@clerk/nextjs/server'
-import { plaidConfigured, supabaseAdmin } from '@/lib/plaid-server'
+import { plaidConfigured, supabaseAdmin, ownerIdsFor } from '@/lib/plaid-server'
 import { syncPlaidItem } from '@/lib/plaid-sync'
 
 // Pulls new/changed/removed transactions for every bank connected by this
-// user and mirrors them into public.transactions. Personal data only (v1):
-// synced rows always use the signed-in Clerk user id, never a shared space.
-// Per-item sync logic lives in lib/plaid-sync.js, shared with the webhook
-// route's SYNC_UPDATES_AVAILABLE handler.
+// user and mirrors them into public.transactions. Looked up via
+// ownerIdsFor(userId) rather than a flat `.eq('user_id', userId)` — a
+// connection moved into a shared space via "Move my data into this space"
+// (app/api/plaid/transfer) has plaid_items.user_id set to the space id, and
+// syncPlaidItem() below already writes transactions under *that* row's own
+// user_id (item.user_id), so once the item is found here everything else
+// keeps working unchanged. Per-item sync logic lives in lib/plaid-sync.js,
+// shared with the webhook route's SYNC_UPDATES_AVAILABLE handler.
 export async function POST() {
   try {
     const { userId } = await auth()
     if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 })
     if (!plaidConfigured || !supabaseAdmin) return Response.json({ error: 'Plaid is not configured yet' }, { status: 503 })
 
-    const { data: items, error: itemsErr } = await supabaseAdmin.from('plaid_items').select('*').eq('user_id', userId)
+    const ownerIds = await ownerIdsFor(userId)
+    const { data: items, error: itemsErr } = await supabaseAdmin.from('plaid_items').select('*').in('user_id', ownerIds)
     if (itemsErr) throw itemsErr
 
     let added = 0, modified = 0, removed = 0

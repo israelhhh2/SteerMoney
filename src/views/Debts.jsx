@@ -95,6 +95,26 @@ export default function Debts() {
     return { name: monthLabel(d), balance: Math.round(v) }
   })
 
+  // No debts: skip the stats/payoff-sim/snowball/consolidation/toolbar entirely
+  // (they only render nonsense like "Nothing pays off within 50 years" and
+  // "Debt-free by Aug 2026 / 0 mo / $0.00" against an empty list) and show one
+  // clean empty state instead. Non-empty path below is untouched.
+  if (!state.debts.length) {
+    return (
+      <div className="fade-in space-y-6">
+        <Card className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary/60">
+            <CreditCard className="h-6 w-6 text-muted-foreground" />
+          </div>
+          <h2 className="text-base font-semibold tracking-tight">No debts yet</h2>
+          <p className="max-w-sm text-sm text-muted-foreground">Add your first debt to start tracking your payoff plan.</p>
+          <Button className="mt-2" onClick={() => setEditIdx(-1)}><Plus />Add debt</Button>
+        </Card>
+        {editIdx !== undefined && <DebtDialog idx={editIdx} onClose={() => setEditIdx(undefined)} />}
+      </div>
+    )
+  }
+
   return (
     <div className="fade-in space-y-6">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">

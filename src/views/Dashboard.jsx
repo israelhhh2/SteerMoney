@@ -11,7 +11,7 @@ import { Input, Label } from '@/components/ui/input'
 import { Segmented } from '@/components/ui/segmented'
 import { SectionHead, SectionLabel, Kpi, MoneyTile, CatIcon, Bar, Ring, budgetTone, Money, CardChip } from '@/components/shared'
 import { useApp, monthTx, rangeTx, incomeIn, expensesIn, spentIn, dataMonths } from '@/store'
-import { debtUrlId } from '@/lib/accounts'
+import { debtUrlId, colorForAccount } from '@/lib/accounts'
 import { fmt, fmt0, today, isoDate, ymLabel, monthLabel, prettyDate, catColor, srcLabel, ordinal } from '@/lib/utils'
 import { simulatePlan, recMonthly, nextDueDate } from '@/lib/finance'
 import { useIsMobile } from '@/lib/useMediaQuery'
@@ -410,7 +410,7 @@ export default function Dashboard() {
               const u = Math.min(100, Math.round((d.balance / d.limit) * 100))
               return (
                 <Link key={d.name} href={`/accounts/${debtUrlId(d.id)}`} className="-mx-2 flex items-center gap-3 rounded-lg px-2 py-2.5 transition hover:bg-secondary/40">
-                  <CardChip name={d.name} size="dash" />
+                  <CardChip name={d.name} size="dash" colorOverride={colorForAccount(state, debtUrlId(d.id))} />
                   <div className="min-w-0 flex-1">
                     <div className="mb-0.5 flex min-w-0 items-baseline justify-between gap-2">
                       <span className="min-w-0 flex-1 truncate text-[0.625rem] font-bold uppercase tracking-wider text-muted-foreground">{d.name}</span>

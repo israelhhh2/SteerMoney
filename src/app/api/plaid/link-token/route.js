@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server'
-import { plaidClient, plaidConfigured, supabaseAdmin, getAppUrl } from '@/lib/plaid-server'
+import { plaidClient, plaidConfigured, supabaseAdmin, getAppUrl, ownerIdsFor } from '@/lib/plaid-server'
 
 // Creates a Plaid Link token for the signed-in user so the client can open
 // Plaid Link (react-plaid-link) and start a bank connection.
@@ -48,7 +48,12 @@ export async function POST(req) {
         .eq('item_id', item_id)
         .maybeSingle()
       if (error) throw error
-      if (!row || row.user_id !== userId) return Response.json({ error: 'Not found' }, { status: 404 })
+      // Ownership check widened to ownerIdsFor (own id + any shared space
+      // this Clerk user belongs to) — a connection moved into a space via
+      // "Move my data into this space" (app/api/plaid/transfer) has
+      // plaid_items.user_id set to the space id, not this user's own id.
+      const ownerIds = await ownerIdsFor(userId)
+      if (!row || !ownerIds.includes(row.user_id)) return Response.json({ error: 'Not found' }, { status: 404 })
       params.access_token = row.access_token
     } else {
       params.products = ['transactions']

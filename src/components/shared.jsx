@@ -2,14 +2,14 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useUser } from '@clerk/nextjs'
-import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List, Link2, Pencil, Loader2, Plus, X } from 'lucide-react'
+import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List, Link2, Pencil, Loader2, Plus, X, RotateCcw } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { catColor, fmt0, cn } from '@/lib/utils'
 import { useApp } from '@/store'
-import { tagsForAccount, allAccountTags, addAccountTag, removeAccountTag } from '@/lib/accounts'
+import { tagsForAccount, allAccountTags, addAccountTag, removeAccountTag, colorForAccount, setAccountColor } from '@/lib/accounts'
 
 const CAT_ICONS = {
   housing: Home, auto: Car, shopping: ShoppingBag, dining: Utensils, groceries: ShoppingCart,
@@ -123,13 +123,39 @@ export function cardHue(seed) {
   return h
 }
 
+// Curated preset hues for the "let me edit the card to change color" feature
+// (CardColorPicker below) — same gradient formula cardHue()'s hash-based
+// default already uses, just fixed to hues that read as an obvious color
+// name instead of an arbitrary one, so users pick from something
+// recognizable rather than a random point on the wheel.
+export const CARD_COLOR_PRESETS = [
+  { key: 'red', label: 'Red', hue: 355 },
+  { key: 'orange', label: 'Orange', hue: 22 },
+  { key: 'amber', label: 'Amber', hue: 42 },
+  { key: 'green', label: 'Green', hue: 145 },
+  { key: 'teal', label: 'Teal', hue: 178 },
+  { key: 'blue', label: 'Blue', hue: 210 },
+  { key: 'indigo', label: 'Indigo', hue: 245 },
+  { key: 'violet', label: 'Violet', hue: 268 },
+  { key: 'pink', label: 'Pink', hue: 330 },
+]
+
+function cardGradient(hue) {
+  return `linear-gradient(135deg, hsl(${hue} 65% 40%), hsl(${(hue + 40) % 360} 55% 24%))`
+}
+
 // Copilot-style "credit card" visual chip, shared by the Dashboard's Credit Cards
 // list and the Accounts page's account rows/detail sheet.
 // `size`: 'dash' (Dashboard's small name-only chip — exact previous look) ·
 // 'row' (Accounts list rows, default) · 'lg' (Accounts detail sheet, bigger).
-export function CardChip({ institution, name, mask, size = 'row' }) {
-  const hue = cardHue(institution || name || '')
-  const gradient = `linear-gradient(135deg, hsl(${hue} 65% 40%), hsl(${(hue + 40) % 360} 55% 24%))`
+// `colorOverride`: an optional hue number (one of CARD_COLOR_PRESETS, or any
+// number) from lib/accounts.js's colorForAccount() — when present, it wins
+// over the deterministic name/institution hash; omitted or null falls back
+// to the original auto-color behavior unchanged (0 is a valid override hue,
+// so this checks for null/undefined specifically, not falsiness).
+export function CardChip({ institution, name, mask, size = 'row', colorOverride }) {
+  const hue = colorOverride ?? cardHue(institution || name || '')
+  const gradient = cardGradient(hue)
 
   if (size === 'dash') {
     return (
@@ -292,6 +318,56 @@ export function AccountTagsEditor({ accountKey, className = '' }) {
           <Plus className="h-2.5 w-2.5" />Add tag
         </button>
       )}
+    </div>
+  )
+}
+
+// ---- card color picker ("let me edit the card to change color") ----
+// Tap-to-select swatches — no free-form color picker, per the "keep it dead
+// simple, non-tech users" brief every other account-detail control here
+// follows. `accountKey` is the same canonical accountUrlId() AccountTagsEditor
+// above already takes, so this works unchanged for manual accounts, manual
+// debts, and Plaid accounts, and rides along with shared spaces for free
+// (same reasoning as tags — store.jsx re-points the whole state, colors
+// included, at the active space).
+//
+// The "Auto" swatch resets by deleting the account_colors row entirely (see
+// lib/accounts.js's setAccountColor) rather than storing a sentinel value —
+// CardChip's existing hash-based cardHue() is simply what renders the moment
+// there's no override row for this key, so "Auto" is really just "no
+// override", not a distinct third state to track.
+export function CardColorPicker({ accountKey, className = '' }) {
+  const { state, update } = useApp()
+  const current = colorForAccount(state, accountKey)
+
+  return (
+    <div className={cn('flex flex-wrap items-center justify-center gap-2', className)}>
+      <button
+        type="button"
+        onClick={() => setAccountColor(update, accountKey, null)}
+        aria-label="Reset to automatic color"
+        title="Auto"
+        className={cn(
+          'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 bg-secondary/60 text-muted-foreground transition',
+          current == null ? 'border-primary' : 'border-transparent hover:border-border'
+        )}
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+      </button>
+      {CARD_COLOR_PRESETS.map((p) => (
+        <button
+          key={p.key}
+          type="button"
+          onClick={() => setAccountColor(update, accountKey, p.hue)}
+          aria-label={p.label}
+          title={p.label}
+          className={cn(
+            'h-7 w-7 shrink-0 rounded-full border-2 shadow-sm transition',
+            current === p.hue ? 'border-primary' : 'border-transparent hover:border-border/70'
+          )}
+          style={{ background: cardGradient(p.hue) }}
+        />
+      ))}
     </div>
   )
 }

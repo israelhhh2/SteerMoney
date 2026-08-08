@@ -183,7 +183,13 @@ export function buildAccountInventory(state, plaidItems) {
     return {
       key: 'debt:' + d.id, kind: limitTruthy ? 'credit' : 'loan', name: d.name,
       mask: m?.mask || extractMask(d.name), subtype: m?.subtype || null,
-      institution: m?.institution || null, balance: d.balance, limit: d.limit || null,
+      institution: m?.institution || null, balance: d.balance,
+      // Prefer Plaid's real limit when the matched account has one; keep the
+      // manually-entered d.limit as a fallback so a debt matched to a Plaid
+      // account that doesn't report a limit (or isn't matched at all) is
+      // unaffected — see CLAUDE.md quick-win entry.
+      limit: m?.limit != null ? m.limit : (d.limit || null),
+      available: m?.available ?? null,
       account_id: m?.account_id || null, last_synced: item?.last_synced || null,
       // item_id/status mirror the connection this debt is matched to (if
       // any), so the "still syncing" placeholder (see usePlaidItems below,
@@ -201,7 +207,12 @@ export function buildAccountInventory(state, plaidItems) {
       key: 'plaid:' + acctKey(a),
       kind: a.type === 'credit' ? 'credit' : a.type === 'loan' ? 'loan' : (a.type || 'other'),
       name: a.name, mask: a.mask, subtype: a.subtype || null, institution: it.institution,
-      balance: a.balance ?? 0, limit: null, account_id: a.account_id || null, last_synced: it.last_synced,
+      // Real limit/available straight from Plaid (lib/plaid-sync.js /
+      // app/api/plaid/exchange) when present — was hardcoded null before,
+      // forcing the "Credit limit needed" pill and an AVAILABLE→CURRENT
+      // fallback even when Plaid actually had the data.
+      balance: a.balance ?? 0, limit: a.limit ?? null, available: a.available ?? null,
+      account_id: a.account_id || null, last_synced: it.last_synced,
       // item_id identifies the plaid_items row (the bank connection) this account
       // belongs to — Plaid has no per-account delete API, so AccountDetail's
       // "Disconnect bank" action needs this to DELETE /api/plaid/items.
@@ -258,9 +269,11 @@ export function deleteManualAccount(update, accountRowId) {
   const key = manualAcctUrlId(accountRowId)
   update((s) => {
     s.accounts = s.accounts.filter((a) => a.id !== accountRowId)
-    // drop any tags pinned to this account so account_tags doesn't accumulate
-    // orphaned rows for deleted accounts — see the tag helpers below.
+    // drop any tags/custom color pinned to this account so account_tags/
+    // account_colors don't accumulate orphaned rows for deleted accounts —
+    // see the tag/color helpers below.
     if (s.accountTags) s.accountTags = s.accountTags.filter((t) => t.accountKey !== key)
+    if (s.accountColors) s.accountColors = s.accountColors.filter((c) => c.accountKey !== key)
   })
 }
 
@@ -270,6 +283,7 @@ export function deleteDebt(update, debtId) {
     const i = s.debts.findIndex((d) => d.id === debtId)
     if (i !== -1) s.debts.splice(i, 1)
     if (s.accountTags) s.accountTags = s.accountTags.filter((t) => t.accountKey !== key)
+    if (s.accountColors) s.accountColors = s.accountColors.filter((c) => c.accountKey !== key)
   })
 }
 
@@ -383,4 +397,35 @@ export function addAccountTag(update, accountKey, tagName) {
 
 export function removeAccountTag(update, tagId) {
   update((s) => { s.accountTags = (s.accountTags || []).filter((t) => t.id !== tagId) })
+}
+
+// ---- account card color ("let me edit the card to change color") ----
+// One row per account (at most one, unlike tags) in the `accountColors` store
+// slice (table `account_colors` — see CLAUDE.md's session log for the
+// migration SQL, same shape/vintage precedent as account_tags above).
+// `accountKey` is the same accountUrlId() every other per-account slice uses,
+// so this works identically for manual accounts, manual debts, and Plaid
+// accounts, and rides along with shared spaces for free (store.jsx re-points
+// the whole state at the active space, tags/colors included — nothing here
+// needs to know spaces exist).
+//
+// `color` is one of components/shared.jsx's CARD_COLOR_PRESETS hue numbers.
+// Returns null when the account has no custom color, which is what makes
+// "Auto" work: CardChip's own cardHue() hash is the fallback the instant
+// there's no override row for that key — no separate reset flag needed.
+export function colorForAccount(state, accountKey) {
+  const row = (state?.accountColors || []).find((c) => c.accountKey === accountKey)
+  return row ? row.color : null
+}
+
+// Pass color=null/undefined to reset to Auto (deletes the row instead of
+// storing a sentinel). A card has at most one color, so — unlike
+// addAccountTag, which appends — this always replaces any existing row for
+// the same accountKey first.
+export function setAccountColor(update, accountKey, color) {
+  update((s) => {
+    if (!s.accountColors) s.accountColors = []
+    s.accountColors = s.accountColors.filter((c) => c.accountKey !== accountKey)
+    if (color != null) s.accountColors.push({ id: uid('ac'), accountKey, color })
+  })
 }

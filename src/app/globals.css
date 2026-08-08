@@ -26,8 +26,15 @@
   * { @apply border-border; }
   /* Safety net: a stray overflowing row should scroll within itself (or get clipped),
      never pan the whole page sideways. Individual rows still get proper flex/truncate
-     fixes — this is just the backstop. */
-  html, body { @apply overflow-x-hidden; }
+     fixes — this is just the backstop.
+     IMPORTANT: html only, not body. Giving `body` a non-visible overflow-x makes it a
+     scroll container in its own right (computed overflow-y becomes auto) — but body
+     has no constrained height, so it never actually scrolls internally, which breaks
+     `position: sticky` for every descendant (e.g. app/(app)/layout.jsx's desktop
+     sidebar): sticky then computes its "stuck" offset against body's scrollport,
+     which never moves, instead of the real window scroll, so it just flows away with
+     the page. html alone still clips horizontal overflow at the viewport root. */
+  html { @apply overflow-x-hidden; }
   body { @apply bg-background text-foreground font-sans antialiased; }
   /* Phones read too small at the desktop-tuned sizes; scale the whole UI up fluidly
      with the viewport (Copilot-style chunky text) instead of one fixed bump. */

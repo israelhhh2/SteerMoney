@@ -16,7 +16,7 @@ import { useToast, useCenterToast } from '@/components/toast'
 import { cn, fmt0, today, uid } from '@/lib/utils'
 import {
   RANGE_KEYS, daysFor, buildSeries, pctChange, pctChange30,
-  buildAccountInventory, accountUrlId, usePlaidItems, deleteManualAccount, allAccountTags,
+  buildAccountInventory, accountUrlId, usePlaidItems, deleteManualAccount, allAccountTags, colorForAccount,
 } from '@/lib/accounts'
 
 const TIP = { contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 } }
@@ -160,19 +160,19 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
 
       {filteredCards.length > 0 && (
         <Section title="Credit cards" total={fmt0(filteredCards.reduce((s, a) => s + a.balance, 0))} addHref="/debts">
-          {filteredCards.map((a) => <CardRow key={a.key} account={a} tags={tagsByKey[accountUrlId(a)] || []} />)}
+          {filteredCards.map((a) => <CardRow key={a.key} account={a} tags={tagsByKey[accountUrlId(a)] || []} colorOverride={colorForAccount(state, accountUrlId(a))} />)}
         </Section>
       )}
 
       {filteredLoans.length > 0 && (
         <Section title="Loans" total={fmt0(filteredLoans.reduce((s, a) => s + a.balance, 0))} addHref="/debts">
-          {filteredLoans.map((a) => <LoanRow key={a.key} account={a} tags={tagsByKey[accountUrlId(a)] || []} />)}
+          {filteredLoans.map((a) => <LoanRow key={a.key} account={a} tags={tagsByKey[accountUrlId(a)] || []} colorOverride={colorForAccount(state, accountUrlId(a))} />)}
         </Section>
       )}
 
       <Section title="Depository" total={fmt0(filteredDepository.reduce((s, a) => s + a.balance, 0))} onAdd={() => setEditing(null)}>
         {filteredDepository.length ? (
-          filteredDepository.map((a) => <DepositoryRow key={a.key} account={a} tags={tagsByKey[accountUrlId(a)] || []} />)
+          filteredDepository.map((a) => <DepositoryRow key={a.key} account={a} tags={tagsByKey[accountUrlId(a)] || []} colorOverride={colorForAccount(state, accountUrlId(a))} />)
         ) : (
           <div className="p-6 text-center text-[0.78125rem] text-muted-foreground">
             {tagFilter ? `No depository accounts tagged "${tagFilter}".` : 'No depository accounts yet — add one or connect a bank.'}
@@ -247,12 +247,12 @@ function Section({ title, total, addHref, onAdd, children, defaultOpen = true })
 // Rows now navigate to /accounts/{id} — a Notion-style modal on in-app clicks
 // (intercepted route, app/(app)/@modal/(.)accounts/[id]) or the full detail
 // page on direct load/refresh. See views/AccountDetail.jsx.
-function CardRow({ account, tags = [] }) {
+function CardRow({ account, tags = [], colorOverride }) {
   const hasLimit = !!account.limit
   const util = hasLimit ? Math.min(999, Math.round((account.balance / account.limit) * 100)) : null
   return (
     <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
-      <CardChip institution={account.institution} name={account.name} mask={account.mask} />
+      <CardChip institution={account.institution} name={account.name} mask={account.mask} colorOverride={colorOverride} />
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex justify-center gap-1.5"><SourceBadge accountId={account.account_id} institution={account.institution} />{account.status === 'syncing' && <SyncingPill />}</div>
         {tags.length > 0 && <div className="flex flex-wrap justify-center gap-1">{tags.map((t) => <TagPill key={t} tag={t} />)}</div>}
@@ -281,10 +281,10 @@ function CardRow({ account, tags = [] }) {
   )
 }
 
-function LoanRow({ account, tags = [] }) {
+function LoanRow({ account, tags = [], colorOverride }) {
   return (
     <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
-      <CardChip institution={account.institution} name={account.name} mask={account.mask} />
+      <CardChip institution={account.institution} name={account.name} mask={account.mask} colorOverride={colorOverride} />
       <div className="min-w-0 flex-1 space-y-1.5 text-center">
         <div className="flex justify-center gap-1.5"><SourceBadge accountId={account.account_id} institution={account.institution} />{account.status === 'syncing' && <SyncingPill />}</div>
         {tags.length > 0 && <div className="flex flex-wrap justify-center gap-1">{tags.map((t) => <TagPill key={t} tag={t} />)}</div>}
@@ -295,12 +295,12 @@ function LoanRow({ account, tags = [] }) {
   )
 }
 
-function DepositoryRow({ account, tags = [] }) {
+function DepositoryRow({ account, tags = [], colorOverride }) {
   const pct = pctChange30(account.history, account.balance)
   const available = account.available ?? account.balance
   return (
     <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
-      <CardChip institution={account.institution} name={account.name} mask={account.mask} />
+      <CardChip institution={account.institution} name={account.name} mask={account.mask} colorOverride={colorOverride} />
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex justify-center gap-1.5"><SourceBadge accountId={account.account_id} institution={account.institution} />{account.status === 'syncing' && <SyncingPill />}</div>
         {tags.length > 0 && <div className="flex flex-wrap justify-center gap-1">{tags.map((t) => <TagPill key={t} tag={t} />)}</div>}

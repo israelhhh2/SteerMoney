@@ -21,8 +21,8 @@ Next.js (App Router, JS/JSX) personal-finance app.
   allowed to touch `plaid_items`, which has RLS with no policies).
 - **State:** single context in `store.jsx` — localStorage cache + debounced
   diff-sync to Supabase. Tables: debts, payments, budgets, recurring,
-  transactions, goals, accounts, account_tags, settings, workspaces/invites,
-  plaid_items.
+  transactions, goals, accounts, account_tags, account_colors, settings,
+  workspaces/invites, plaid_items.
 - **Views:** `views/*.jsx` (Dashboard, Accounts, Debts, Budgets, Goals,
   Charts, Simulator, Transactions, Settings, Admin). UI primitives in
   `components/ui/`.
@@ -118,6 +118,470 @@ Costs note: production Plaid is pay-per-item/product — check current pricing
 before flipping the switch.
 
 ## Session log (newest first)
+
+### 2026-08-08 (18)
+- **Migration correction (Fable review):** every diff-sync upsert in
+  `store.jsx` uses `onConflict: 'user_id,id'`, which requires a UNIQUE index
+  on `(user_id, id)` on every synced table. The `account_tags` /
+  `account_colors` migration SQL in entries (10)/(16) only declared
+  `id text primary key` — without the composite index, every upsert to those
+  tables fails (and, being OPTIONAL_TABLES, fails *silently*). The migration
+  the user actually runs must include:
+  ```sql
+  create unique index if not exists account_tags_user_row_idx
+    on public.account_tags (user_id, id);
+  create unique index if not exists account_colors_user_row_idx
+    on public.account_colors (user_id, id);
+  ```
+
+### 2026-08-08 (16)
+- **"Let me edit the card to change color and stuff"** (Sonnet worker), per
+  Israel's verbatim request — account cards (`CardChip`,
+  `components/shared.jsx`) only ever got a deterministic auto color
+  (`cardHue()`, hashed from institution/name). Read the account_tags
+  precedent (CLAUDE.md 2026-08-08 (10)) first and followed the exact same
+  shape.
+  - **New store slice `accountColors`** (mirrors `accountTags`'s shape but
+    is at most one row per account, not many): table `account_colors`, one
+    row `{id, account_key, color}` per account. `account_key` is the same
+    canonical `accountUrlId()` (`lib/accounts.js`) every other per-account
+    slice already uses — manual accounts `acc_<id>`, manual debts
+    `debt_<id>`, Plaid accounts their `account_id` — so a custom color
+    works identically across every account type with no branching, and
+    rides shared spaces for free (store.jsx already re-points the entire
+    `state`, every slice included, at the active space's rows — nothing
+    color-specific was needed for that part, same as tags before it).
+    Added to `freshState()`/`normalize()`/`stateRows()`, and to
+    `OPTIONAL_TABLES` (now `{'account_tags', 'account_colors'}`) so a
+    missing/not-yet-migrated table degrades the same way account_tags
+    already does: initial load logs a `console.warn` and falls back to
+    `accountColors: []` (never sets `syncError` — this is a nicety, not
+    core data), and the diff-sync delete/upsert loops skip-and-continue on
+    a failure for this table instead of aborting every other table's sync
+    that pass.
+  - **`lib/accounts.js`**: `colorForAccount(state, accountKey)` returns the
+    stored hue number or `null` (no override → caller falls back to
+    `cardHue()`'s hash, unchanged); `setAccountColor(update, accountKey,
+    color)` — unlike `addAccountTag` (appends), this always replaces any
+    existing row for that key first, since a card has at most one color;
+    passing `color` as `null`/`undefined` just removes the row entirely —
+    that's the entire mechanism behind the "Auto" swatch, no separate reset
+    flag anywhere. `deleteManualAccount`/`deleteDebt` now also strip
+    `accountColors` rows for that key (orphan cleanup on delete, same as
+    they already did for `accountTags`), and `AccountDetail.jsx`'s Plaid
+    "Disconnect bank" cleanup now clears both tags and colors for that one
+    `account_id`.
+  - **UI — `components/shared.jsx`**: `CARD_COLOR_PRESETS` (9 curated hues —
+    red/orange/amber/green/teal/blue/indigo/violet/pink — reusing
+    `CardChip`'s existing gradient formula, factored into a small
+    `cardGradient(hue)` helper shared by both the chip and the picker so
+    presets always look like a real card, not a flat swatch). `CardChip`
+    gained an optional `colorOverride` prop (a hue number) — when present
+    it wins over the computed `cardHue()` hash (via `??`, so `0` — a
+    legitimate hue — isn't mistaken for "no override"); every existing call
+    site is unaffected when the prop is omitted. `CardColorPicker({
+    accountKey })` — a row of 9 preset swatch buttons plus one "Auto"
+    swatch (a muted circle with a `RotateCcw` icon) that calls
+    `setAccountColor(update, accountKey, null)`; the currently-active
+    swatch (or Auto, when no override exists) gets a `border-primary` ring.
+    No free-form color picker — tap-to-select only, per the "keep it dead
+    simple, non-tech users" brief every other account-detail control here
+    already follows (same reasoning as `AccountTagsEditor`).
+  - **UI — `views/AccountDetail.jsx`**: new "Card color" row right under the
+    existing `AccountTagsEditor`, same `id` (`accountUrlId()`) as the tags
+    editor takes — `<CardColorPicker accountKey={id} />` under a small
+    uppercase "Card color" label matching the page's other micro-labels.
+    The page's own `<CardChip ... size="lg" />` now passes
+    `colorOverride={colorForAccount(state, id)}` so picking a swatch updates
+    that same chip immediately (it's driven by the store, not local state).
+  - **UI — `views/Accounts.jsx`**: `CardRow`/`LoanRow`/`DepositoryRow` each
+    gained a `colorOverride` prop, threaded through to their `CardChip`;
+    each of the three list-rendering call sites now passes
+    `colorOverride={colorForAccount(state, accountUrlId(a))}` right next to
+    the existing `tags={tagsByKey[...]}` prop — no new memoized map needed,
+    `colorForAccount` is a cheap `.find()` over a small per-space array.
+  - **UI — `views/Dashboard.jsx`**: the Credit Cards card's per-row
+    `<CardChip name={d.name} size="dash" />` now also passes
+    `colorOverride={colorForAccount(state, debtUrlId(d.id))}` — same
+    lookup, so a color picked on a debt's detail page shows up on the
+    Dashboard's small chip too, no separate wiring.
+  - **Migration required — nothing above persists to Supabase until this
+    runs.** Same situation as `account_tags.sql` (2026-08-08 (10)): this
+    app's post-launch tables live in a `supabase/` folder outside the
+    mounted `src/` root, so add `supabase/account_colors.sql` next to it
+    and run in the Supabase SQL editor:
+    ```sql
+    create table if not exists public.account_colors (
+      id text primary key,
+      user_id text not null,
+      account_key text not null,
+      color integer not null,
+      created_at timestamptz not null default now()
+    );
+    create unique index if not exists account_colors_user_account_idx
+      on public.account_colors (user_id, account_key);
+    create index if not exists account_colors_user_id_idx
+      on public.account_colors (user_id);
+    alter table public.account_colors enable row level security;
+    -- IMPORTANT: copy the exact RLS policy the `account_tags` table already
+    -- uses (Supabase Dashboard -> Authentication -> Policies ->
+    -- account_tags), same shared-space predicate reasoning documented in
+    -- that table's migration comment (2026-08-08 (10)) — don't hand-roll a
+    -- new one.
+    ```
+    Until this runs, the app degrades exactly like account_tags did before
+    its migration: colors work locally (localStorage cache, `update(fn)`)
+    but silently fail to persist (logged via `console.warn`, not
+    surfaced) — picking a swatch, refreshing the page, and seeing it
+    revert is the expected symptom, not a bug, until the SQL above is run.
+  - **How "Auto" reset works, precisely**: `colorForAccount()` returns
+    `null` when no `account_colors` row exists for that key; `CardChip`
+    does `colorOverride ?? cardHue(...)`, so `null`/`undefined` (via `??`,
+    not plain falsiness — `0` is a legitimate hue, not a reset signal)
+    falls straight through to the original hash-based color. Tapping "Auto"
+    in the picker calls `setAccountColor(update, accountKey, null)`, which
+    deletes any existing row for that key — there's no "auto" sentinel
+    value stored anywhere; the absence of a row is the auto state.
+  - **Files changed**: `store.jsx` (mapper, freshState/normalize/stateRows,
+    OPTIONAL_TABLES, initial-load fetch + defensive fallback, diff-sync
+    delete/upsert table lists, `update(fn)`'s defensive-init), `lib/accounts.js`
+    (`colorForAccount`, `setAccountColor`, delete-cleanup wiring),
+    `components/shared.jsx` (`CARD_COLOR_PRESETS`, `cardGradient`,
+    `CardChip`'s `colorOverride` prop, new `CardColorPicker`),
+    `views/AccountDetail.jsx` (picker + `colorOverride` on its chip + Plaid-
+    disconnect cleanup), `views/Accounts.jsx` (`colorOverride` threaded
+    through all three row types), `views/Dashboard.jsx` (`colorOverride` on
+    the Credit Cards row chip).
+  - **Left off / not verified**: no dev server, no npm installs, nothing
+    clicked in a real browser (standing instruction) — all six changed/new
+    files were checked with `npx esbuild <file> --bundle=false
+    --outfile=/dev/null` and parse cleanly. Next session with real access
+    should: (a) run the `account_colors.sql` migration above (copying the
+    real RLS policy from `account_tags`, per the same caution documented
+    there); (b) open an account's detail view, tap a preset swatch, and
+    confirm the big chip updates immediately and the same account's row on
+    Accounts/Dashboard picks up the color too; (c) tap "Auto" and confirm it
+    reverts to the original hash color; (d) confirm the swatch row doesn't
+    crowd a real ~390px viewport (9 presets + Auto = 10 small circles,
+    `flex-wrap`ped — untested at a real width); (e) confirm deleting a
+    colored manual account/debt, or disconnecting a colored Plaid bank,
+    actually removes its `account_colors` row from Supabase, not just local
+    state.
+
+### 2026-08-08 (17)
+- **"Let me share my personal [space] or let me add a new shared space but
+  allow me to transfer all accounts"** (Sonnet worker), per Israel's
+  verbatim request — creating a shared space always started empty; there
+  was no way to bring existing personal data (debts, accounts, budgets,
+  transactions, goals, recurring, tags, colors, connected banks) into it.
+  Read store.jsx in full (row↔state mapping, the debounced diff-sync, how
+  `setSpace`/`setViewAs` swap the effective `userId` and reset
+  `freshFor`/`synced`), `views/Settings.jsx`'s `SharedSpacesSection`, every
+  `app/api/plaid/*` route, and `lib/plaid-server.js` before changing
+  anything.
+  - **New store method `transferPersonalDataToSpace(targetSpaceId)`**
+    (`store.jsx`, exposed via `useApp()`) — "Move my data into this space."
+    Deliberately bypasses the reactive `state`/`update(fn)`/debounced
+    diff-sync entirely and does its own direct Supabase reads/writes
+    instead: relying on `update(fn)` + waiting for the diff-sync effect to
+    settle would only work while Personal happened to be the active view,
+    and would need a new "is the sync idle" signal that doesn't exist today.
+    Doing it directly works correctly regardless of what's currently on
+    screen (Personal, the target space, a third space — admin
+    view-as is blocked outright, support mode is read-only everywhere else
+    too).
+    - **Sequence (all tables share the same `user_id,id` composite key
+      every slice already upserts on — see `stateRows()` — so copying a row
+      from personal to a space's `user_id` is never a collision with
+      anything the space already has; no id-remapping needed anywhere):**
+      1. Read every personal row for debts, payments, budgets, recurring,
+         transactions, goals (`CORE_TRANSFER_TABLES`) and accounts,
+         account_tags, account_colors (`OPTIONAL_TRANSFER_TABLES` — may not
+         be migrated on an older project; a read failure on one of these is
+         logged and treated as empty, not a hard error, matching how the
+         initial-load effect already treats these same tables).
+      2. Upsert every non-empty table into the target space
+         (`user_id: targetSpaceId`), tracked per-table in a `moved` map. A
+         `CORE_TRANSFER_TABLES` failure here **aborts the whole operation
+         immediately, before anything is deleted** — "nothing cleared if
+         the space write failed," per the explicit safety requirement. An
+         `OPTIONAL_TRANSFER_TABLES` failure instead skip-and-warns (that one
+         table is left in personal, real financial data still moves) —
+         matches this app's existing lenient treatment of account_tags/
+         account_colors (`OPTIONAL_TABLES` in the diff-sync effect) rather
+         than blocking a whole data move over a color-picker table lagging
+         a migration.
+      3. Bank connections (`plaid_items`) are service-role only (RLS, no
+         policies at all — see `lib/plaid-server.js`) — the client can't
+         upsert that table directly like every other slice, so this step
+         calls the new `POST /api/plaid/transfer` route instead (see
+         below). A bank-transfer failure is reported back (`bankError`) but
+         does **not** block or roll back the rest of the move — the
+         financial data already safely landed in the space by this point.
+      4. Delete personal rows, but **only for tables where step 2's `moved`
+         map says the copy actually succeeded** — a skipped optional table
+         keeps its personal rows untouched instead of being deleted with
+         nowhere to go (this was a real bug caught before shipping: the
+         first draft deleted based on what was *read* in step 1, not what
+         was confirmed *written* in step 2 — if an optional table's upsert
+         had failed and was skip-and-warned, that draft would have deleted
+         the personal copy anyway, losing it). Delete order
+         (`TRANSFER_DELETE_ORDER`) mirrors the diff-sync effect's own
+         FK-safe convention: payments before debts.
+      5. If either Personal or the target space is the *currently active*
+         view (`userId === sourceId || userId === targetSpaceId`), force an
+         immediate refetch — same `synced.current = null; freshFor.current
+         = null; loadingFor.current = null; dirty.current = false;
+         setState(null)` reset shape `setSpace()`/`setViewAs()` already use
+         when switching contexts — so the UI reflects the move without a
+         manual refresh. Also clears the personal cache
+         (`localStorage.removeItem('fin-cache-' + sourceId)`) so a
+         subsequent switch to Personal doesn't briefly flash stale cached
+         data before the fresh (now-empty) fetch lands.
+    - Explicitly does **not** move `settings` (sim/mSim) — same precedent as
+      `DangerZoneSection`'s "Erase all data" (2026-08-08 (4)): that's
+      configuration, not user data.
+  - **New route `app/api/plaid/transfer/route.js`** (`POST { to_space_id
+    }`) — reassigns every `plaid_items` row owned by the signed-in Clerk
+    user to the target space's id. Verifies the caller is an actual member
+    of that workspace (`workspace_members`) before doing anything; only
+    rows whose `user_id` is literally the caller's own Clerk id are ever
+    touched (never another member's connections, even inside the same
+    target space). Not added to `middleware.js`'s public matcher — it's a
+    normal Clerk-authed route like every other `app/api/plaid/*` route
+    except `webhook`.
+  - **Fixed a real bug this surfaced, not hypothetical**: every
+    `app/api/plaid/*` route that looks up "this user's" `plaid_items`
+    filtered with a flat `.eq('user_id', clerkUserId)`. After a transfer,
+    that row's `user_id` is the space id, not the mover's own Clerk id — so
+    without a fix, the moment someone moved their bank connection into a
+    space, `/api/plaid/items` (Settings' Connected Banks list),
+    `/api/plaid/sync` ("Sync now"), and the update-mode branch of
+    `/api/plaid/link-token` (re-auth) would all stop finding it, making it
+    permanently un-manageable from the very account that moved it (the
+    webhook route was already fine — it looks items up purely by
+    `item_id`, never by `user_id`). Fixed with a new shared helper,
+    **`ownerIdsFor(clerkUserId)`** (`lib/plaid-server.js`) — resolves that
+    user's own id plus every workspace they belong to
+    (`workspace_members`), falling back to just their own id if the lookup
+    fails — and switched every one of those lookups from `.eq('user_id',
+    userId)` to `.in('user_id', ownerIds)`. `DELETE`/`PATCH` on
+    `/api/plaid/items` now resolve the target row first via `ownerIds` +
+    `item_id`, then act on the row's own primary key (`id`) rather than
+    repeating a `user_id` equality check that would no longer match a
+    transferred row.
+  - **UI — `views/Settings.jsx`**'s `SharedSpacesSection`: each space row
+    gained a "Move my data here" pill (`ArrowRightLeft` icon) next to "Copy
+    invite link," `stopPropagation`'d the same way. Opens the shared
+    `ConfirmDialog` with plain-language copy ("Your accounts, debts,
+    budgets, recurring bills, transactions, goals, and bank connections will
+    move into "`<space>`". Everyone in the space will be able to see them,
+    and they'll no longer show up in your Personal space... don't close
+    this page.") and a busy spinner (`ConfirmDialog`'s existing `busy` prop)
+    while the move runs, then a `centerToast` — success, an optional-table
+    warning, or a bank-specific warning, in that priority order (see
+    `confirmMove`).
+  - **Files changed**: `store.jsx` (`transferPersonalDataToSpace` + its
+    `CORE_TRANSFER_TABLES`/`OPTIONAL_TRANSFER_TABLES`/
+    `TRANSFER_DELETE_ORDER` constants, exposed via the `api` object),
+    `lib/plaid-server.js` (`ownerIdsFor`), `app/api/plaid/transfer/route.js`
+    (new), `app/api/plaid/items/route.js` (GET/DELETE/PATCH → `ownerIdsFor`),
+    `app/api/plaid/sync/route.js` (→ `ownerIdsFor`),
+    `app/api/plaid/link-token/route.js` (update-mode ownership check →
+    `ownerIdsFor`), `views/Settings.jsx` (`SharedSpacesSection`).
+  - **Left off / not verified**: no dev server, no npm installs, nothing
+    clicked in a real browser, and none of this ran against a real Supabase
+    project or a real second account (standing instruction) — all eight
+    changed/new files were checked with `npx esbuild <file> --bundle=false
+    --outfile=/tmp/out.js` and parse cleanly, but the actual multi-table
+    read→write→delete sequence, the `ownerIdsFor` broadened lookups, and the
+    `/api/plaid/transfer` route are all unexercised against live data. Also
+    worth noting: `account_colors`' migration SQL (2026-08-08 (16)) declares
+    `id text primary key` (not a composite `user_id,id` key), while every
+    upsert against it in this codebase — including this session's transfer
+    — uses `onConflict: 'user_id,id'`; if that mismatch makes a real upsert
+    fail once the table is actually migrated, this session's optional-table
+    skip-and-warn handling (see above) means a transfer would still succeed
+    for everything else and just leave `account_colors` in personal with a
+    warning — not silently lose data — but the underlying constraint
+    mismatch itself is worth a dedicated look in a future session, not
+    fixed here (out of scope for this feature). Next session with real
+    two-account access should: (a) build up a full personal data set (a
+    debt with payments, a budget, a transaction, a goal, a tagged/colored
+    account, a connected sandbox bank), create a new shared space, click
+    "Move my data here," and confirm every table actually landed under the
+    space's `user_id` in Supabase and disappeared from personal; (b)
+    confirm the second partner in that space can already see everything
+    without needing to do anything on their end (shared spaces don't need
+    a manual sync — see 2026-08-08 (10)'s confirmation of this); (c) after
+    the move, click "Sync now" and "Fix connection" (if applicable) from
+    Settings and confirm the transferred bank connection is still found and
+    manageable (this is exactly the bug `ownerIdsFor` was written to close
+    — confirm it actually is); (d) try moving into a space while that exact
+    space is the currently-active view (header switcher), and try it while
+    Personal is active, and confirm both refresh the UI immediately with no
+    manual reload; (e) deliberately break one table's write (e.g. rename a
+    column) and confirm the all-or-nothing guarantee actually holds —
+    nothing gets deleted from personal.
+
+### 2026-08-08 (15)
+- **Quick win: store + surface Plaid's `balances.limit`/`balances.available`**
+  (Sonnet worker). `accountsGet`/`transactionsSync` already return these
+  per-account; the app only ever stored `balances.current` into
+  `plaid_items.accounts`, so a real credit limit or depository available
+  balance from Plaid was silently dropped even though the UI already knew
+  how to render both — `views/Accounts.jsx` (CardRow line ~251, DepositoryRow
+  line ~300) and `views/AccountDetail.jsx` (line ~73, ~165/~170) already read
+  `account.limit` (amber "Credit limit needed" pill when falsy) and
+  `account.available ?? account.balance` — they just never received a
+  non-null value from a Plaid-backed row.
+  - **`lib/plaid-sync.js`** (balance-refresh section of `syncPlaidItem`) and
+    **`app/api/plaid/exchange/route.js`** (initial accounts snapshot) both
+    now add `limit: a.balances?.limit ?? null` and
+    `available: a.balances?.available ?? null` to each account object stored
+    in `plaid_items.accounts`, alongside the existing `balance` field — same
+    flat shape, no nesting.
+  - **`lib/accounts.js`'s `buildAccountInventory`**: `unmatchedPlaid` rows
+    now carry `limit: a.limit ?? null, available: a.available ?? null`
+    straight from the stored Plaid account (was hardcoded `limit: null`,
+    `available` never set at all). `fromDebts` (manual debts fuzzy-matched to
+    a Plaid account) now does `limit: m?.limit != null ? m.limit : (d.limit
+    || null)` — prefers Plaid's real limit when the matched account reports
+    one, otherwise falls back to the manually-entered `d.limit`, so an
+    already-working manual limit is never clobbered by a `null` from an
+    unmatched or limit-less Plaid account — plus `available: m?.available ??
+    null`. `depositoryFromManual` (true manual accounts, no Plaid link)
+    intentionally untouched — no `available` field, same as before; the UI's
+    `?? account.balance` fallback already handles that.
+  - **No migration needed** — confirmed by reading both write sites:
+    `plaid_items.accounts` is a JSONB column, written wholesale as a plain JS
+    array/object on both insert (exchange route) and update (balance
+    refresh in `plaid-sync.js`); adding keys to the per-account objects is
+    just a shape change in application code, not a schema change.
+  - **Where it surfaces**: credit-card rows (Accounts.jsx `CardRow`,
+    AccountDetail.jsx) get a real LIMIT and drop the "Credit limit needed"
+    pill whenever Plaid reports one; depository rows (Accounts.jsx
+    `DepositoryRow`, AccountDetail.jsx) show real AVAILABLE instead of
+    silently falling back to CURRENT. Utilization (`balance/limit`) starts
+    computing correctly wherever it already read `account.limit`, no
+    separate change needed.
+  - **Files changed**: `lib/plaid-sync.js`, `app/api/plaid/exchange/route.js`,
+    `lib/accounts.js`.
+  - **Left off / not verified**: no dev server, no npm installs (standing
+    instruction) — all three changed files parse clean via `npx esbuild
+    <file> --bundle=false --outfile=/dev/null`. Not exercised against a real
+    Plaid sandbox/production account — next session with real access should
+    confirm (a) a real credit card's LIMIT/utilization renders correctly and
+    the amber pill disappears; (b) a real checking/savings account's
+    AVAILABLE differs from CURRENT when the bank actually reports a
+    difference (pending holds, etc.) and displays the right one; (c) a
+    manual debt fuzzy-matched to a Plaid card with no reported limit still
+    shows its manually-entered limit (regression check on the `m?.limit !=
+    null ? ... : ...` fallback).
+
+### 2026-08-08 (14)
+- **Three UI/logic fixes** (Sonnet worker), per Israel's verbatim requests:
+  "the side bar doesn't go when scrolling," "if there's no debt just say no
+  debts, click here to add debt," and "for the recurring go back 4 months,
+  and make sure you check that it's the same amount around the same time."
+  Read this file (esp. (13) recurring detection, (12) feedback widget) and
+  every touched file before changing anything.
+  - **Sidebar scrolls away instead of sticking (desktop).** Root cause was
+    NOT `app/(app)/layout.jsx` — its `<aside>` already had `sticky top-0
+    h-screen`. The real culprit: `app/globals.css`'s `html, body {
+    overflow-x-hidden }` (added 2026-08-04 as a horizontal-overflow
+    backstop, never verified live). Giving `body` a non-`visible`
+    `overflow-x` makes its computed `overflow-y` become `auto` (the
+    propagation quirk that would otherwise hand body's overflow to the
+    viewport only fires when the *root*'s overflow is `visible` — here
+    `html` also had `overflow-x: hidden`, so it doesn't), turning `body`
+    into its own scroll container. `body` has no constrained height, so it
+    never actually scrolls internally — meaning any `position: sticky`
+    descendant (the sidebar, but structurally every other `sticky` element
+    in the app too) computes its "stuck" offset against a scrollport that
+    never moves, instead of the real window scroll, so it just flows away
+    with the page exactly as reported. **Fix:** restricted the rule to
+    `html` only (`html { overflow-x-hidden }`, dropped `body`) — `html`
+    alone still clips horizontal overflow at the viewport root (the search
+    for a clipping ancestor walks up past `body`, which is back to default
+    `visible` and not a scroll container, to `html`), and removes the
+    extra nested scroll container that was breaking sticky. No changes
+    needed to `layout.jsx` itself — its sidebar/header sticky classes were
+    already correct. Mobile `BottomNav` is `fixed` (not `sticky`, not a
+    descendant of the aside), so it's unaffected either way.
+  - **Debts.jsx empty state.** `views/Debts.jsx`: added a guard right
+    before the main `return` — when `state.debts.length === 0`, renders one
+    `Card` (icon, "No debts yet", "Add your first debt to start tracking
+    your payoff plan.", a "+ Add debt" button wired to the existing
+    `setEditIdx(-1)` → `DebtDialog` add flow) instead of the whole page.
+    Previously an empty list still rendered the KPI row, Payoff Simulator
+    ("Nothing pays off within 50 years at this payment"), Snowball
+    Simulator, Consolidation Calculator, and the search/filter toolbar, all
+    computing nonsense off zero debts (0 mo, $0.00, "Debt-free by" the
+    current month). The guard sits after every hook call (no conditional
+    hooks) so it doesn't change hook order; non-empty behavior is
+    byte-identical since none of the existing JSX below it was touched.
+  - **Recurring detection tightened**, per "go back 4 months... same
+    amount around the same time... automatically without asking AI"
+    (`lib/recurring-detect.js`):
+    1. **4-month window.** New `WINDOW_DAYS = 120`. Weekly/biweekly/monthly
+       are now classified only against each merchant group's charges from
+       the last 120 days (`tryClassifyRecent`) — a bill that stopped
+       months ago ages out of suggestions on its own instead of surfacing
+       forever off stale charges.
+    2. **Yearly dropped from the main band, kept as a bonus.** `yearly`
+       removed from `CADENCE_RANGES` (impossible to see inside a 120-day
+       window anyway). New `tryClassifyYearly` checks the group's *full*
+       history separately — requires the median interval to land in
+       `YEARLY_RANGE` (350–380d), i.e. genuinely ~2+ charges about a year
+       apart — and only runs when the recent-window path finds nothing.
+    3. **"Same amount" tightened 20% → 10%** (`amountsAreConsistent`),
+       $0.50 floor unchanged.
+    4. **"Same time" for monthly:** new `domConsistent` requires every
+       charge's day-of-month within ±4 of the group's median day-of-month —
+       catches "same merchant, but a different week each time" that the
+       interval-median check alone would still call monthly. Weekly/
+       biweekly untouched — their tight interval bands already imply
+       consistent timing.
+    `detectRecurring(transactions, existingRecurring)`'s signature and
+    return shape (`{key, displayName, cadence, avgAmount, lastDate,
+    nextEstDate, count, accountId, cat, confidence}`) are unchanged;
+    `count` now reflects the transactions that actually satisfied the
+    matched cadence (the recent-window subset, or the full-history subset
+    for a yearly match) rather than every historical charge in the group.
+    **Confirmed still automatic, no AI, no user prompt**: `detectRecurring`
+    is a pure function with no network/store access; `views/Recurring.jsx`
+    (line ~91-94) calls it inside a `useMemo` keyed on
+    `[state.transactions, state.recurring, dismissed]`, so it re-runs the
+    instant a transaction changes, purely client-side — unchanged by this
+    session, verified by re-reading the call site.
+  - **Files changed:** `app/globals.css` (one rule, `html, body` →
+    `html`), `views/Debts.jsx` (one early-return block + `EmptyDebtsState`-
+    equivalent inline JSX, no new imports needed — `Card`/`Button`/`Plus`/
+    `CreditCard` were already imported), `lib/recurring-detect.js`
+    (`WINDOW_DAYS`/`YEARLY_RANGE` constants, `amountsAreConsistent`/
+    `domConsistent`/`tryClassifyRecent`/`tryClassifyYearly` helpers,
+    `detectRecurring`'s grouping loop rewritten to use them).
+  - **Left off / not verified:** no dev server, no npm installs, nothing
+    clicked in a real browser (standing instruction) — all three changed
+    files were checked with `npx esbuild <file> --bundle=false
+    --outfile=/dev/null` and parse clean (`app/(app)/layout.jsx` and
+    `views/Recurring.jsx`, both unchanged this session, were also re-
+    parsed as a sanity check). The sticky-CSS root-cause analysis is
+    reasoned from the CSS Overflow spec's scroll-container/propagation
+    rules, not observed live — next session should confirm on a real
+    desktop viewport that scrolling a long page (e.g. `/debts` with
+    several debts, or any page taller than the viewport) now keeps the
+    sidebar pinned, and spot-check that no *other* sticky element (mobile/
+    desktop header, the "Viewing as" banner) regressed now that `body` no
+    longer clips independently — it shouldn't, since `html`'s clip is at
+    the outermost level, but worth a look. Also worth eyeballing the empty
+    Debts state on an actual ~390px viewport, and re-testing the recurring
+    suggestions against real transaction history now that detection is
+    materially stricter (4-month window + 10% + day-of-month) — some
+    previously-suggested bills may now correctly disappear (e.g. anything
+    that only had older charges, or drifted amount/day too much), which is
+    the intended effect, not a regression.
 
 ### 2026-08-08 (13)
 - **Recurring-charge/subscription detector** (Sonnet worker), per Israel's

@@ -5,13 +5,13 @@ import { useRouter } from 'next/navigation'
 import { Loader2, Trash2, Link2Off } from 'lucide-react'
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Segmented } from '@/components/ui/segmented'
-import { Money, CardChip, CatIcon, CatChip, SourceBadge, ConfirmDialog, TransactionsSkeleton, ChartSkeleton, AccountTagsEditor } from '@/components/shared'
+import { Money, CardChip, CatIcon, CatChip, SourceBadge, ConfirmDialog, TransactionsSkeleton, ChartSkeleton, AccountTagsEditor, CardColorPicker } from '@/components/shared'
 import { useApp } from '@/store'
 import { useCenterToast } from '@/components/toast'
 import { fmt, fmt0, prettyDate } from '@/lib/utils'
 import {
   RANGE_KEYS, typeLabel, pctChange30, relTime, accountHistorySeries,
-  usePlaidItems, findAccountByUrlId, deleteManualAccount, deleteDebt, backToAccounts,
+  usePlaidItems, findAccountByUrlId, deleteManualAccount, deleteDebt, backToAccounts, colorForAccount,
 } from '@/lib/accounts'
 
 const TIP = { contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 } }
@@ -105,11 +105,14 @@ export default function AccountDetail({ id }) {
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || "Couldn't disconnect that bank")
-        // Best-effort tag cleanup for this one account_id — a full item can have
-        // several accounts, but this is the only one we have in hand here; any
-        // sibling account's tags are harmlessly orphaned (never shown again since
-        // nothing will match their accountKey once this item is gone).
-        if (account.account_id) update((s) => { s.accountTags = (s.accountTags || []).filter((t) => t.accountKey !== account.account_id) })
+        // Best-effort tag/color cleanup for this one account_id — a full item can
+        // have several accounts, but this is the only one we have in hand here; any
+        // sibling account's tags/colors are harmlessly orphaned (never shown again
+        // since nothing will match their accountKey once this item is gone).
+        if (account.account_id) update((s) => {
+          s.accountTags = (s.accountTags || []).filter((t) => t.accountKey !== account.account_id)
+          s.accountColors = (s.accountColors || []).filter((c) => c.accountKey !== account.account_id)
+        })
         centerToast(`${account.institution || 'Bank'} disconnected`)
         setConfirmDelete(false)
         setDeleting(false)
@@ -154,7 +157,7 @@ export default function AccountDetail({ id }) {
     <div className="flex flex-col items-center gap-4">
       <span className="text-[0.625rem] font-bold uppercase tracking-wider" style={{ color: LABEL_COLOR }}>{typeLabel(account)}</span>
 
-      <CardChip institution={account.institution} name={account.name} mask={account.mask} size="lg" />
+      <CardChip institution={account.institution} name={account.name} mask={account.mask} size="lg" colorOverride={colorForAccount(state, id)} />
 
       <h1 className="max-w-full truncate text-center text-lg font-extrabold tracking-tight">{account.name}</h1>
 
@@ -209,6 +212,15 @@ export default function AccountDetail({ id }) {
           for every account type since `id` here is already the canonical
           accountUrlId() this row was looked up by. */}
       <AccountTagsEditor accountKey={id} className="w-full max-w-sm" />
+
+      {/* Card color: tap-to-select preset swatches (+ "Auto" to reset) —
+          see components/shared.jsx's CardColorPicker/lib/accounts.js's
+          colorForAccount/setAccountColor. Same accountKey as the tags
+          editor above, so it works unchanged for every account type. */}
+      <div className="flex w-full max-w-sm flex-col items-center gap-1.5">
+        <span className="text-[0.625rem] font-bold uppercase tracking-wide" style={{ color: LABEL_COLOR }}>Card color</span>
+        <CardColorPicker accountKey={id} />
+      </div>
 
       <div className="w-full max-w-sm space-y-2">
         {isPlaid ? (

@@ -84,12 +84,19 @@ export function displayName(desc) {
 
 // ---- cadence classification ----
 const DAY_MS = 86400000
+// "Go back 4 months" per the request: weekly/biweekly/monthly are classified
+// only against transactions from this recent window, so a bill that lapsed
+// months ago ages out of suggestions on its own instead of being detected
+// forever off old charges. Yearly obviously can't be seen inside 4 months, so
+// it's handled separately (tryYearly, below) against the full history as a
+// bonus path — it doesn't share this window.
+const WINDOW_DAYS = 120
 const CADENCE_RANGES = [
   ['weekly', 6, 8],
   ['biweekly', 12, 16],
   ['monthly', 26, 35],
-  ['yearly', 350, 380],
 ]
+const YEARLY_RANGE = [350, 380]
 const CADENCE_DAYS = { weekly: 7, biweekly: 14 }
 
 export const CADENCE_LABEL = { weekly: 'weekly', biweekly: 'every 2 weeks', monthly: 'monthly', yearly: 'yearly' }
@@ -106,6 +113,63 @@ function classifyCadence(medianDays) {
     if (medianDays >= lo && medianDays <= hi) return name
   }
   return null
+}
+
+// "Same amount" — within ~10% of the median (tightened from ~20%; a $0.50
+// floor still covers cent-level statement noise on very small charges).
+function amountsAreConsistent(amounts, medAmount) {
+  return amounts.every((a) => Math.abs(a - medAmount) <= Math.max(medAmount * 0.1, 0.5))
+}
+
+// "Around the same time" for a monthly cadence — the interval-median check
+// alone tolerates e.g. day 1 and day 30 landing 29 days apart (still "monthly"
+// by interval), which isn't what a user means by "same time each month."
+// Requires every charge's day-of-month within ±4 of the group's median day —
+// wide enough to absorb weekend/holiday posting drift and short-month shift
+// (Feb 28 vs Mar 2-4), tight enough to reject "same merchant, different week."
+// Weekly/biweekly don't need this — their tight interval bands already imply
+// consistent timing.
+function domConsistent(sortedTxs) {
+  const doms = sortedTxs.map((t) => new Date(t.date + 'T00:00:00').getDate())
+  const med = median(doms)
+  return doms.every((d) => Math.abs(d - med) <= 4)
+}
+
+// Classifies one merchant group against the recent (4-month) window —
+// weekly/biweekly/monthly only. Returns { sorted, cadence } or null.
+function tryClassifyRecent(txs) {
+  if (txs.length < 2) return null
+  const sorted = txs.slice().sort((a, b) => a.date.localeCompare(b.date))
+  const dates = sorted.map((t) => new Date(t.date + 'T00:00:00').getTime())
+  const intervals = []
+  for (let i = 1; i < dates.length; i++) intervals.push(Math.round((dates[i] - dates[i - 1]) / DAY_MS))
+  const cadence = classifyCadence(median(intervals))
+  if (!cadence) return null
+
+  const amounts = sorted.map((t) => t.amount)
+  if (!amountsAreConsistent(amounts, median(amounts))) return null
+  if (cadence === 'monthly' && !domConsistent(sorted)) return null
+
+  return { sorted, cadence }
+}
+
+// Yearly bonus path, against the FULL history (not the 4-month window) — per
+// the request, yearly cadence "obviously can't be detected in 4 months," so
+// this only requires at least two charges ~12 months apart somewhere in
+// everything we have, same amount-consistency rule as the recent path.
+function tryClassifyYearly(txs) {
+  if (txs.length < 2) return null
+  const sorted = txs.slice().sort((a, b) => a.date.localeCompare(b.date))
+  const dates = sorted.map((t) => new Date(t.date + 'T00:00:00').getTime())
+  const intervals = []
+  for (let i = 1; i < dates.length; i++) intervals.push(Math.round((dates[i] - dates[i - 1]) / DAY_MS))
+  const medianInterval = median(intervals)
+  if (medianInterval < YEARLY_RANGE[0] || medianInterval > YEARLY_RANGE[1]) return null
+
+  const amounts = sorted.map((t) => t.amount)
+  if (!amountsAreConsistent(amounts, median(amounts))) return null
+
+  return { sorted, cadence: 'yearly' }
 }
 
 function estimateNextDate(lastDateIso, cadence) {
@@ -144,16 +208,25 @@ function alreadyTracked(dispNameLower, existingRecurring) {
 // {key, displayName, cadence, avgAmount, lastDate, nextEstDate, count,
 //  accountId, cat, confidence}
 // Only considers expense transactions (excludes income/transfer/debt, which
-// aren't spending) grouped by merchant key; a group needs >=2 charges with a
-// cadence-classifiable median interval and amounts consistent within ~20% of
-// the median (or exact — most subscriptions charge the same cent amount
-// every cycle) before it's suggested. Groups already covered by an existing
+// aren't spending) grouped by merchant key. Weekly/biweekly/monthly are
+// classified against only the last ~4 months (WINDOW_DAYS) of that group's
+// charges — "go back 4 months" per the request — so a bill that stopped
+// months ago stops being suggested on its own; yearly is a bonus check
+// against the group's full history (tryClassifyYearly) since 4 months can't
+// possibly show a yearly cadence. Either way a group needs >=2 qualifying
+// charges, amounts consistent within ~10% of the median (or the $0.50 floor),
+// and — for monthly specifically — day-of-month consistency (±4 days of the
+// median day), i.e. "same amount, around the same time," not just a
+// plausible average interval. Groups already covered by an existing
 // recurring bill (fuzzy name match) are dropped — the point is to surface
 // bills the user hasn't already added, not to duplicate what's tracked.
+// Runs entirely client-side against state.transactions/state.recurring
+// (views/Recurring.jsx's useMemo) — no AI, no network call, no user prompt;
+// it just re-runs automatically whenever those change.
 export function detectRecurring(transactions, existingRecurring = []) {
   const expenses = (transactions || []).filter((t) => t.type === 'expense' && t.cat !== 'income' && t.cat !== 'transfer' && t.cat !== 'debt' && t.desc)
 
-  const groups = new Map() // key -> tx[]
+  const groups = new Map() // key -> tx[] (full history)
   for (const t of expenses) {
     const key = merchantKey(t.desc)
     if (!key) continue
@@ -161,26 +234,19 @@ export function detectRecurring(transactions, existingRecurring = []) {
     groups.get(key).push(t)
   }
 
+  const cutoff = Date.now() - WINDOW_DAYS * DAY_MS
   const out = []
-  for (const [key, txs] of groups) {
-    if (txs.length < 2) continue
-    const sorted = txs.slice().sort((a, b) => a.date.localeCompare(b.date))
-    const dates = sorted.map((t) => new Date(t.date + 'T00:00:00').getTime())
-    const intervals = []
-    for (let i = 1; i < dates.length; i++) intervals.push(Math.round((dates[i] - dates[i - 1]) / DAY_MS))
-    const medianInterval = median(intervals)
-    const cadence = classifyCadence(medianInterval)
-    if (!cadence) continue
-
-    const amounts = sorted.map((t) => t.amount)
-    const medAmount = median(amounts)
-    const amountsConsistent = amounts.every((a) => Math.abs(a - medAmount) <= Math.max(medAmount * 0.2, 0.5))
-    if (!amountsConsistent) continue
+  for (const [key, allTxs] of groups) {
+    const recentTxs = allTxs.filter((t) => new Date(t.date + 'T00:00:00').getTime() >= cutoff)
+    const match = tryClassifyRecent(recentTxs) || tryClassifyYearly(allTxs)
+    if (!match) continue
+    const { sorted, cadence } = match
 
     const disp = displayName(sorted[sorted.length - 1].desc)
     if (alreadyTracked(disp.toLowerCase(), existingRecurring)) continue
 
     const last = sorted[sorted.length - 1]
+    const amounts = sorted.map((t) => t.amount)
     const avgAmount = amounts.reduce((s, a) => s + a, 0) / amounts.length
     const known = !!knownSubMatch(String(last.desc || '').toLowerCase())
 
@@ -191,10 +257,10 @@ export function detectRecurring(transactions, existingRecurring = []) {
       avgAmount,
       lastDate: last.date,
       nextEstDate: estimateNextDate(last.date, cadence),
-      count: txs.length,
+      count: sorted.length,
       accountId: last.accountId || null,
       cat: last.cat || 'other',
-      confidence: confidenceFor(txs.length, amountsConsistent, known),
+      confidence: confidenceFor(sorted.length, true, known),
     })
   }
 

@@ -24,6 +24,12 @@ export async function POST(req) {
       type: a.type,
       subtype: a.subtype,
       balance: a.balances?.current ?? null,
+      // Credit-card limit / depository available balance — same fields
+      // lib/plaid-sync.js's balance refresh now stores, so a freshly
+      // connected account has them from the very first snapshot instead of
+      // waiting on the next sync. See lib/accounts.js buildAccountInventory.
+      limit: a.balances?.limit ?? null,
+      available: a.balances?.available ?? null,
     }))
 
     // New connections start life 'syncing' — Plaid's initial
