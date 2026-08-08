@@ -1,6 +1,6 @@
 'use client'
 import Link from 'next/link'
-import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List, Link2, Pencil } from 'lucide-react'
+import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List, Link2, Pencil, Loader2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -251,9 +251,13 @@ export function Bar({ pct, color, thin = false }) {
   )
 }
 
-// Generic destructive confirm dialog — Accounts.jsx (delete manual account)
-// and AccountDetail.jsx (delete account/debt, disconnect bank) share this
-// exact Cancel/Delete markup instead of each defining their own.
+// Generic destructive confirm dialog — Accounts.jsx (delete manual account),
+// AccountDetail.jsx (delete account/debt, disconnect bank), and Settings.jsx
+// (erase all data) share this exact Cancel/Delete markup instead of each
+// defining their own. `busy` swaps the confirm button's icon for a spinner
+// and disables both buttons (and the backdrop/Esc close) while the caller's
+// async work — or, for synchronous store mutations, a deliberate brief delay
+// so the spinner is actually visible — is in flight.
 export function ConfirmDialog({ title, desc, confirmLabel = 'Delete', busy = false, onConfirm, onClose }) {
   return (
     <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
@@ -262,7 +266,9 @@ export function ConfirmDialog({ title, desc, confirmLabel = 'Delete', busy = fal
         {desc ? <p className="text-[0.8125rem] text-muted-foreground">{desc}</p> : null}
         <DialogFooter>
           <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
-          <Button variant="destructive" disabled={busy} onClick={onConfirm}>{confirmLabel}</Button>
+          <Button variant="destructive" disabled={busy} onClick={onConfirm}>
+            {busy ? <Loader2 className="animate-spin" /> : null}{confirmLabel}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

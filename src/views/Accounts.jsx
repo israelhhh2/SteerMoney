@@ -12,7 +12,7 @@ import { Segmented } from '@/components/ui/segmented'
 import { Money, CardChip, SourceBadge, ConfirmDialog } from '@/components/shared'
 import { ConnectBankButton } from '@/components/connect-bank'
 import { useApp } from '@/store'
-import { useToast } from '@/components/toast'
+import { useToast, useCenterToast } from '@/components/toast'
 import { cn, fmt0, today, uid } from '@/lib/utils'
 import {
   RANGE_KEYS, daysFor, buildSeries, pctChange, pctChange30,
@@ -267,9 +267,11 @@ function DepositoryRow({ account }) {
 function AccountDialog({ id, onClose }) {
   const { state, update } = useApp()
   const toast = useToast()
+  const centerToast = useCenterToast()
   const a = id ? state.accounts.find((x) => x.id === id) : { name: '', type: 'depository', institution: '', mask: '', balance: '' }
   const [f, setF] = useState({ ...a })
   const [confirmDel, setConfirmDel] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
 
   const save = () => {
@@ -301,10 +303,22 @@ function AccountDialog({ id, onClose }) {
     onClose()
   }
 
-  const del = () => {
-    deleteManualAccount(update, id)
-    toast('Account deleted')
-    onClose()
+  const del = async () => {
+    // Deletion itself is a synchronous store mutation, but a brief busy state
+    // (spinner in the confirm dialog, see ConfirmDialog's `busy` prop) gives
+    // the same "it's working" feedback as the async Plaid-disconnect path.
+    setDeleting(true)
+    await new Promise((r) => setTimeout(r, 350))
+    try {
+      deleteManualAccount(update, id)
+      centerToast('Account deleted')
+      setDeleting(false)
+      setConfirmDel(false)
+      onClose()
+    } catch (e) {
+      centerToast(e?.message || 'Something went wrong', 'error')
+      setDeleting(false)
+    }
   }
 
   return (
@@ -338,7 +352,8 @@ function AccountDialog({ id, onClose }) {
         <ConfirmDialog
           title={`Delete "${a.name}"?`}
           desc="This removes the account and its balance history. This can't be undone."
-          onConfirm={() => { setConfirmDel(false); del() }}
+          busy={deleting}
+          onConfirm={del}
           onClose={() => setConfirmDel(false)}
         />
       )}

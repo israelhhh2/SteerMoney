@@ -7,7 +7,7 @@ import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Segmented } from '@/components/ui/segmented'
 import { Money, CardChip, CatIcon, CatChip, SourceBadge, ConfirmDialog } from '@/components/shared'
 import { useApp } from '@/store'
-import { useToast } from '@/components/toast'
+import { useCenterToast } from '@/components/toast'
 import { fmt, fmt0, prettyDate } from '@/lib/utils'
 import {
   RANGE_KEYS, typeLabel, pctChange30, relTime, accountHistorySeries,
@@ -43,7 +43,7 @@ export default function AccountDetail({ id }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const router = useRouter()
-  const toast = useToast()
+  const centerToast = useCenterToast()
 
   const account = useMemo(
     () => (state ? findAccountByUrlId(id, state, plaidItems) : null),
@@ -89,7 +89,7 @@ export default function AccountDetail({ id }) {
 
   const handleDelete = async () => {
     if (isPlaid) {
-      if (!account.item_id) { toast("Couldn't find that bank connection", 'error'); setConfirmDelete(false); return }
+      if (!account.item_id) { centerToast("Couldn't find that bank connection", 'error'); setConfirmDelete(false); return }
       setDeleting(true)
       try {
         const res = await fetch('/api/plaid/items', {
@@ -99,21 +99,33 @@ export default function AccountDetail({ id }) {
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || "Couldn't disconnect that bank")
-        toast('Bank disconnected')
+        centerToast(`${account.institution || 'Bank'} disconnected`)
         setConfirmDelete(false)
+        setDeleting(false)
         router.push('/accounts')
         return
       } catch (e) {
-        toast(e.message, 'error')
+        centerToast(e.message, 'error')
         setDeleting(false)
         return
       }
     }
-    if (isDebt) deleteDebt(update, account.debtId)
-    else deleteManualAccount(update, account.accountRowId)
-    toast(`${isDebt ? 'Debt' : account.name} deleted`)
-    setConfirmDelete(false)
-    goBack()
+    // Local store deletes are synchronous, but the confirm dialog's spinner
+    // should still show briefly so the delete reads as "working" rather than
+    // instant/silent — matches the feedback the Plaid disconnect path gets.
+    setDeleting(true)
+    await new Promise((r) => setTimeout(r, 350))
+    try {
+      if (isDebt) deleteDebt(update, account.debtId)
+      else deleteManualAccount(update, account.accountRowId)
+      centerToast(`${isDebt ? 'Debt' : account.name} deleted`)
+      setConfirmDelete(false)
+      setDeleting(false)
+      goBack()
+    } catch (e) {
+      centerToast(e?.message || 'Something went wrong', 'error')
+      setDeleting(false)
+    }
   }
 
   const accountTx = account.account_id

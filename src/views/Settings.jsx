@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useUser, useClerk } from '@clerk/nextjs'
-import { Eye, Pencil, Plus, Link2, Users, ChevronRight, Loader2, UserMinus, Landmark, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Eye, Pencil, Plus, Link2, Users, ChevronRight, Loader2, UserMinus, Landmark, RefreshCw, AlertTriangle, Trash2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
@@ -9,10 +9,10 @@ import { Select } from '@/components/ui/select'
 import { Segmented } from '@/components/ui/segmented'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { SectionLabel } from '@/components/shared'
+import { SectionLabel, ConfirmDialog } from '@/components/shared'
 import { OCCUPATIONS } from '@/components/onboarding'
 import { useApp } from '@/store'
-import { useToast } from '@/components/toast'
+import { useToast, useCenterToast } from '@/components/toast'
 import { prettyDate } from '@/lib/utils'
 import { SpaceNameDialog, InviteLinkDialog, RemoveMemberDialog } from '@/components/space-name-dialog'
 import { ConnectBankButton, PlaidLinkRunner } from '@/components/connect-bank'
@@ -33,6 +33,7 @@ export default function Settings() {
           <AccountSection />
           <ConnectedBanksSection />
           <SharedSpacesSection />
+          <DangerZoneSection />
         </>
       )}
       <p className="pt-2 text-center text-[0.6875rem] text-muted-foreground">SteerMoney</p>
@@ -499,6 +500,97 @@ function SharedSpacesSection() {
           spaceName={removing.space.name}
           onConfirm={confirmRemove}
           onClose={() => setRemoving(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// Roadmap-adjacent, user-requested: a hard reset. Clears every user-data
+// slice through the single store `update(fn)` mutator (debts, budgets,
+// recurring, transactions, goals, accounts — payments aren't a separate
+// slice, they live inside each debt's `payments` array and get diffed away
+// automatically once `s.debts = []`) and disconnects any connected banks.
+// Deliberately does NOT touch `settings` (sim/mSim) or workspaces/spaces —
+// those are configuration, not the "data" this button promises to erase.
+function DangerZoneSection() {
+  const { update } = useApp()
+  const centerToast = useCenterToast()
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const eraseAll = async () => {
+    setBusy(true)
+    let bankError = null
+    try {
+      const res = await fetch('/api/plaid/items')
+      const data = await res.json()
+      const items = res.ok ? (data.items || []) : []
+      for (const it of items) {
+        try {
+          const r = await fetch('/api/plaid/items', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ item_id: it.item_id }),
+          })
+          if (!r.ok) { const d = await r.json().catch(() => ({})); bankError = bankError || d.error || 'Failed to disconnect a bank' }
+        } catch (e) {
+          bankError = bankError || e.message
+        }
+      }
+    } catch (e) {
+      // couldn't even list connections — proceed with the local data wipe anyway
+      bankError = bankError || e.message
+    }
+
+    try {
+      // The diff-sync in store.jsx (see the debounced effect there) diffs each
+      // slice's rows by id between the last-synced state and this one — an
+      // emptied array has no ids left, so every previously-synced row for
+      // debts/payments/budgets/recurring/transactions/goals/accounts gets a
+      // real `DELETE ... WHERE user_id = ? AND id IN (...)` against Supabase,
+      // not just a local/cache clear.
+      update((s) => {
+        s.debts = []
+        s.budgets = []
+        s.recurring = []
+        s.transactions = []
+        s.goals = []
+        s.accounts = []
+      })
+      centerToast(bankError ? 'Data erased — one bank connection needs manual removal' : 'All data erased')
+    } catch (e) {
+      centerToast(e?.message || "Couldn't erase your data", 'error')
+    }
+    setBusy(false)
+    setConfirming(false)
+  }
+
+  return (
+    <div className="space-y-2.5">
+      <SectionLabel title="Danger zone" />
+      <Card className="space-y-3 border-destructive/40 bg-destructive/[0.04] p-5">
+        <div>
+          <div className="text-[0.84375rem] font-bold text-red-400">Erase all data</div>
+          <p className="mt-1 text-[0.78125rem] leading-relaxed text-muted-foreground">
+            Permanently deletes every debt, budget, goal, recurring bill, transaction, and account in this space, and
+            disconnects any connected banks. This can't be undone.
+          </p>
+        </div>
+        <div className="flex justify-end">
+          <Button variant="destructive" size="sm" onClick={() => setConfirming(true)}>
+            <Trash2 />Erase all data
+          </Button>
+        </div>
+      </Card>
+      {confirming && (
+        <ConfirmDialog
+          title="Erase all data?"
+          desc="This permanently deletes ALL your data in this space — accounts, debts, budgets, goals, recurring, transactions, payment history. Bank connections are also removed."
+          confirmLabel="Erase everything"
+          busy={busy}
+          onConfirm={eraseAll}
+          onClose={() => setConfirming(false)}
         />
       )}
     </div>

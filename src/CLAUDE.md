@@ -105,6 +105,91 @@ before flipping the switch.
 
 ## Session log (newest first)
 
+### 2026-08-08 (4)
+- **Deletion feedback (spinner + centered result toast) + Settings "Danger
+  zone: Erase all data"** (Sonnet worker), per Israel's verbatim request:
+  "when deleting something add a little spinning thing so we know its
+  working and then a toast modal in the middle saying successful or
+  unsuccessful."
+  - **`components/toast.jsx`**: added a second context/provider pair inside
+    the existing `ToastProvider` — `CenterToastCtx` / `useCenterToast()` —
+    alongside the original corner `useToast()`. `centerToast(message,
+    variant)` renders a small card dead-center of the screen (`fixed inset-0
+    z-[70] flex items-center justify-center`, above the corner toast's
+    `z-[60]` and Radix Dialog's `z-50`, so it's visible even if it fires
+    right as a `ConfirmDialog` closes): green `CheckCircle2` on success, red
+    `XCircle` on error, auto-dismisses after 1.6s with a 250ms
+    opacity/scale fade-out before unmounting. Kept `useToast()`'s corner
+    toasts untouched and still used for routine (non-destructive)
+    confirmations — `centerToast` is only wired into delete/disconnect/erase
+    flows per the request, not a blanket replacement.
+  - **`components/shared.jsx`**'s `ConfirmDialog` now renders a spinning
+    `Loader2` in the confirm button whenever `busy=true` (previously `busy`
+    only disabled the buttons and blocked backdrop/Esc close — it didn't
+    change the button's contents). This is the one shared confirm dialog
+    (Accounts.jsx, AccountDetail.jsx, and the new Danger Zone below all use
+    it), so the spinner fix applies everywhere `busy` is already wired.
+  - **`views/AccountDetail.jsx`**: `handleDelete` now calls `centerToast`
+    instead of the corner `toast` for every outcome (Plaid disconnect
+    success/failure, debt delete, manual account delete). The Plaid path was
+    already async (`await fetch`) so `deleting`/`busy` covered it; the local
+    (manual account / debt) delete path is a synchronous store mutation, so
+    added a deliberate `await new Promise(r => setTimeout(r, 350))` after
+    `setDeleting(true)` before doing the actual delete — otherwise the
+    spinner would never be visible for an instant, in-memory mutation. Swapped
+    `useToast` for `useCenterToast` (no more corner toasts fired from this
+    file).
+  - **`views/Accounts.jsx`**'s `AccountDialog.del` (manual account delete
+    from the edit dialog): same treatment — added a `deleting` state, the
+    same 350ms deliberate delay, wired `busy={deleting}` into its
+    `ConfirmDialog`, and switched to `centerToast('Account deleted')` /
+    `centerToast(err, 'error')`. `save()` in the same component still uses
+    the corner `useToast()` for "Enter a name"/"Account updated" — those
+    aren't part of this feature.
+  - **`views/Settings.jsx`**: new `DangerZoneSection` (red-bordered `Card`,
+    `border-destructive/40 bg-destructive/[0.04]`, matching Debts.jsx's
+    destructive styling convention), rendered last on the page. "Erase all
+    data" button → `ConfirmDialog` (title "Erase all data?", the exact
+    warning copy requested, `confirmLabel="Erase everything"`, `busy` wired
+    to a real async operation this time, not a fake delay) → `eraseAll()`:
+    1. `GET /api/plaid/items`, then loops `DELETE /api/plaid/items` per
+       connected bank (skipped entirely if the list is empty); failures on
+       individual banks are collected but don't abort the rest of the loop
+       or the data wipe.
+    2. Clears every user-data slice through the single store `update(fn)`
+       mutator: `s.debts = []; s.budgets = []; s.recurring = [];
+       s.transactions = []; s.goals = []; s.accounts = []`. Deliberately
+       does **not** touch `s.sim`/`s.mSim` (the `settings` table) or any
+       workspace/space state — those are configuration, not user data, and
+       out of scope per the request.
+    3. `centerToast('All data erased')` on full success, or a softer
+       "Data erased — one bank connection needs manual removal" message if
+       only the bank-disconnect loop had a failure (the local wipe still
+       ran) — otherwise a hard error toast if the wipe itself threw.
+  - **Confirmed (by reading, not by running) how store.jsx's diff-sync
+    handles the mass deletion**: `payments` isn't its own state slice — it's
+    derived per-render from `s.debts[].payments` (see `flatPayments` in
+    store.jsx) — so emptying `s.debts` also empties the derived `payments`
+    rows fed into the sync effect, no separate handling needed. The sync
+    effect (store.jsx, the `debounced diff sync` `useEffect`) calls
+    `diffRows(prevRows[table], nextRows[table])` per table, which is a pure
+    id-set diff: `deletes = prev.filter(r => !nextIds.has(r.id))`. With
+    `nextRows[table] === []`, `nextIds` is empty, so **every** row that
+    existed in `prev` for that table becomes a delete — confirmed this is
+    exactly the mechanism, not an assumption. Deletes already run before
+    upserts and in FK-safe order (`payments, transactions, budgets,
+    recurring, goals, accounts, debts` — payments/children before the debts
+    they reference), so this needed no changes to the sync logic itself,
+    only to what Settings.jsx puts into `update(fn)`.
+  - **Left off / not verified**: no dev server, no npm installs, nothing
+    clicked in a real browser (standing instruction) — the spinner timing,
+    the centered toast's fade transition, the erase-all confirm→busy→toast
+    round trip, and (most importantly) an actual Supabase round-trip
+    confirming the mass-delete diff really issues the DELETE statements
+    against a real project are all unexercised. Next session should erase a
+    disposable/test account's data for real and check the `debts` /
+    `transactions` / etc. tables in Supabase directly afterward.
+
 ### 2026-08-08 (3)
 - **Account deletion added to the Accounts experience** (Sonnet worker) —
   previously there was no way to delete an account from `/accounts` at all;
