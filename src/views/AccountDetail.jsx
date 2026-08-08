@@ -238,7 +238,14 @@ export default function AccountDetail({ id }) {
         <div className="flex items-center justify-between px-0.5">
           <h3 className="text-[0.9375rem] font-semibold">Transactions</h3>
           {account.account_id ? (
-            <Link href={txHref} className="flex shrink-0 items-center text-[0.78125rem] font-bold text-primary/90 transition hover:text-primary">View all in Transactions ›</Link>
+            {/* Hard navigation, not <Link>: a soft nav to a non-intercepted
+                route leaves the @modal slot's previous content mounted, so
+                the overlay stayed open on top of /transactions. */}
+            <button
+              type="button"
+              onClick={() => { if (typeof window !== 'undefined') window.location.assign(txHref) }}
+              className="flex shrink-0 items-center text-[0.78125rem] font-bold text-primary/90 transition hover:text-primary"
+            >View all in Transactions ›</button>
           ) : null}
         </div>
         {dates.length ? (

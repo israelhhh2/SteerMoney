@@ -119,6 +119,13 @@ before flipping the switch.
 ## Session log (newest first)
 
 ### 2026-08-08 (7)
+- **"View all in Transactions" left the account modal open over the new
+  page** (Fable): it was a `<Link>` soft nav; navigating to a
+  non-intercepted route doesn't reset the `@modal` parallel slot (Next
+  keeps the slot's previous content mounted), so /transactions rendered
+  underneath the still-open overlay. Converted to a hard
+  `window.location.assign(txHref)` button — same pattern as "Manage
+  connection" (2026-08-08 (6) Bug 2).
 - **Disconnect didn't refresh the Accounts list** (Fable, 1-line fix):
   `views/AccountDetail.jsx`'s Plaid disconnect ended in `router.push('/accounts')`,
   but Accounts fetches `/api/plaid/items` once on mount (`usePlaidItems`), so
