@@ -1,7 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useUser, useClerk } from '@clerk/nextjs'
-import { usePlaidLink } from 'react-plaid-link'
 import { Eye, Pencil, Plus, Link2, Users, ChevronRight, Loader2, UserMinus, Landmark, RefreshCw, AlertTriangle } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -16,7 +15,7 @@ import { useApp } from '@/store'
 import { useToast } from '@/components/toast'
 import { prettyDate } from '@/lib/utils'
 import { SpaceNameDialog, InviteLinkDialog, RemoveMemberDialog } from '@/components/space-name-dialog'
-import { ConnectBankButton } from '@/components/connect-bank'
+import { ConnectBankButton, PlaidLinkRunner } from '@/components/connect-bank'
 
 export default function Settings() {
   const { viewingAs } = useApp()
@@ -240,38 +239,43 @@ function ConnectedBanksSection() {
 // update mode (link-token route accepts { item_id } for this); update mode
 // never re-issues a new access_token, so on success we just PATCH the item's
 // status back to 'ok' and trigger a normal sync — no exchange call needed.
+//
+// Settings can render one of these per connected-bank row. Only the row
+// whose "Fix connection" was actually clicked holds a link_token, so it's
+// the only one that mounts a <PlaidLinkRunner> (see connect-bank.jsx) — idle
+// rows mount nothing, keeping the single-iframe guarantee even with several
+// banks needing attention at once.
 function FixConnectionButton({ item, onFixed }) {
   const toast = useToast()
   const [linkToken, setLinkToken] = useState(null)
   const [connecting, setConnecting] = useState(false)
 
-  const { open, ready } = usePlaidLink({
-    token: linkToken,
-    onSuccess: async () => {
-      setLinkToken(null)
+  const handleSuccess = async () => {
+    setLinkToken(null)
+    try {
+      const res = await fetch('/api/plaid/items', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: item.item_id, status: 'ok' }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Couldn't confirm the fix")
+      toast('Connection fixed')
       try {
-        const res = await fetch('/api/plaid/items', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ item_id: item.item_id, status: 'ok' }),
-        })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error || "Couldn't confirm the fix")
-        toast('Connection fixed')
-        try {
-          const syncRes = await fetch('/api/plaid/sync', { method: 'POST' })
-          const syncData = await syncRes.json()
-          if (syncRes.ok) toast(`Synced: ${syncData.added} new transactions`)
-        } catch { /* best effort */ }
-        await onFixed()
-      } catch (e) {
-        toast(e.message, 'error')
-      }
-    },
-    onExit: () => setLinkToken(null),
-  })
+        const syncRes = await fetch('/api/plaid/sync', { method: 'POST' })
+        const syncData = await syncRes.json()
+        if (syncRes.ok) toast(`Synced: ${syncData.added} new transactions`)
+      } catch { /* best effort */ }
+      await onFixed()
+    } catch (e) {
+      toast(e.message, 'error')
+    }
+  }
 
-  useEffect(() => { if (linkToken && ready) open() }, [linkToken, ready, open])
+  const handleExit = (err) => {
+    setLinkToken(null)
+    if (err) toast(err.display_message || err.error_message || "Couldn't fix that connection", 'error')
+  }
 
   const fix = async () => {
     setConnecting(true)
@@ -291,15 +295,18 @@ function FixConnectionButton({ item, onFixed }) {
   }
 
   return (
-    <Button
-      variant="outline"
-      size="xs"
-      className="border-amber-400/40 bg-amber-400/10 text-amber-400 hover:bg-amber-400/20"
-      disabled={connecting}
-      onClick={fix}
-    >
-      {connecting ? <Loader2 className="animate-spin" /> : <AlertTriangle />}Fix connection
-    </Button>
+    <>
+      <Button
+        variant="outline"
+        size="xs"
+        className="border-amber-400/40 bg-amber-400/10 text-amber-400 hover:bg-amber-400/20"
+        disabled={connecting}
+        onClick={fix}
+      >
+        {connecting ? <Loader2 className="animate-spin" /> : <AlertTriangle />}Fix connection
+      </Button>
+      {linkToken && <PlaidLinkRunner token={linkToken} onSuccess={handleSuccess} onExit={handleExit} />}
+    </>
   )
 }
 

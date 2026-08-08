@@ -9,7 +9,7 @@ import { Input, Label } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Segmented } from '@/components/ui/segmented'
-import { Money, CardChip } from '@/components/shared'
+import { Money, CardChip, SourceBadge } from '@/components/shared'
 import { ConnectBankButton } from '@/components/connect-bank'
 import { useApp } from '@/store'
 import { useToast } from '@/components/toast'
@@ -203,7 +203,8 @@ function CardRow({ account }) {
   return (
     <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
       <CardChip institution={account.institution} name={account.name} mask={account.mask} />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="flex justify-center"><SourceBadge accountId={account.account_id} institution={account.institution} /></div>
         {hasLimit ? (
           <div className="grid grid-cols-3 items-center gap-1 text-center">
             <div><StatLabel>Balance</StatLabel><Money value={fmt0(account.balance)} className="text-sm font-extrabold sm:text-base" /></div>
@@ -233,7 +234,8 @@ function LoanRow({ account }) {
   return (
     <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
       <CardChip institution={account.institution} name={account.name} mask={account.mask} />
-      <div className="min-w-0 flex-1 text-center">
+      <div className="min-w-0 flex-1 space-y-1.5 text-center">
+        <div className="flex justify-center"><SourceBadge accountId={account.account_id} institution={account.institution} /></div>
         <StatLabel>Balance</StatLabel>
         <Money value={fmt0(account.balance)} className="text-xl font-extrabold sm:text-2xl" />
       </div>
@@ -247,12 +249,15 @@ function DepositoryRow({ account }) {
   return (
     <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
       <CardChip institution={account.institution} name={account.name} mask={account.mask} />
-      <div className="grid min-w-0 flex-1 grid-cols-3 items-center gap-1 text-center">
-        <div><StatLabel>Available</StatLabel><Money value={fmt0(available)} className="text-sm font-extrabold sm:text-base" /></div>
-        <div><StatLabel>Current</StatLabel><Money value={fmt0(account.balance)} className="text-sm font-extrabold sm:text-base" /></div>
-        <div>
-          <StatLabel>Change</StatLabel>
-          {pct == null ? <div className="text-sm font-extrabold text-muted-foreground sm:text-base">–</div> : <ChangePill pct={pct} />}
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="flex justify-center"><SourceBadge accountId={account.account_id} institution={account.institution} /></div>
+        <div className="grid grid-cols-3 items-center gap-1 text-center">
+          <div><StatLabel>Available</StatLabel><Money value={fmt0(available)} className="text-sm font-extrabold sm:text-base" /></div>
+          <div><StatLabel>Current</StatLabel><Money value={fmt0(account.balance)} className="text-sm font-extrabold sm:text-base" /></div>
+          <div>
+            <StatLabel>Change</StatLabel>
+            {pct == null ? <div className="text-sm font-extrabold text-muted-foreground sm:text-base">–</div> : <ChangePill pct={pct} />}
+          </div>
         </div>
       </div>
     </Link>

@@ -1,11 +1,11 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { usePlaidLink } from 'react-plaid-link'
 import { Loader2, Landmark } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/toast'
 import { exchangeAndSync, PLAID_LINK_TOKEN_KEY } from '@/lib/plaid-client'
+import { PlaidLinkRunner } from '@/components/connect-bank'
 
 // Landing point for Plaid's OAuth redirect (roadmap item 3). Some banks
 // (Chase, Bank of America, ...) force Plaid Link out to their own login page
@@ -35,27 +35,22 @@ export default function PlaidOAuthPage() {
     }
   }, [])
 
-  const { open, ready } = usePlaidLink({
-    token: linkToken || null,
-    receivedRedirectUri: typeof window !== 'undefined' ? window.location.href : undefined,
-    onSuccess: async (public_token, metadata) => {
-      try { sessionStorage.removeItem(PLAID_LINK_TOKEN_KEY) } catch { /* harmless */ }
-      try {
-        await exchangeAndSync(public_token, metadata?.institution?.name, toast)
-        router.push('/accounts')
-      } catch (e) {
-        toast(e.message, 'error')
-        setStatus('error')
-      }
-    },
-    onExit: (err) => {
-      try { sessionStorage.removeItem(PLAID_LINK_TOKEN_KEY) } catch { /* harmless */ }
-      if (err) toast(err.display_message || err.error_message || 'Bank connection was not completed', 'error')
+  const handleSuccess = async (public_token, metadata) => {
+    try { sessionStorage.removeItem(PLAID_LINK_TOKEN_KEY) } catch { /* harmless */ }
+    try {
+      await exchangeAndSync(public_token, metadata?.institution?.name, toast)
+      router.push('/accounts')
+    } catch (e) {
+      toast(e.message, 'error')
       setStatus('error')
-    },
-  })
+    }
+  }
 
-  useEffect(() => { if (linkToken && ready) open() }, [linkToken, ready, open])
+  const handleExit = (err) => {
+    try { sessionStorage.removeItem(PLAID_LINK_TOKEN_KEY) } catch { /* harmless */ }
+    if (err) toast(err.display_message || err.error_message || 'Bank connection was not completed', 'error')
+    setStatus('error')
+  }
 
   if (linkToken === undefined) {
     return (
@@ -88,6 +83,18 @@ export default function PlaidOAuthPage() {
         </>
       ) : (
         <p>Finishing up your bank connection…</p>
+      )}
+      {/* Only mounted while a flow is actually in progress — once onExit
+          flips status to 'error' this unmounts and its iframe is torn down,
+          same single-instance guarantee as every other Plaid Link call site
+          (see components/connect-bank.jsx's PlaidLinkRunner). */}
+      {status === 'connecting' && (
+        <PlaidLinkRunner
+          token={linkToken}
+          receivedRedirectUri={typeof window !== 'undefined' ? window.location.href : undefined}
+          onSuccess={handleSuccess}
+          onExit={handleExit}
+        />
       )}
     </div>
   )

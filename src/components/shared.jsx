@@ -1,6 +1,6 @@
 'use client'
 import Link from 'next/link'
-import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List } from 'lucide-react'
+import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List, Link2, Pencil } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { catColor, fmt0, cn } from '@/lib/utils'
@@ -145,6 +145,29 @@ export function CardChip({ institution, name, mask, size = 'row' }) {
         {mask ? <span className={cn('shrink-0 font-semibold text-white/70', big ? 'text-xs' : 'text-[0.5625rem]')}>••{mask}</span> : null}
       </div>
     </div>
+  )
+}
+
+// Tiny muted "where did this data come from" pill for account rows/detail —
+// a manually-entered debt/account gets a plain "Manual" pill (Pencil icon);
+// anything actually linked to a Plaid account_id gets "Plaid · {institution}"
+// (Link2 icon). A manual debt that happens to fuzzy-match a connected Plaid
+// account (see lib/finance.js matchesBankAccount) picks up that account's
+// account_id too, so this same `!!account_id` check is the single source of
+// truth for both — no separate manual/matched-debt branch needed.
+export function SourceBadge({ accountId, institution, className = '' }) {
+  const linked = !!accountId
+  return (
+    <span
+      className={cn(
+        'inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide',
+        linked ? 'border-indigo-400/25 bg-indigo-400/10 text-indigo-300' : 'border-border bg-secondary/60 text-muted-foreground',
+        className
+      )}
+    >
+      {linked ? <Link2 className="h-2.5 w-2.5" /> : <Pencil className="h-2.5 w-2.5" />}
+      {linked ? `Plaid · ${institution || 'Bank'}` : 'Manual'}
+    </span>
   )
 }
 

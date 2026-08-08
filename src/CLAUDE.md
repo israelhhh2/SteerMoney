@@ -105,6 +105,57 @@ before flipping the switch.
 
 ## Session log (newest first)
 
+### 2026-08-08 (2)
+- **Critical bug fix: Plaid Link clicks swallowed by a duplicate hidden
+  iframe** (Sonnet worker, diagnosed from live DOM inspection on the
+  deployed site — production-blocking, users could open Link but every
+  click did nothing, `/api/plaid/exchange` never fired, no `plaid_items` row
+  created). Root cause: `usePlaidLink` creates a hidden fullscreen "initial"
+  iframe (`#plaid-link-iframe-N`, `position:fixed`, `z-index 2147483647`)
+  the instant the hook runs — even with `token: null`. Three call sites each
+  held their own always-mounted `usePlaidLink`
+  (`components/connect-bank.jsx`'s `ConnectBankButton`,
+  `views/Settings.jsx`'s `FixConnectionButton` — one per connected-bank
+  row — and `app/(app)/plaid-oauth/page.jsx`), so every idle instance
+  stacked another fullscreen click-eating iframe on top of the real one.
+  **Fix:** extracted the only `usePlaidLink` call in the app into a new
+  `PlaidLinkRunner({ token, receivedRedirectUri, onSuccess, onExit })` in
+  `components/connect-bank.jsx` (returns `null`, calls `open()` in a ready
+  effect, persists `token` to sessionStorage under `PLAID_LINK_TOKEN_KEY`
+  right before opening — same OAuth-survival behavior as before). All three
+  call sites now hold their link_token in state and render
+  `{linkToken && <PlaidLinkRunner .../>}` — nothing calls `usePlaidLink`
+  unconditionally anymore, so at most one hidden/open iframe can exist on
+  the page at any moment, and only while a flow is actually in progress;
+  unmounting on success/exit tears the iframe down immediately.
+  `plaid-oauth/page.jsx` additionally gates the runner on `status ===
+  'connecting'` (not just a truthy token) so a failed/canceled OAuth
+  round-trip also unmounts it instead of leaving a dead iframe sitting
+  around. Added failure visibility per the diagnosis: `onExit` now toasts a
+  friendly error (`err.display_message || err.error_message || '...'`) in
+  `ConnectBankButton` and `FixConnectionButton` whenever Link exits with an
+  error object (mirroring what the OAuth page already did) — a plain user
+  cancel still exits silently. Grepped the whole `src/` tree afterward;
+  `components/connect-bank.jsx` is the only file importing `usePlaidLink`.
+- **Small feature, same pass — account source badges**: new
+  `SourceBadge({ accountId, institution })` in `components/shared.jsx` — a
+  tiny muted uppercase pill, "Manual" (Pencil icon) when there's no
+  `account_id`, "Plaid · {institution}" (Link2 icon, indigo tint) when
+  there is. Uses the exact same `!!account_id` truth-check
+  `lib/accounts.js`'s `buildAccountInventory` already relies on for
+  matching manual debts to connected Plaid accounts, so a manual debt that
+  fuzzy-matches a Plaid account correctly shows as Plaid-linked with no new
+  branching logic. Wired into `views/Accounts.jsx`'s `CardRow`/`LoanRow`/
+  `DepositoryRow` (centered, above the stats) and `views/AccountDetail.jsx`
+  (above the "Latest update received…" line).
+- **Left off / not verified:** none of this ran in a browser or against a
+  live Plaid Link session (no npm installs, no dev server, per standing
+  instructions) — the DOM diagnosis that found the bug was from the
+  deployed site, but this fix itself is unverified there yet. Priority next
+  step: deploy and click "Connect a bank" for real, confirm only one
+  `#plaid-link-iframe-*` ever exists in the DOM at a time and that a click
+  inside the visible Link UI actually registers.
+
 ### 2026-08-08
 - **Plaid production-readiness code: roadmap items 3, 4, 5** (Sonnet worker).
   Plaid production access was approved; this is the code those roadmap items

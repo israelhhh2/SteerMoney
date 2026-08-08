@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Segmented } from '@/components/ui/segmented'
-import { Money, CardChip, CatIcon, CatChip } from '@/components/shared'
+import { Money, CardChip, CatIcon, CatChip, SourceBadge } from '@/components/shared'
 import { useApp } from '@/store'
 import { fmt, fmt0, prettyDate } from '@/lib/utils'
 import {
@@ -116,9 +116,12 @@ export default function AccountDetail({ id }) {
 
       <Segmented options={RANGE_KEYS.map((k) => [k, k])} value={range} onChange={setRange} />
 
-      <p className="text-center text-[0.71875rem] text-muted-foreground">
-        {account.last_synced ? `Latest update received ${relTime(account.last_synced)}` : 'Manual account'}
-      </p>
+      <div className="flex flex-col items-center gap-1.5">
+        <SourceBadge accountId={account.account_id} institution={account.institution} />
+        <p className="text-center text-[0.71875rem] text-muted-foreground">
+          {account.last_synced ? `Latest update received ${relTime(account.last_synced)}` : 'Manual account'}
+        </p>
+      </div>
 
       <div className="w-full max-w-sm space-y-2">
         {manageHref ? (

@@ -6,21 +6,60 @@ import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/toast'
 import { exchangeAndSync, PLAID_LINK_TOKEN_KEY } from '@/lib/plaid-client'
 
-// Reusable "Connect a bank" button: fetches a Plaid Link token, opens Plaid
-// Link, exchanges the resulting public token, and kicks off a sync. Used by
-// Settings (Connected banks) and Accounts (top bar + empty state).
+// The ONE place react-plaid-link's `usePlaidLink` hook gets called anywhere
+// in this app. react-plaid-link creates a hidden, fullscreen "initial"
+// iframe (`#plaid-link-iframe-N`, position:fixed, z-index 2147483647) the
+// instant `usePlaidLink` runs — even with `token: null` — and that iframe
+// sits on top of everything, capturing clicks, until it's told to open a
+// real session. With several call sites (Connect-a-bank button(s), the
+// per-row "Fix connection" button, the OAuth landing page) each holding
+// their own `usePlaidLink`, every one of them (idle or not) stacks another
+// fullscreen click-eating iframe on the page — that's the "Link modal opens
+// but every click does nothing" bug.
 //
-// The link_token is persisted to sessionStorage as soon as Link opens
-// (roadmap item 3, OAuth support): some banks (Chase, BofA, ...) force Link
-// out to their own login page and back via a redirect to /plaid-oauth, which
-// needs that same link_token to resume the session — see
-// app/(app)/plaid-oauth/page.jsx.
+// The fix: nobody calls `usePlaidLink` directly. Everybody renders this
+// component, and ONLY while `token` is truthy (parent holds the token in
+// state and renders `<PlaidLinkRunner .../>` conditionally). The instant the
+// flow ends (success or exit), the parent sets its token back to null, this
+// component unmounts, and react-plaid-link tears its iframe down with it —
+// so at most one hidden/open iframe can ever exist on the page at a time,
+// and only while a flow is actually in progress.
+//
+// Also persists the link_token to sessionStorage the moment Link is ready
+// to open (roadmap item 3, OAuth support): some banks (Chase, BofA, ...)
+// force Link out to their own login page and back via a redirect to
+// /plaid-oauth, which needs that same link_token to resume the session.
+export function PlaidLinkRunner({ token, receivedRedirectUri, onSuccess, onExit }) {
+  const { open, ready } = usePlaidLink({ token, receivedRedirectUri, onSuccess, onExit })
+
+  useEffect(() => {
+    if (ready) {
+      try { sessionStorage.setItem(PLAID_LINK_TOKEN_KEY, token) } catch { /* sessionStorage unavailable, harmless */ }
+      open()
+    }
+  }, [ready, open, token])
+
+  return null
+}
+
+// Reusable "Connect a bank" button: fetches a Plaid Link token, mounts a
+// <PlaidLinkRunner> only while that token exists, exchanges the resulting
+// public token, and kicks off a sync. Safe to render as many times as a
+// page wants (Accounts' top bar + empty state, Settings' Connected Banks) —
+// an idle button (no link_token yet) renders no PlaidLinkRunner at all, so
+// it mounts zero iframes.
 export function ConnectBankButton({ onDone, variant = 'default', size, children }) {
   const toast = useToast()
   const [linkToken, setLinkToken] = useState(null)
   const [connecting, setConnecting] = useState(false)
 
+  const stop = () => {
+    setLinkToken(null)
+    try { sessionStorage.removeItem(PLAID_LINK_TOKEN_KEY) } catch { /* sessionStorage unavailable, harmless */ }
+  }
+
   const handleSuccess = async (public_token, metadata) => {
+    stop()
     try {
       await exchangeAndSync(public_token, metadata?.institution?.name, toast)
       if (onDone) onDone()
@@ -30,25 +69,10 @@ export function ConnectBankButton({ onDone, variant = 'default', size, children 
     }
   }
 
-  const { open, ready } = usePlaidLink({
-    token: linkToken,
-    onSuccess: (public_token, metadata) => {
-      handleSuccess(public_token, metadata)
-      setLinkToken(null)
-      try { sessionStorage.removeItem(PLAID_LINK_TOKEN_KEY) } catch { /* sessionStorage unavailable, harmless */ }
-    },
-    onExit: () => {
-      setLinkToken(null)
-      try { sessionStorage.removeItem(PLAID_LINK_TOKEN_KEY) } catch { /* sessionStorage unavailable, harmless */ }
-    },
-  })
-
-  useEffect(() => {
-    if (linkToken && ready) {
-      try { sessionStorage.setItem(PLAID_LINK_TOKEN_KEY, linkToken) } catch { /* sessionStorage unavailable, harmless */ }
-      open()
-    }
-  }, [linkToken, ready, open])
+  const handleExit = (err) => {
+    stop()
+    if (err) toast(err.display_message || err.error_message || 'Bank connection failed', 'error')
+  }
 
   const connect = async () => {
     setConnecting(true)
@@ -69,9 +93,12 @@ export function ConnectBankButton({ onDone, variant = 'default', size, children 
   }
 
   return (
-    <Button variant={variant} size={size} disabled={connecting} onClick={connect}>
-      {connecting ? <Loader2 className="animate-spin" /> : <Landmark />}
-      {children || 'Connect a bank'}
-    </Button>
+    <>
+      <Button variant={variant} size={size} disabled={connecting} onClick={connect}>
+        {connecting ? <Loader2 className="animate-spin" /> : <Landmark />}
+        {children || 'Connect a bank'}
+      </Button>
+      {linkToken && <PlaidLinkRunner token={linkToken} onSuccess={handleSuccess} onExit={handleExit} />}
+    </>
   )
 }
