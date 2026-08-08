@@ -27,18 +27,50 @@ Next.js (App Router, JS/JSX) personal-finance app.
   `components/ui/`.
 - `seed.json` = manual seed data (debts/budgets/transactions), NOT Plaid mock.
 
-## Plaid integration (current state — sandbox, working)
+## Plaid integration (current state — sandbox, working; production code done)
 
 - `lib/plaid-server.js` — Plaid client; `PLAID_ENV` defaults to `sandbox`;
-  `plaidConfigured` gate → routes 503 if creds missing.
-- `app/api/plaid/link-token` — linkTokenCreate, products: `['transactions']`, US.
+  `plaidConfigured` gate → routes 503 if creds missing. `getAppUrl(req)`
+  resolves the app's base URL (NEXT_PUBLIC_APP_URL → VERCEL_URL → request
+  Host header → null) for building `redirect_uri`/`webhook` params.
+- `lib/plaid-sync.js` — `syncPlaidItem(item)` (per-item transactionsSync
+  cursor loop + upsert + balance refresh, extracted so both the sync route
+  and the webhook route share one implementation) and `setItemStatus(rowId,
+  status)` (defensive against a missing `status` column).
+- `lib/plaid-client.js` — client-side `exchangeAndSync()` shared by
+  `connect-bank.jsx` and `app/(app)/plaid-oauth/page.jsx` so both onSuccess
+  paths behave identically; `PLAID_LINK_TOKEN_KEY` sessionStorage key used to
+  survive the OAuth redirect round-trip.
+- `app/api/plaid/link-token` — linkTokenCreate; products `['transactions']`,
+  US; passes `redirect_uri`/`webhook` when `getAppUrl()` resolves; accepts
+  `{ item_id }` in the POST body for update-mode (re-auth) link tokens
+  (ownership verified against the signed-in Clerk user).
 - `app/api/plaid/exchange` — public_token → access_token, stores row in
-  `plaid_items` (token never sent to client).
-- `app/api/plaid/sync` — transactionsSync cursor loop, upserts `pl_*` rows
-  into `transactions`, skips pending, regex `guessCategory()`, refreshes balances.
-- `app/api/plaid/items` — GET list / DELETE (itemRemove + row delete).
+  `plaid_items` (token never sent to client). Unchanged this round — update
+  mode doesn't call this (no new access_token is issued).
+- `app/api/plaid/sync` — thin wrapper looping `syncPlaidItem()` over this
+  user's items.
+- `app/api/plaid/items` — GET list (now includes `status`, defensive if the
+  column isn't migrated) / DELETE (itemRemove + row delete) / PATCH (sets
+  `status`, used by the update-mode re-auth flow to clear `reauth_required`
+  back to `ok`).
+- `app/api/plaid/webhook` (new) — public route (see middleware.js), verifies
+  Plaid's JWT (`plaid-verification` header, ES256, via dynamic `jose`
+  import — needs `npm install jose`, unconfirmed as a dependency this
+  session; falls back to a shape+known-item_id check and logs loudly if
+  `jose` isn't available) then handles `SYNC_UPDATES_AVAILABLE` (runs
+  `syncPlaidItem`), `ITEM_LOGIN_REQUIRED`/`PENDING_EXPIRATION`/`ERROR` (sets
+  `status='reauth_required'`), `USER_PERMISSION_REVOKED` (sets
+  `status='revoked'`). Always resolves fast; verification failures on an
+  unrecognized payload return 401, everything else 200.
+- `app/(app)/plaid-oauth/page.jsx` (new) — OAuth redirect landing page: reads
+  the link_token from sessionStorage, reopens Plaid Link with
+  `receivedRedirectUri`, runs the same `exchangeAndSync()` on success, then
+  routes to `/accounts`.
 - Client: `components/connect-bank.jsx` (react-plaid-link). Consumers:
-  Accounts.jsx, Debts.jsx (fuzzy match via `lib/finance.js`), Settings.jsx.
+  Accounts.jsx, Debts.jsx (fuzzy match via `lib/finance.js`), Settings.jsx
+  (also has `FixConnectionButton` — update-mode re-auth UI, shown when an
+  item's status is `reauth_required`/`revoked`).
 
 ## Production roadmap (Plaid)
 
@@ -49,16 +81,12 @@ Ordered; check off as done.
       Optionally use **Limited Production / Development** tier first.
 - [ ] **2. Env switch** — set `PLAID_ENV=production` + production
       `PLAID_CLIENT_ID`/`PLAID_SECRET` in hosting env (Vercel). Never client-side.
-- [ ] **3. OAuth support** — many major US banks (Chase, BofA…) require OAuth:
-      register redirect URI in Plaid Dashboard, pass `redirect_uri` in
-      linkTokenCreate, handle `receivedRedirectUri` on the client. Sandbox
-      never forced this; production will break without it.
-- [ ] **4. Webhook route** — `app/api/plaid/webhook`: handle
-      `SYNC_UPDATES_AVAILABLE` (trigger sync), `ITEM_LOGIN_REQUIRED` /
-      `PENDING_EXPIRATION` (flag item for re-auth), verify webhook JWT.
-      Pass `webhook` URL in linkTokenCreate.
-- [ ] **5. Update mode (re-auth)** — link token with `access_token` param when
-      an item errors; surface "Fix connection" in Settings/Accounts.
+- [x] **3. OAuth support** — code-complete (needs dashboard config). See
+      2026-08-08 session log entry.
+- [x] **4. Webhook route** — code-complete (needs dashboard config + `npm
+      install jose`). See 2026-08-08 session log entry.
+- [x] **5. Update mode (re-auth)** — code-complete. See 2026-08-08 session
+      log entry.
 - [ ] **6. Encrypt access tokens at rest** — currently plaintext in
       `plaid_items.access_token` (service-role only, but encrypt anyway:
       pgsodium/pgcrypto or app-level AES with a KMS/env key).
@@ -76,6 +104,96 @@ Costs note: production Plaid is pay-per-item/product — check current pricing
 before flipping the switch.
 
 ## Session log (newest first)
+
+### 2026-08-08
+- **Plaid production-readiness code: roadmap items 3, 4, 5** (Sonnet worker).
+  Plaid production access was approved; this is the code those roadmap items
+  called for, written to degrade to today's exact sandbox behavior whenever
+  the required config isn't present yet (no APP_URL → no redirect_uri/webhook,
+  no `jose` → defensive fallback verification, no `status` column → treated
+  as `'ok'`/skipped).
+  - **Item 3 (OAuth redirect support):** `app/api/plaid/link-token/route.js`
+    now passes `redirect_uri: ${APP_URL}/plaid-oauth` (and `webhook`, see
+    item 4) whenever `getAppUrl(req)` (new, in `lib/plaid-server.js`)
+    resolves an app URL — priority `NEXT_PUBLIC_APP_URL` env → `VERCEL_URL`
+    → the request's own Host header → `null` (omitted entirely). New
+    `lib/plaid-client.js` holds `exchangeAndSync()` (the exchange+sync
+    sequence) and the `PLAID_LINK_TOKEN_KEY` sessionStorage key, shared by
+    `components/connect-bank.jsx` (now persists the link_token to
+    sessionStorage right before Link opens) and the new
+    `app/(app)/plaid-oauth/page.jsx` (reads that token back, reopens Link
+    with `receivedRedirectUri: window.location.href`, auto-opens on ready,
+    routes to `/accounts` on success, shows a clear "couldn't find your
+    session" state if sessionStorage is empty).
+  - **Item 4 (webhook route):** new `app/api/plaid/webhook/route.js` (POST,
+    unauthenticated — added to `middleware.js`'s public matcher since Plaid
+    calls it server-to-server). Verifies the `plaid-verification` JWT
+    (ES256) via `plaidClient.webhookVerificationKeyGet` + a dynamic `import('jose')`
+    wrapped in try/catch (jose's presence as a dependency couldn't be
+    confirmed — package.json is outside the mounted `src/` root); if
+    verification can't run, falls back to a shape check + confirming the
+    `item_id` exists in `plaid_items` before proceeding, and logs loudly
+    either way. Handles `SYNC_UPDATES_AVAILABLE` (runs the new
+    `syncPlaidItem()` helper), `ITEM_LOGIN_REQUIRED`/`PENDING_EXPIRATION`/
+    `ERROR` (→ `status='reauth_required'`), `USER_PERMISSION_REVOKED` (→
+    `status='revoked'`). Always 200 except a genuine verification failure
+    (401). Extracted the per-item sync loop out of
+    `app/api/plaid/sync/route.js` into `lib/plaid-sync.js`
+    (`syncPlaidItem(item)`, `setItemStatus(rowId, status)`) so the sync route
+    and the webhook route share one implementation instead of duplicating
+    the upsert/balance-refresh code — the sync route is now a thin loop over
+    it, byte-identical behavior to before.
+  - **Item 5 (update mode / re-auth):** `link-token` route accepts an
+    optional `{ item_id }` JSON body — looks up that `plaid_items` row,
+    verifies `user_id` matches the signed-in Clerk user, and creates the
+    link token with `access_token` (update mode) instead of `products`.
+    `app/api/plaid/items/route.js` GET now selects/returns `status`
+    (defaulting to `'ok'` if the column or its value is missing) and gained
+    a PATCH handler (`{ item_id, status }`) for flipping it back after a
+    successful re-auth. `views/Settings.jsx`'s Connected Banks list shows an
+    amber "Needs attention" / red "Access revoked" badge and swaps the
+    "Sync now" button for a new `FixConnectionButton` when
+    `status !== 'ok'` — fetches an update-mode link token, opens Plaid Link
+    directly (a second, narrower `usePlaidLink` usage; not routed through
+    `ConnectBankButton` since update-mode's onSuccess is genuinely different
+    — no new access_token is issued, so there's nothing to exchange, just a
+    PATCH back to `'ok'` + a normal sync).
+  - **Manual steps for Israel (nothing above works end-to-end without
+    these):**
+    1. Register `https://steer-money-nine.vercel.app/plaid-oauth` in Plaid
+       Dashboard → Team Settings → API → Allowed redirect URIs (or whatever
+       the final custom domain is, if that lands first).
+    2. Confirm/whitelist the webhook URL
+       `https://steer-money-nine.vercel.app/api/plaid/webhook` — Plaid
+       doesn't require pre-registration the way redirect URIs do, but
+       double-check it's reachable (not blocked by any auth/proxy) once
+       deployed — `curl -X POST .../api/plaid/webhook -d '{}'` should return
+       200, not a Clerk redirect/401.
+    3. Set Vercel env vars: `PLAID_ENV=production`, production
+       `PLAID_CLIENT_ID`/`PLAID_SECRET` (never client-side), and
+       `NEXT_PUBLIC_APP_URL=https://steer-money-nine.vercel.app` (or the
+       custom domain) — without the last one, `getAppUrl()` falls back to
+       `VERCEL_URL`/request Host, which usually works on Vercel but is worth
+       setting explicitly so OAuth/webhook URLs don't silently point at a
+       preview-deployment URL.
+    4. Run the two outstanding migrations against the prod DB (both written
+       defensively into the code above, so nothing breaks if these are
+       delayed — sync/webhook just silently skip the new columns until
+       then):
+       - `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_id text;`
+         (already noted in the 2026-08-05 (2) entry below, still outstanding)
+       - `ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS status text
+         DEFAULT 'ok';`
+    5. `npm install jose` (webhook JWT verification needs it — see item 4
+       above; the route works without it via the defensive fallback, but
+       that fallback is not cryptographic verification).
+  - **Left off / not verified:** nothing here ran against a real Plaid
+    sandbox/production webhook or an actual OAuth bank (no dev server, no
+    npm installs, per standing instructions) — the JWT verification path,
+    the `receivedRedirectUri` handoff, and the update-mode Link flow are
+    all implemented to spec but unexercised. Prioritize a real end-to-end
+    test (sandbox OAuth institution + Plaid's webhook test endpoint) before
+    trusting this in production.
 
 ### 2026-08-05 (3)
 - **Per-account detail pages + Notion-style modal navigation** (Sonnet

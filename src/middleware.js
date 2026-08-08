@@ -1,7 +1,10 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 import { NextResponse } from 'next/server'
 
-const isPublicRoute = createRouteMatcher(['/home', '/privacy', '/sign-in(.*)', '/sign-up(.*)'])
+// /api/plaid/webhook is called server-to-server by Plaid (no Clerk session
+// exists on those requests) — it's verified separately via Plaid's JWT
+// signature inside the route itself (see app/api/plaid/webhook/route.js).
+const isPublicRoute = createRouteMatcher(['/home', '/privacy', '/sign-in(.*)', '/sign-up(.*)', '/api/plaid/webhook'])
 
 export default clerkMiddleware(async (auth, req) => {
   const { userId } = await auth()

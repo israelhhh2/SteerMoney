@@ -1,26 +1,12 @@
 import { auth } from '@clerk/nextjs/server'
-import { plaidClient, plaidConfigured, supabaseAdmin } from '@/lib/plaid-server'
-
-// Small keyword map from Plaid's merchant/transaction name to this app's
-// category ids. Deliberately simple (v1); users can always re-categorize
-// in the Transactions view afterward.
-const CATEGORY_RULES = [
-  ['housing', /rent|mortgage/i],
-  ['groceries', /grocery|market|supermarket/i],
-  ['dining', /restaurant|food|coffee|pizza/i],
-  ['auto', /gas|fuel|auto|uber|lyft/i],
-  ['utilities', /electric|water|internet|phone|utility/i],
-]
-
-function guessCategory(tx) {
-  const text = [tx.merchant_name, tx.name].filter(Boolean).join(' ')
-  for (const [cat, re] of CATEGORY_RULES) if (re.test(text)) return cat
-  return 'other'
-}
+import { plaidConfigured, supabaseAdmin } from '@/lib/plaid-server'
+import { syncPlaidItem } from '@/lib/plaid-sync'
 
 // Pulls new/changed/removed transactions for every bank connected by this
 // user and mirrors them into public.transactions. Personal data only (v1):
 // synced rows always use the signed-in Clerk user id, never a shared space.
+// Per-item sync logic lives in lib/plaid-sync.js, shared with the webhook
+// route's SYNC_UPDATES_AVAILABLE handler.
 export async function POST() {
   try {
     const { userId } = await auth()
@@ -31,80 +17,11 @@ export async function POST() {
     if (itemsErr) throw itemsErr
 
     let added = 0, modified = 0, removed = 0
-
     for (const item of items || []) {
-      let cursor = item.cursor || undefined
-      let hasMore = true
-      const allAdded = [], allModified = [], allRemoved = []
-
-      while (hasMore) {
-        const resp = await plaidClient.transactionsSync({ access_token: item.access_token, cursor })
-        allAdded.push(...resp.data.added)
-        allModified.push(...resp.data.modified)
-        allRemoved.push(...resp.data.removed)
-        hasMore = resp.data.has_more
-        cursor = resp.data.next_cursor
-      }
-
-      const upsertRows = [...allAdded, ...allModified]
-        .filter((tx) => !tx.pending)
-        .map((tx) => ({
-          user_id: userId,
-          id: 'pl_' + tx.transaction_id,
-          date: tx.date,
-          description: tx.merchant_name || tx.name,
-          amount: Math.abs(tx.amount),
-          // Plaid convention: a positive amount is money leaving the account.
-          type: tx.amount < 0 ? 'income' : 'expense',
-          category: guessCategory(tx),
-          // Lets the Accounts detail sheet / Transactions page filter by account.
-          account_id: tx.account_id || null,
-        }))
-
-      if (upsertRows.length) {
-        let { error } = await supabaseAdmin.from('transactions').upsert(upsertRows, { onConflict: 'user_id,id' })
-        if (error && /account_id/i.test(error.message || '')) {
-          // `account_id` column not migrated onto public.transactions yet — retry
-          // without it so sync keeps working. Add the column (see supabase/plaid.sql
-          // or `ALTER TABLE transactions ADD COLUMN account_id text;`) to enable
-          // account-filtered transactions.
-          const fallbackRows = upsertRows.map(({ account_id, ...rest }) => rest)
-          ;({ error } = await supabaseAdmin.from('transactions').upsert(fallbackRows, { onConflict: 'user_id,id' }))
-        }
-        if (error) throw error
-      }
-      added += allAdded.filter((t) => !t.pending).length
-      modified += allModified.filter((t) => !t.pending).length
-
-      if (allRemoved.length) {
-        const ids = allRemoved.map((r) => 'pl_' + r.transaction_id)
-        const { error } = await supabaseAdmin.from('transactions').delete().eq('user_id', userId).in('id', ids)
-        if (error) throw error
-        removed += ids.length
-      }
-
-      // Refresh account balances too, so connected balances stay current
-      // everywhere (Accounts totals/trend, Debt Tracker matching). Best
-      // effort: if the balance refresh fails, keep whatever was stored.
-      let accounts = item.accounts || []
-      try {
-        const acctRes = await plaidClient.accountsGet({ access_token: item.access_token })
-        accounts = acctRes.data.accounts.map((a) => ({
-          account_id: a.account_id,
-          name: a.name,
-          official_name: a.official_name,
-          mask: a.mask,
-          type: a.type,
-          subtype: a.subtype,
-          balance: a.balances?.current ?? null,
-        }))
-      } catch { /* keep previously stored accounts */ }
-
-      const { error: updErr } = await supabaseAdmin
-        .from('plaid_items')
-        .update({ cursor, last_synced: new Date().toISOString(), accounts })
-        .eq('id', item.id)
-      if (updErr) throw updErr
+      const r = await syncPlaidItem(item)
+      added += r.added
+      modified += r.modified
+      removed += r.removed
     }
 
     return Response.json({ added, modified, removed })

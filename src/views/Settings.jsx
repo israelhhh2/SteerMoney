@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useUser, useClerk } from '@clerk/nextjs'
-import { Eye, Pencil, Plus, Link2, Users, ChevronRight, Loader2, UserMinus, Landmark, RefreshCw } from 'lucide-react'
+import { usePlaidLink } from 'react-plaid-link'
+import { Eye, Pencil, Plus, Link2, Users, ChevronRight, Loader2, UserMinus, Landmark, RefreshCw, AlertTriangle } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
@@ -190,7 +191,11 @@ function ConnectedBanksSection() {
               <div key={it.id} className="flex flex-wrap items-center gap-2.5 px-3 py-2.5">
                 <Landmark className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[0.8125rem] font-semibold">{it.institution || 'Bank'}</div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate text-[0.8125rem] font-semibold">{it.institution || 'Bank'}</span>
+                    {it.status === 'reauth_required' && <Badge variant="warning">Needs attention</Badge>}
+                    {it.status === 'revoked' && <Badge variant="destructive">Access revoked</Badge>}
+                  </div>
                   <div className="truncate text-[0.6875rem] text-muted-foreground">
                     {(it.accounts || []).map((a) => a.name + (a.mask ? ' ••' + a.mask : '')).join(', ') || 'No accounts found'}
                   </div>
@@ -198,9 +203,13 @@ function ConnectedBanksSection() {
                     {it.last_synced ? `Last synced ${prettyDate(it.last_synced.slice(0, 10))}` : 'Not yet synced'}
                   </div>
                 </div>
-                <Button variant="outline" size="xs" disabled={syncing} onClick={sync}>
-                  {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}Sync now
-                </Button>
+                {it.status === 'reauth_required' || it.status === 'revoked' ? (
+                  <FixConnectionButton item={it} onFixed={loadItems} />
+                ) : (
+                  <Button variant="outline" size="xs" disabled={syncing} onClick={sync}>
+                    {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}Sync now
+                  </Button>
+                )}
                 <Button variant="destructive" size="xs" onClick={() => setRemoving(it)}>Remove</Button>
               </div>
             ))}
@@ -221,6 +230,76 @@ function ConnectedBanksSection() {
         />
       )}
     </div>
+  )
+}
+
+// Roadmap item 5 (update mode / re-auth). Shown instead of "Sync now" once an
+// item's status flips to 'reauth_required' or 'revoked' (set by the webhook
+// route — see app/api/plaid/webhook/route.js — on ITEM_LOGIN_REQUIRED,
+// PENDING_EXPIRATION, ERROR, or USER_PERMISSION_REVOKED). Opens Plaid Link in
+// update mode (link-token route accepts { item_id } for this); update mode
+// never re-issues a new access_token, so on success we just PATCH the item's
+// status back to 'ok' and trigger a normal sync — no exchange call needed.
+function FixConnectionButton({ item, onFixed }) {
+  const toast = useToast()
+  const [linkToken, setLinkToken] = useState(null)
+  const [connecting, setConnecting] = useState(false)
+
+  const { open, ready } = usePlaidLink({
+    token: linkToken,
+    onSuccess: async () => {
+      setLinkToken(null)
+      try {
+        const res = await fetch('/api/plaid/items', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ item_id: item.item_id, status: 'ok' }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || "Couldn't confirm the fix")
+        toast('Connection fixed')
+        try {
+          const syncRes = await fetch('/api/plaid/sync', { method: 'POST' })
+          const syncData = await syncRes.json()
+          if (syncRes.ok) toast(`Synced: ${syncData.added} new transactions`)
+        } catch { /* best effort */ }
+        await onFixed()
+      } catch (e) {
+        toast(e.message, 'error')
+      }
+    },
+    onExit: () => setLinkToken(null),
+  })
+
+  useEffect(() => { if (linkToken && ready) open() }, [linkToken, ready, open])
+
+  const fix = async () => {
+    setConnecting(true)
+    try {
+      const res = await fetch('/api/plaid/link-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: item.item_id }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Couldn't start reconnection")
+      setLinkToken(data.link_token)
+    } catch (e) {
+      toast(e.message, 'error')
+    }
+    setConnecting(false)
+  }
+
+  return (
+    <Button
+      variant="outline"
+      size="xs"
+      className="border-amber-400/40 bg-amber-400/10 text-amber-400 hover:bg-amber-400/20"
+      disabled={connecting}
+      onClick={fix}
+    >
+      {connecting ? <Loader2 className="animate-spin" /> : <AlertTriangle />}Fix connection
+    </Button>
   )
 }
 

@@ -29,7 +29,7 @@ const NAV = [
 const TITLES = {
   '/': 'Dashboard', '/accounts': 'Accounts', '/debts': 'Debt Tracker', '/recurring': 'Recurring Payments',
   '/budgets': 'Budgets', '/goals': 'Goals', '/charts': 'Charts & Trends', '/simulator': 'Monthly Simulator', '/transactions': 'Transactions',
-  '/admin': 'Admin Portal', '/settings': 'Settings',
+  '/admin': 'Admin Portal', '/settings': 'Settings', '/plaid-oauth': 'Connecting your bank',
 }
 
 function BottomNav({ isAdmin }) {

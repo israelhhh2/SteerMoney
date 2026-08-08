@@ -27,3 +27,23 @@ export const supabaseAdmin = process.env.SUPABASE_SERVICE_ROLE_KEY
       auth: { autoRefreshToken: false, persistSession: false },
     })
   : null
+
+// Resolves the app's public base URL (no trailing slash) so routes can build
+// absolute `redirect_uri`/`webhook` URLs for Plaid. Priority: explicit
+// NEXT_PUBLIC_APP_URL env var, then Vercel's auto-injected VERCEL_URL, then
+// (if a request is passed) the incoming request's own Host header. Returns
+// null when nothing is known — callers must omit the OAuth/webhook params
+// entirely in that case rather than guessing, exactly like today's sandbox
+// behavior with no APP_URL set.
+export function getAppUrl(req) {
+  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '')
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
+  if (req) {
+    const host = req.headers?.get?.('host')
+    if (host) {
+      const proto = req.headers.get('x-forwarded-proto') || (host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https')
+      return `${proto}://${host}`
+    }
+  }
+  return null
+}
