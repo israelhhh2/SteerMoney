@@ -11,11 +11,13 @@ import { Bar, Ring, Money, CatIcon, budgetTone, ViewToggle, ConfirmDialog } from
 import { useApp, monthTx, spentIn } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
 import { fmt0, today, ymLabel, uid } from '@/lib/utils'
+import { useT } from '@/lib/i18n'
 
 const VIEW_KEY = 'fin-bud-view'
 
 export default function Budgets({ onViewTx }) {
   const { state, update } = useApp()
+  const t = useT()
   const toast = useToast()
   const fileRef = useRef(null)
   const [ym, setYm] = useState(today().slice(0, 7))
@@ -58,9 +60,9 @@ export default function Budgets({ onViewTx }) {
             else { s.budgets.push({ id: uid('b'), name, limit: lim }); added++ }
           })
         })
-        if (updated + added === 0) toast('No category rows found — keep the template layout: Category | Monthly Limit', 'error')
-        else toast(`Budget imported — ${updated} updated${added ? `, ${added} new` : ''}`)
-      } catch (err) { toast("Couldn't read that file — save it as .xlsx or .csv", 'error') }
+        if (updated + added === 0) toast(t('No category rows found — keep the template layout: Category | Monthly Limit'), 'error')
+        else toast(added ? t('Budget imported — {updated} updated, {added} new', { updated, added }) : t('Budget imported — {updated} updated', { updated }))
+      } catch (err) { toast(t("Couldn't read that file — save it as .xlsx or .csv"), 'error') }
     }
     rd.readAsArrayBuffer(file)
   }
@@ -75,12 +77,12 @@ export default function Budgets({ onViewTx }) {
           <Button variant="outline" size="xs" className="px-1.5" onClick={() => shift(1)}><ChevronRight /></Button>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
-          <Badge>Budgeted <b className="text-foreground">{fmt0(totalBudget)}</b></Badge>
-          <Badge>Spent <b className={totalSpent > totalBudget ? 'text-red-400' : 'text-emerald-400'}>{fmt0(totalSpent)}</b></Badge>
-          <Badge>Left <b className={totalBudget - totalSpent < 0 ? 'text-red-400' : 'text-foreground'}>{fmt0(totalBudget - totalSpent)}</b></Badge>
+          <Badge>{t('Budgeted')} <b className="text-foreground">{fmt0(totalBudget)}</b></Badge>
+          <Badge>{t('Spent')} <b className={totalSpent > totalBudget ? 'text-red-400' : 'text-emerald-400'}>{fmt0(totalSpent)}</b></Badge>
+          <Badge>{t('Left')} <b className={totalBudget - totalSpent < 0 ? 'text-red-400' : 'text-foreground'}>{fmt0(totalBudget - totalSpent)}</b></Badge>
           <ViewToggle value={view} onChange={changeView} />
-          <Button variant="outline" size="sm" onClick={() => fileRef.current.click()}><Upload />Import</Button>
-          <Button size="sm" onClick={() => setEditing(null)}><Plus />Add budget</Button>
+          <Button variant="outline" size="sm" onClick={() => fileRef.current.click()}><Upload />{t('Import')}</Button>
+          <Button size="sm" onClick={() => setEditing(null)}><Plus />{t('Add budget')}</Button>
         </div>
       </div>
 
@@ -88,17 +90,17 @@ export default function Budgets({ onViewTx }) {
         <div className="flex items-center justify-around gap-4">
           <div className="text-center">
             <Money value={fmt0(totalSpent)} className={`text-2xl font-extrabold sm:text-3xl ${totalSpent > totalBudget ? 'text-red-400' : ''}`} />
-            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">spent in {ymLabel(ym).split(' ')[0]}</div>
+            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">{t('spent in {month}', { month: ymLabel(ym).split(' ')[0] })}</div>
           </div>
           <Ring pct={overall} color={totalSpent > totalBudget ? '#f4514c' : '#5b9df9'} size={84} stroke={9} />
           <div className="text-center">
             <Money value={fmt0(totalBudget)} className="text-2xl font-extrabold sm:text-3xl" />
-            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">total budget</div>
+            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">{t('total budget')}</div>
           </div>
         </div>
         <div className="mt-4 flex flex-wrap justify-center gap-x-5 gap-y-1 text-[0.6875rem] font-semibold text-muted-foreground">
-          <span>Debt payments this month: <b className="text-foreground/80">{fmt0(debtPaid)}</b> (tracked on the Debt page, not in budgets)</span>
-          {unbudgeted > 0 && <span>Spending with no budget: <b className="text-amber-400">{fmt0(unbudgeted)}</b></span>}
+          <span>{t('Debt payments this month:')} <b className="text-foreground/80">{fmt0(debtPaid)}</b> {t('(tracked on the Debt page, not in budgets)')}</span>
+          {unbudgeted > 0 && <span>{t('Spending with no budget:')} <b className="text-amber-400">{fmt0(unbudgeted)}</b></span>}
         </div>
       </Card>
 
@@ -111,14 +113,14 @@ export default function Budgets({ onViewTx }) {
           <div className="border-b bg-secondary/40 px-3 py-2 sm:px-4 sm:py-2.5">
             <div className="flex items-center gap-2 text-[0.625rem] font-bold uppercase tracking-wider text-muted-foreground sm:gap-3">
               <span className="w-5 shrink-0 sm:w-7" />
-              <span className="min-w-0 flex-1 sm:w-44 sm:flex-none">Category</span>
-              <span className="w-12 shrink-0 text-right sm:w-16">Spent</span>
+              <span className="min-w-0 flex-1 sm:w-44 sm:flex-none">{t('Category')}</span>
+              <span className="w-12 shrink-0 text-right sm:w-16">{t('Spent')}</span>
               <span className="hidden flex-1 sm:block" />
-              <span className="w-12 shrink-0 text-right sm:w-16">Budget</span>
+              <span className="w-12 shrink-0 text-right sm:w-16">{t('Budget')}</span>
               <span className="w-3.5 shrink-0" />
             </div>
             <div className="mt-0.5 pl-7 text-[0.5625rem] font-semibold normal-case tracking-normal text-muted-foreground/70 sm:pl-10">
-              Tap a row for its transactions
+              {t('Tap a row for its transactions')}
             </div>
           </div>
           <div className="divide-y divide-border/60">
@@ -133,7 +135,7 @@ export default function Budgets({ onViewTx }) {
                   <div className="min-w-0 flex-1 sm:w-44 sm:flex-none">
                     <div className="truncate text-[0.84375rem] font-bold">{b.name}</div>
                     <div className="text-[0.65625rem] font-semibold leading-snug text-muted-foreground">
-                      {n} purchase{n === 1 ? '' : 's'}{over && <> · <span className="font-bold text-red-400">{fmt0(sp - b.limit)} over</span></>}
+                      {n === 1 ? t('{n} purchase', { n }) : t('{n} purchases', { n })}{over && <> · <span className="font-bold text-red-400">{t('{amount} over', { amount: fmt0(sp - b.limit) })}</span></>}
                     </div>
                   </div>
                   <span className={`w-12 shrink-0 text-right text-[0.8125rem] font-extrabold sm:w-16 ${over ? 'text-red-400' : ''}`}>{fmt0(sp)}</span>
@@ -141,7 +143,7 @@ export default function Budgets({ onViewTx }) {
                   <span className="w-12 shrink-0 text-right text-[0.8125rem] font-semibold text-muted-foreground sm:w-16">{b.limit ? fmt0(b.limit) : '—'}</span>
                   <button
                     className="shrink-0 text-muted-foreground transition hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100"
-                    title="Edit limit"
+                    title={t('Edit limit')}
                     onClick={(e) => { e.stopPropagation(); setEditing(b.id) }}
                   >
                     <Pencil className="h-3.5 w-3.5" />
@@ -164,7 +166,7 @@ export default function Budgets({ onViewTx }) {
               >
                 <button
                   className="absolute right-2 top-2 text-muted-foreground transition hover:text-foreground"
-                  title="Edit limit"
+                  title={t('Edit limit')}
                   onClick={(e) => { e.stopPropagation(); setEditing(b.id) }}
                 >
                   <Pencil className="h-3.5 w-3.5" />
@@ -179,7 +181,7 @@ export default function Budgets({ onViewTx }) {
                 </div>
                 {b.limit > 0 && (
                   <div className={`text-[0.6875rem] font-semibold ${over ? 'text-red-400' : 'text-muted-foreground'}`}>
-                    {over ? `${fmt0(sp - b.limit)} over` : `${fmt0(b.limit - sp)} left`}
+                    {over ? t('{amount} over', { amount: fmt0(sp - b.limit) }) : t('{amount} left', { amount: fmt0(b.limit - sp) })}
                   </div>
                 )}
               </Card>
@@ -188,7 +190,7 @@ export default function Budgets({ onViewTx }) {
         </div>
       )}
       <p className="text-[0.6875rem] text-muted-foreground/70">
-        Tap the pencil to change a limit, or use Import with the Budget Template.xlsx — columns: Category | Monthly Limit. Matching is by name; new names become new categories.
+        {t('Tap the pencil to change a limit, or use Import with the Budget Template.xlsx — columns: Category | Monthly Limit. Matching is by name; new names become new categories.')}
       </p>
 
       {editing !== undefined && <BudgetDialog id={editing} onClose={() => setEditing(undefined)} />}
@@ -198,6 +200,7 @@ export default function Budgets({ onViewTx }) {
 
 function BudgetDialog({ id, onClose }) {
   const { state, update } = useApp()
+  const t = useT()
   const toast = useToast()
   const centerToast = useCenterToast()
   const b = id ? state.budgets.find((x) => x.id === id) : { name: '', limit: '' }
@@ -205,13 +208,13 @@ function BudgetDialog({ id, onClose }) {
   const [confirmDel, setConfirmDel] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const save = () => {
-    if (!String(f.name).trim()) return toast('Enter a name', 'error')
+    if (!String(f.name).trim()) return toast(t('Enter a name'), 'error')
     update((s) => {
       const limit = parseFloat(f.limit) || 0
       if (id) Object.assign(s.budgets.find((x) => x.id === id), { name: f.name.trim(), limit })
       else s.budgets.push({ id: uid('b'), name: f.name.trim(), limit })
     })
-    toast(id ? 'Budget updated' : 'Budget added')
+    toast(id ? t('Budget updated') : t('Budget added'))
     onClose()
   }
   const del = async () => {
@@ -222,33 +225,33 @@ function BudgetDialog({ id, onClose }) {
     await new Promise((r) => setTimeout(r, 350))
     try {
       update((s) => { s.budgets = s.budgets.filter((x) => x.id !== id) })
-      centerToast('Budget deleted')
+      centerToast(t('Budget deleted'))
       setDeleting(false)
       setConfirmDel(false)
       onClose()
     } catch (e) {
-      centerToast(e?.message || 'Something went wrong', 'error')
+      centerToast(e?.message || t('Something went wrong'), 'error')
       setDeleting(false)
     }
   }
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>{id ? 'Edit' : 'New'} Budget</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{id ? t('Edit Budget') : t('New Budget')}</DialogTitle></DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div><Label>Name</Label><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Date nights" /></div>
-          <div><Label>Monthly limit ($) <span className="opacity-60">0 = no limit</span></Label><Input type="number" min="0" step="1" value={f.limit} onChange={(e) => setF({ ...f, limit: e.target.value })} /></div>
+          <div><Label>{t('Name')}</Label><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder={t('e.g. Date nights')} /></div>
+          <div><Label>{t('Monthly limit ($)')} <span className="opacity-60">{t('0 = no limit')}</span></Label><Input type="number" min="0" step="1" value={f.limit} onChange={(e) => setF({ ...f, limit: e.target.value })} /></div>
         </div>
         <DialogFooter>
-          {id && <Button variant="destructive" className="mr-auto" onClick={() => setConfirmDel(true)}>Delete</Button>}
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={save}>Save</Button>
+          {id && <Button variant="destructive" className="mr-auto" onClick={() => setConfirmDel(true)}>{t('Delete')}</Button>}
+          <Button variant="ghost" onClick={onClose}>{t('Cancel')}</Button>
+          <Button onClick={save}>{t('Save')}</Button>
         </DialogFooter>
       </DialogContent>
       {confirmDel && (
         <ConfirmDialog
-          title={`Delete the "${b.name}" budget?`}
-          desc="Its transactions are kept and will show as unbudgeted."
+          title={t('Delete the "{name}" budget?', { name: b.name })}
+          desc={t('Its transactions are kept and will show as unbudgeted.')}
           busy={deleting}
           onConfirm={del}
           onClose={() => setConfirmDel(false)}

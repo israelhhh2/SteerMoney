@@ -15,6 +15,7 @@ import { FeedbackWidget } from '@/components/feedback-widget'
 import { Logo, Wordmark } from '@/components/logo'
 import { useIsAdmin } from '@/lib/useIsAdmin'
 import { SpaceNameDialog, InviteLinkDialog } from '@/components/space-name-dialog'
+import { useT } from '@/lib/i18n'
 
 const NAV = [
   ['/', LayoutDashboard, 'Dashboard'],
@@ -35,6 +36,7 @@ const TITLES = {
 
 function BottomNav({ isAdmin }) {
   const pathname = usePathname()
+  const t = useT()
   const [open, setOpen] = useState(false)
 
   useEffect(() => {
@@ -75,7 +77,7 @@ function BottomNav({ isAdmin }) {
               className={cn('flex flex-col items-center gap-1 py-2', on ? 'text-primary' : 'text-muted-foreground')}
             >
               <Icon className="h-5 w-5" />
-              <span className="text-[0.65625rem] font-bold">{label}</span>
+              <span className="text-[0.65625rem] font-bold">{t(label)}</span>
             </Link>
           )
         })}
@@ -85,7 +87,7 @@ function BottomNav({ isAdmin }) {
           className={cn('flex flex-col items-center gap-1 py-2', moreActive ? 'text-primary' : 'text-muted-foreground')}
         >
           <Menu className="h-5 w-5" />
-          <span className="text-[0.65625rem] font-bold">More</span>
+          <span className="text-[0.65625rem] font-bold">{t('More')}</span>
         </button>
       </nav>
 
@@ -107,7 +109,7 @@ function BottomNav({ isAdmin }) {
                   )}
                 >
                   <Icon className={cn('h-4 w-4 shrink-0', on && 'text-primary')} />
-                  {label}
+                  {t(label)}
                 </Link>
               )
             })}
@@ -123,6 +125,7 @@ function Frame({ children, modal }) {
   const router = useRouter()
   const toast = useToast()
   const { state, syncError, viewingAs, exitViewAs, space, spaces, setSpace, createSpace, createInvite } = useApp()
+  const t = useT()
   const isAdmin = useIsAdmin()
   const nav = isAdmin ? [...NAV, ['/admin', ShieldCheck, 'Admin']] : NAV
   const [showNewSpace, setShowNewSpace] = useState(false)
@@ -164,8 +167,8 @@ function Frame({ children, modal }) {
 
   const saveNewSpace = async (name) => {
     const r = await createSpace(name)
-    if (r.error) toast("Couldn't create the space: " + r.error, 'error')
-    else toast(`"${name}" created. Tap Invite to share it.`)
+    if (r.error) toast(t("Couldn't create the space: {error}", { error: r.error }), 'error')
+    else toast(t('"{name}" created. Tap Invite to share it.', { name }))
   }
 
   const invite = async () => {
@@ -173,7 +176,7 @@ function Frame({ children, modal }) {
     if (r.error) return toast(r.error, 'error')
     try {
       await navigator.clipboard.writeText(r.url)
-      toast('Invite link copied. It works for 7 days.')
+      toast(t('Invite link copied. It works for 7 days.'))
     } catch {
       setInviteUrl(r.url)
     }
@@ -181,14 +184,14 @@ function Frame({ children, modal }) {
 
   const spaceSelect = (className) => (
     <Select
-      title="Switch between your personal finances and shared spaces"
+      title={t('Switch between your personal finances and shared spaces')}
       className={className}
       value={space?.id || 'personal'}
       onChange={(e) => switchSpace(e.target.value)}
     >
-      <option value="personal">Personal</option>
+      <option value="personal">{t('Personal')}</option>
       {spaces.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-      <option value="__new">+ New shared space…</option>
+      <option value="__new">{t('+ New shared space…')}</option>
     </Select>
   )
 
@@ -207,7 +210,7 @@ function Frame({ children, modal }) {
           <Link
             key={href}
             href={href}
-            title={label}
+            title={t(label)}
             className={cn(
               'flex h-10 items-center gap-3 rounded-xl px-3 text-[0.84375rem] font-bold transition',
               pathname === href
@@ -216,12 +219,12 @@ function Frame({ children, modal }) {
             )}
           >
             <Icon className={cn('h-4 w-4 shrink-0', pathname === href && 'text-primary')} />
-            {label}
+            {t(label)}
           </Link>
         ))}
         <Link
           href="/settings"
-          title="Settings"
+          title={t('Settings')}
           className={cn(
             'mt-auto flex h-10 items-center gap-3 rounded-xl px-3 text-[0.84375rem] font-bold transition',
             pathname === '/settings'
@@ -230,7 +233,7 @@ function Frame({ children, modal }) {
           )}
         >
           <Settings className={cn('h-4 w-4 shrink-0', pathname === '/settings' && 'text-primary')} />
-          Settings
+          {t('Settings')}
         </Link>
       </aside>
 
@@ -238,12 +241,12 @@ function Frame({ children, modal }) {
         {viewingAs && (
           <div className="sticky top-0 z-50 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-amber-400/30 bg-amber-400/10 px-4 py-1.5 text-[0.75rem] font-medium text-amber-300 backdrop-blur-md">
             <Eye className="h-3.5 w-3.5" />
-            Viewing as <b>{viewingAs.name}</b> (read-only, changes won't save)
+            {t('Viewing as')} <b>{viewingAs.name}</b> {t("(read-only, changes won't save)")}
             <button
               className="rounded-md border border-amber-400/40 px-2 py-0.5 text-[0.6875rem] font-semibold transition hover:bg-amber-400/20"
               onClick={() => { exitViewAs(); router.push('/admin') }}
             >
-              Exit
+              {t('Exit')}
             </button>
           </div>
         )}
@@ -268,16 +271,16 @@ function Frame({ children, modal }) {
         {/* Desktop header */}
         <header className="sticky top-0 z-30 hidden h-14 items-center border-b border-border/60 bg-background/85 px-4 backdrop-blur-md sm:px-8 md:flex">
           <div className="mx-auto flex w-full max-w-6xl items-center gap-3">
-            <h1 className="mr-auto text-[0.9375rem] font-extrabold tracking-tight">{TITLES[pathname] || 'Finances'}</h1>
+            <h1 className="mr-auto text-[0.9375rem] font-extrabold tracking-tight">{t(TITLES[pathname] || 'Finances')}</h1>
             {syncError ? (
               <span className="flex items-center gap-1.5 rounded-md border border-red-400/25 bg-red-400/10 px-2 py-1 text-[0.6875rem] font-medium text-red-400" title={syncError}>
-                <CloudOff className="h-3.5 w-3.5" /> Sync failed
+                <CloudOff className="h-3.5 w-3.5" /> {t('Sync failed')}
               </span>
             ) : null}
             {!viewingAs && spaceSelect('!h-8 max-w-32 text-xs sm:max-w-44')}
             {space && !viewingAs ? (
-              <Button variant="outline" size="xs" onClick={invite} title="Copy an invite link for this shared space">
-                <Link2 /><span className="hidden sm:inline">Invite</span>
+              <Button variant="outline" size="xs" onClick={invite} title={t('Copy an invite link for this shared space')}>
+                <Link2 /><span className="hidden sm:inline">{t('Invite')}</span>
               </Button>
             ) : null}
             {state ? <RemindersBell /> : null}
@@ -288,7 +291,7 @@ function Frame({ children, modal }) {
         <main className="mx-auto max-w-6xl px-4 py-5 pb-32 sm:px-8 sm:py-6 md:pb-12">
           {state ? children : (
             <div className="flex items-center justify-center gap-2 py-24 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading your finances…
+              <Loader2 className="h-4 w-4 animate-spin" /> {t('Loading your finances…')}
             </div>
           )}
         </main>
@@ -297,8 +300,8 @@ function Frame({ children, modal }) {
       </div>
       {showNewSpace && (
         <SpaceNameDialog
-          title="New shared space"
-          placeholder="Our finances"
+          title={t('New shared space')}
+          placeholder={t('Our finances')}
           onSave={saveNewSpace}
           onClose={() => setShowNewSpace(false)}
         />

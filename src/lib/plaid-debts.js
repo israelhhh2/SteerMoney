@@ -19,9 +19,35 @@ import { matchesBankAccount } from '@/lib/finance'
 // Best-effort throughout: every failure is caught and logged rather than
 // thrown, so a hiccup here never breaks bank linking or a routine sync (same
 // philosophy as the balance refresh in lib/plaid-sync.js).
+// True when a Postgres/PostgREST error means "that column doesn't exist yet"
+// (supabase/debts-plaid.sql hasn't been run) rather than some other failure
+// (network, RLS, bad data) that a caller should NOT silently swallow by
+// stripping columns and retrying. PostgREST returns PGRST204 with a message
+// like "Could not find the 'plaid_account_id' column of 'debts' in the
+// schema cache" for this; matched on both the code and a message regex since
+// the exact wording isn't a stable public contract.
+function isMissingColumnError(error) {
+  if (!error) return false
+  if (error.code === 'PGRST204') return true
+  return /plaid_account_id|plaid_item_id/i.test(error.message || '')
+}
+
 export async function syncDebtsFromPlaid({ userId, itemId, institution, accessToken, accounts }) {
-  if (!supabaseAdmin || !userId) return
-  const creditAccounts = (accounts || []).filter((a) => a.type === 'credit' && a.account_id)
+  if (!supabaseAdmin || !userId) {
+    console.warn('[plaid] syncDebtsFromPlaid skipped: missing supabaseAdmin or userId', { hasAdmin: Boolean(supabaseAdmin), userId })
+    return
+  }
+  // Robust to how an institution reports a credit card: `type` should
+  // always be 'credit' per Plaid's AccountType enum, but fall back to
+  // subtype containing "credit card" too in case an institution reports it
+  // oddly (type missing/other, or a stale cached `accounts` snapshot from
+  // before this app started storing `type` on every account).
+  const creditAccounts = (accounts || []).filter((a) => {
+    if (!a.account_id) return false
+    if (a.type === 'credit') return true
+    return String(a.subtype || '').toLowerCase().includes('credit card')
+  })
+  console.log(`[plaid] syncDebtsFromPlaid: ${creditAccounts.length}/${(accounts || []).length} accounts look like credit cards for item ${itemId || '(new)'}`, creditAccounts.map((a) => ({ id: a.account_id, name: a.name, type: a.type, subtype: a.subtype })))
   if (!creditAccounts.length) return
 
   // liabilitiesGet is a separate Plaid product from transactions/accounts —
@@ -84,6 +110,7 @@ export async function syncDebtsFromPlaid({ userId, itemId, institution, accessTo
       }
       const { error } = await supabaseAdmin.from('debts').update(patch).eq('user_id', userId).eq('id', id)
       if (error) console.error('[plaid] failed refreshing synced debt', id, error.message)
+      else console.log('[plaid] refreshed synced debt', id)
       continue
     }
 
@@ -93,6 +120,13 @@ export async function syncDebtsFromPlaid({ userId, itemId, institution, accessTo
     // Debts.jsx's "Bank connected" badge already use: if an existing manual
     // debt (never linked to any Plaid account) matches, link this account to
     // *that* row instead of creating a second one for the same card.
+    // `existingDebts` is only fetched once above (not re-queried per
+    // account), so a debt just linked to account #1 this same pass must be
+    // marked in-memory too — otherwise a second credit account that also
+    // fuzzy-matches the same manual debt (plausible: "Capital One Venture"
+    // and "Capital One Venture X" both overlap on the "capital"/"venture"
+    // tokens) would steal the link right back off account #1 and silently
+    // merge two different cards into one debts row.
     const manualMatch = existingDebts.find((d) => !d.plaid_account_id && matchesBankAccount(d, [{ ...a, institution }]))
     if (manualMatch) {
       const patch = {
@@ -109,14 +143,20 @@ export async function syncDebtsFromPlaid({ userId, itemId, institution, accessTo
         plaid_item_id: itemId || null,
       }
       let { error } = await supabaseAdmin.from('debts').update(patch).eq('user_id', userId).eq('id', manualMatch.id)
-      if (error && /plaid_account_id|plaid_item_id/i.test(error.message || '')) {
+      if (error && isMissingColumnError(error)) {
         // supabase/debts-plaid.sql not run yet — retry without the new
         // columns so the balance/apr/min/due refresh still lands; the link
         // itself (and the "Synced from Plaid" badge) waits for the migration.
+        console.warn('[plaid] debts.plaid_account_id/plaid_item_id columns missing — run supabase/debts-plaid.sql. Linking', manualMatch.id, 'without them for now.')
         const { plaid_account_id, plaid_item_id, ...rest } = patch
         ;({ error } = await supabaseAdmin.from('debts').update(rest).eq('user_id', userId).eq('id', manualMatch.id))
       }
-      if (error) console.error('[plaid] failed linking synced debt', manualMatch.id, error.message)
+      if (error) {
+        console.error('[plaid] failed linking synced debt', manualMatch.id, error.message)
+      } else {
+        console.log('[plaid] linked existing manual debt to Plaid account', manualMatch.id, a.account_id)
+        manualMatch.plaid_account_id = a.account_id // keep in-memory copy in sync, see note above
+      }
       continue
     }
 
@@ -128,10 +168,12 @@ export async function syncDebtsFromPlaid({ userId, itemId, institution, accessTo
       plaid_account_id: a.account_id, plaid_item_id: itemId || null,
     }
     let { error } = await supabaseAdmin.from('debts').insert(insertRow)
-    if (error && /plaid_account_id|plaid_item_id/i.test(error.message || '')) {
+    if (error && isMissingColumnError(error)) {
+      console.warn('[plaid] debts.plaid_account_id/plaid_item_id columns missing — run supabase/debts-plaid.sql. Creating', id, 'without them for now.')
       const { plaid_account_id, plaid_item_id, ...rest } = insertRow
       ;({ error } = await supabaseAdmin.from('debts').insert(rest))
     }
     if (error) console.error('[plaid] failed auto-creating debt for account', a.account_id, error.message)
+    else console.log('[plaid] auto-created Debt Tracker row for Plaid credit account', a.account_id, '->', id)
   }
 }

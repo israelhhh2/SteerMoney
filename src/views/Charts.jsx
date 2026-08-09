@@ -7,6 +7,7 @@ import { useApp } from '@/store'
 import { fmt0, ymLabel, monthLabel, prettyDate, catColor, srcLabel } from '@/lib/utils'
 import { simulatePlan } from '@/lib/finance'
 import { useIsMobile } from '@/lib/useMediaQuery'
+import { useT } from '@/lib/i18n'
 
 const TIP = {
   contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 },
@@ -18,6 +19,7 @@ const kfmt = (v) => '$' + (Math.abs(v) >= 1000 ? (v / 1000).toFixed(v % 1000 ===
 export default function Charts({ focus } = {}) {
   const { state, catInfo } = useApp()
   const isMobile = useIsMobile()
+  const t = useT()
   const noTr = useMemo(() => state.transactions.filter((t) => t.cat !== 'transfer'), [state.transactions])
 
   // Deep-link support for /charts?focus=income|spending (Dashboard's "Avg
@@ -63,10 +65,11 @@ export default function Charts({ focus } = {}) {
   const catTotals = {}
   noTr.forEach((t) => { if (t.type === 'expense' && t.cat !== 'debt') catTotals[t.cat] = (catTotals[t.cat] || 0) + t.amount })
   const topCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 6).map((e) => e[0])
+  const everythingElseLabel = t('Everything else')
   const stack = months.map((m) => {
     const row = { name: ymLabel(m) }
     topCats.forEach((c) => { row[catInfo(c).name] = Math.round(noTr.filter((t) => t.type === 'expense' && t.cat === c && t.date.startsWith(m)).reduce((s, t) => s + t.amount, 0)) })
-    row['Everything else'] = Math.round(noTr.filter((t) => t.type === 'expense' && t.cat !== 'debt' && !topCats.includes(t.cat) && t.date.startsWith(m)).reduce((s, t) => s + t.amount, 0))
+    row[everythingElseLabel] = Math.round(noTr.filter((t) => t.type === 'expense' && t.cat !== 'debt' && !topCats.includes(t.cat) && t.date.startsWith(m)).reduce((s, t) => s + t.amount, 0))
     return row
   })
 
@@ -87,7 +90,7 @@ export default function Charts({ focus } = {}) {
   return (
     <div className="fade-in grid gap-3 lg:grid-cols-2">
       <Card className="p-5">
-        <SectionHead title="Running Total" desc="Every dollar in minus every dollar out, day by day (all data, transfers excluded)" />
+        <SectionHead title={t('Running Total')} desc={t('Every dollar in minus every dollar out, day by day (all data, transfers excluded)')} />
         <div className="mt-4 h-56">
           <ResponsiveContainer>
             <LineChart data={cum}>
@@ -101,7 +104,7 @@ export default function Charts({ focus } = {}) {
         </div>
       </Card>
       <Card id="chart-income" className={`p-5 transition ${highlight === 'income' ? 'ring-2 ring-emerald-400/60' : ''}`}>
-        <SectionHead title="Income by Month" desc="Last 12 months, from transactions (transfers excluded)" />
+        <SectionHead title={t('Income by Month')} desc={t('Last 12 months, from transactions (transfers excluded)')} />
         <div className="mt-4 h-56">
           <ResponsiveContainer>
             <BarChart data={incomeByMonth} margin={{ top: 4, right: 4, left: -12, bottom: 0 }}>
@@ -114,7 +117,7 @@ export default function Charts({ focus } = {}) {
         </div>
       </Card>
       <Card id="chart-spending" className={`p-5 transition ${highlight === 'spending' ? 'ring-2 ring-red-400/60' : ''}`}>
-        <SectionHead title="Spending by Month" desc="Last 12 months, from transactions (transfers excluded)" />
+        <SectionHead title={t('Spending by Month')} desc={t('Last 12 months, from transactions (transfers excluded)')} />
         <div className="mt-4 h-56">
           <ResponsiveContainer>
             <BarChart data={spendByMonth} margin={{ top: 4, right: 4, left: -12, bottom: 0 }}>
@@ -127,7 +130,7 @@ export default function Charts({ focus } = {}) {
         </div>
       </Card>
       <Card className="p-5">
-        <SectionHead title="Spending by Category per Month" desc="Your biggest categories, stacked (debt payments excluded)" />
+        <SectionHead title={t('Spending by Category per Month')} desc={t('Your biggest categories, stacked (debt payments excluded)')} />
         <div className="mt-4 h-56">
           <ResponsiveContainer>
             <BarChart data={stack}>
@@ -136,13 +139,13 @@ export default function Charts({ focus } = {}) {
               <Tooltip {...TIP} cursor={{ fill: '#ffffff08' }} formatter={(v) => fmt0(v)} />
               <Legend wrapperStyle={{ fontSize: 10 }} formatter={(v) => <span style={{ color: '#a1a1aa' }}>{v}</span>} />
               {topCats.map((c) => <Bar key={c} dataKey={catInfo(c).name} stackId="a" fill={catColor(c)} maxBarSize={40} />)}
-              <Bar dataKey="Everything else" stackId="a" fill="#3f3f46" maxBarSize={40} radius={[3, 3, 0, 0]} />
+              <Bar dataKey={everythingElseLabel} stackId="a" fill="#3f3f46" maxBarSize={40} radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
       </Card>
       <Card className="p-5">
-        <SectionHead title="Top Places Your Money Goes" desc="Biggest merchants across all data (debt payments excluded)" />
+        <SectionHead title={t('Top Places Your Money Goes')} desc={t('Biggest merchants across all data (debt payments excluded)')} />
         <div className="mt-4 h-64">
           <ResponsiveContainer>
             <BarChart data={topM} layout="vertical">
@@ -157,7 +160,7 @@ export default function Charts({ focus } = {}) {
         </div>
       </Card>
       <Card className="p-5">
-        <SectionHead title="Debt Breakdown" desc="Who you owe, by balance" />
+        <SectionHead title={t('Debt Breakdown')} desc={t('Who you owe, by balance')} />
         <div className="mt-4 h-48 sm:h-64">
           <ResponsiveContainer>
             <PieChart>
@@ -181,13 +184,13 @@ export default function Charts({ focus } = {}) {
         )}
       </Card>
       <Card className="p-5 lg:col-span-2">
-        <SectionHead title="Debt Payoff Projection" desc={`Total debt over time at your current plan (${fmt0(state.sim.budget)}/mo, ${state.sim.strategy})`} />
+        <SectionHead title={t('Debt Payoff Projection')} desc={t('Total debt over time at your current plan ({budget}/mo, {strategy})', { budget: fmt0(state.sim.budget), strategy: state.sim.strategy })} />
         <div className="mt-4 h-64">
           <ResponsiveContainer>
             <LineChart data={proj}>
               <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 10 }} interval="preserveStartEnd" axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: '#52525b', fontSize: 10 }} tickFormatter={kfmt} axisLine={false} tickLine={false} />
-              <Tooltip {...TIP} formatter={(v) => fmt0(v) + ' left'} />
+              <Tooltip {...TIP} formatter={(v) => t('{amount} left', { amount: fmt0(v) })} />
               <Line type="monotone" dataKey="balance" stroke="#38bdf8" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>

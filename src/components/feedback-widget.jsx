@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Segmented } from '@/components/ui/segmented'
 import { useCenterToast } from '@/components/toast'
 import { useIsMobile } from '@/lib/useMediaQuery'
+import { useT } from '@/lib/i18n'
 
 // Floating "send feedback / report a bug" widget, mounted once in
 // app/(app)/layout.jsx so it's on every authed page. Deliberately sits below
@@ -16,9 +17,9 @@ import { useIsMobile } from '@/lib/useMediaQuery'
 // and panel are both z-[55], so any real dialog/modal always paints over it,
 // and this session's own success centerToast (fired on send) still shows on
 // top of the now-closed panel.
-const TYPES = [['feedback', 'Feedback'], ['bug', 'Bug']]
-
 export function FeedbackWidget() {
+  const t = useT()
+  const TYPES = [['feedback', t('Feedback')], ['bug', t('Bug')]]
   const pathname = usePathname()
   const { user } = useUser()
   const centerToast = useCenterToast()
@@ -41,14 +42,14 @@ export function FeedbackWidget() {
   const [scrolling, setScrolling] = useState(false)
   useEffect(() => {
     if (!isMobile) return
-    let t
+    let timer
     const onScroll = () => {
       setScrolling(true)
-      clearTimeout(t)
-      t = setTimeout(() => setScrolling(false), 500)
+      clearTimeout(timer)
+      timer = setTimeout(() => setScrolling(false), 500)
     }
     window.addEventListener('scroll', onScroll, { passive: true })
-    return () => { window.removeEventListener('scroll', onScroll); clearTimeout(t) }
+    return () => { window.removeEventListener('scroll', onScroll); clearTimeout(timer) }
   }, [isMobile])
 
   useEffect(() => {
@@ -89,7 +90,7 @@ export function FeedbackWidget() {
       }),
     }).then(async (res) => {
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data?.error || "Couldn't send that — try again")
+      if (!res.ok) throw new Error(data?.error || t("Couldn't send that — try again"))
       return data
     })
 
@@ -123,9 +124,9 @@ export function FeedbackWidget() {
     if (dbOk || emailOk) {
       setMessage('')
       setOpen(false)
-      centerToast('Thanks — we read every one!')
+      centerToast(t('Thanks — we read every one!'))
     } else {
-      setError(dbResult.reason?.message || "Couldn't send that — try again")
+      setError(dbResult.reason?.message || t("Couldn't send that — try again"))
     }
     setSending(false)
   }
@@ -135,7 +136,7 @@ export function FeedbackWidget() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        aria-label={open ? 'Close feedback' : 'Send feedback or report a bug'}
+        aria-label={open ? t('Close feedback') : t('Send feedback or report a bug')}
         className={cn(
           'fixed right-3 z-[55] h-10 w-10 items-center justify-center rounded-full border border-border/60 bg-primary text-primary-foreground shadow-lg transition hover:opacity-90 sm:right-4 md:h-12 md:w-12',
           'bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-6',
@@ -151,7 +152,7 @@ export function FeedbackWidget() {
           <div className="fixed inset-0 z-[54] md:hidden" onClick={close} />
           <div
             role="dialog"
-            aria-label="Send feedback or report a bug"
+            aria-label={t('Send feedback or report a bug')}
             className={cn(
               'fixed z-[55] border-border/60 bg-card shadow-2xl',
               'inset-x-0 bottom-0 rounded-t-2xl border-t p-4',
@@ -160,7 +161,7 @@ export function FeedbackWidget() {
             style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
           >
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-[0.9375rem] font-extrabold tracking-tight">Send us feedback</h3>
+              <h3 className="text-[0.9375rem] font-extrabold tracking-tight">{t('Send us feedback')}</h3>
               <button type="button" onClick={close} className="text-muted-foreground hover:text-foreground md:hidden">
                 <X className="h-4 w-4" />
               </button>
@@ -175,13 +176,13 @@ export function FeedbackWidget() {
               onChange={(e) => setMessage(e.target.value)}
               placeholder={
                 type === 'bug'
-                  ? "What happened? The more detail, the faster we can fix it."
-                  : "What's on your mind? We read every note."
+                  ? t("What happened? The more detail, the faster we can fix it.")
+                  : t("What's on your mind? We read every note.")
               }
               className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [color-scheme:dark]"
             />
             <p className="mt-1.5 text-[0.6875rem] text-muted-foreground">
-              No need for a screenshot — just describe it in your own words.
+              {t('No need for a screenshot — just describe it in your own words.')}
             </p>
 
             {email ? (
@@ -194,7 +195,7 @@ export function FeedbackWidget() {
                 />
                 <span className="flex min-w-0 items-start gap-1">
                   <Mail className="mt-0.5 h-3 w-3 shrink-0" />
-                  Email me back at <span className="font-semibold text-foreground">{email}</span> if needed
+                  {t('Email me back at')} <span className="font-semibold text-foreground">{email}</span> {t('if needed')}
                 </span>
               </label>
             ) : null}
@@ -203,7 +204,7 @@ export function FeedbackWidget() {
 
             <Button className="mt-3 w-full" disabled={!message.trim() || sending} onClick={send}>
               {sending ? <Loader2 className="animate-spin" /> : null}
-              {sending ? 'Sending…' : 'Send'}
+              {sending ? t('Sending…') : t('Send')}
             </Button>
           </div>
         </>

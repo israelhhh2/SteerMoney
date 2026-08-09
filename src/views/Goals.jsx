@@ -13,6 +13,7 @@ import { Bar, Ring, Money, SectionLabel, ViewToggle, ConfirmDialog } from '@/com
 import { useApp } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
 import { fmt0, today, prettyDate, ymLabel, uid } from '@/lib/utils'
+import { useT } from '@/lib/i18n'
 
 export const ICONS = {
   piggybank: PiggyBank, plane: Plane, home: Home, car: Car, gift: Gift,
@@ -62,6 +63,7 @@ function cumulativeSeries(g) {
 
 export default function Goals() {
   const { state: appState } = useApp()
+  const t = useT()
   const state = { ...appState, goals: appState.goals || [] } // guards stale caches from before the goals table existed
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
   const [detailId, setDetailId] = useState(null)
@@ -74,11 +76,11 @@ export default function Goals() {
       <div className="fade-in space-y-6">
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
           <Flag className="h-8 w-8 text-primary" />
-          <h3 className="text-[0.9375rem] font-bold">Set your first goal</h3>
+          <h3 className="text-[0.9375rem] font-bold">{t('Set your first goal')}</h3>
           <p className="max-w-sm text-[0.78125rem] text-muted-foreground">
-            Goals help you save toward something specific, like a trip, a house, or an emergency fund, by tracking contributions and showing how close you are.
+            {t('Goals help you save toward something specific, like a trip, a house, or an emergency fund, by tracking contributions and showing how close you are.')}
           </p>
-          <Button onClick={() => setEditing(null)}><Plus />Add your first goal</Button>
+          <Button onClick={() => setEditing(null)}><Plus />{t('Add your first goal')}</Button>
         </Card>
         {editing !== undefined && <GoalEditorDialog id={editing} onClose={() => setEditing(undefined)} />}
       </div>
@@ -103,26 +105,26 @@ export default function Goals() {
     <div className="fade-in space-y-6">
       <div className="flex items-center justify-end gap-2">
         <ViewToggle value={view} onChange={changeView} />
-        <Button size="sm" onClick={() => setEditing(null)}><Plus />Add goal</Button>
+        <Button size="sm" onClick={() => setEditing(null)}><Plus />{t('Add goal')}</Button>
       </div>
 
       <Card className="p-5">
         <div className="flex items-center justify-around gap-4">
           <div className="text-center">
             <Money value={fmt0(savedThisMonth)} className="text-2xl font-extrabold sm:text-3xl" />
-            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">saved in {monthShort}</div>
+            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">{t('saved in {month}', { month: monthShort })}</div>
           </div>
           <Ring pct={pct} color="#5b9df9" size={84} stroke={9} />
           <div className="text-center">
             <Money value={fmt0(toGoThisMonth)} className="text-2xl font-extrabold sm:text-3xl" />
-            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">to go in {monthShort}</div>
+            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">{t('to go in {month}', { month: monthShort })}</div>
           </div>
         </div>
       </Card>
 
       {inProgress.length > 0 && (
         <div className="space-y-2.5">
-          <SectionLabel title="Active" />
+          <SectionLabel title={t('Active')} />
           {view === 'list' ? (
             <Card className="divide-y divide-border/60 overflow-hidden">
               {inProgress.map((g) => <GoalRow key={g.id} goal={g} onClick={() => setDetailId(g.id)} />)}
@@ -137,7 +139,7 @@ export default function Goals() {
 
       {ready.length > 0 && (
         <div className="space-y-2.5">
-          <SectionLabel title="Ready to spend" />
+          <SectionLabel title={t('Ready to spend')} />
           {view === 'list' ? (
             <Card className="divide-y divide-border/60 overflow-hidden">
               {ready.map((g) => <GoalRow key={g.id} goal={g} onClick={() => setDetailId(g.id)} />)}
@@ -152,7 +154,7 @@ export default function Goals() {
 
       {archived.length > 0 && (
         <div className="space-y-2.5">
-          <SectionLabel title="Archived" />
+          <SectionLabel title={t('Archived')} />
           {view === 'list' ? (
             <Card className="divide-y divide-border/60 overflow-hidden">
               {archived.map((g) => <GoalRow key={g.id} goal={g} onClick={() => setDetailId(g.id)} mutedAmount />)}
@@ -190,6 +192,7 @@ function GoalRow({ goal, onClick, mutedAmount }) {
 }
 
 function GoalCard({ goal, onClick, muted }) {
+  const t = useT()
   const saved = savedTotal(goal)
   const reached = goal.target > 0 && saved >= goal.target
   const pct = goal.target ? Math.min(100, (saved / goal.target) * 100) : 0
@@ -204,12 +207,12 @@ function GoalCard({ goal, onClick, muted }) {
       </div>
       <div className="mt-2.5">
         <Money value={fmt0(saved)} className="text-base font-extrabold" />
-        <span className="ml-1 text-[0.75rem] font-semibold text-muted-foreground">of {fmt0(goal.target)}</span>
+        <span className="ml-1 text-[0.75rem] font-semibold text-muted-foreground">{t('of {amount}', { amount: fmt0(goal.target) })}</span>
       </div>
       <div className="mt-2"><Bar pct={reached ? 100 : pct} color="#2fbf71" /></div>
       {goal.targetDate && (
         <div className="mt-1 text-[0.625rem] font-semibold text-muted-foreground">
-          {reached ? ymLabel(goal.targetDate) : `${monthsLeft(goal.targetDate)} mo left · ${ymLabel(goal.targetDate)}`}
+          {reached ? ymLabel(goal.targetDate) : t('{n} mo left · {date}', { n: monthsLeft(goal.targetDate), date: ymLabel(goal.targetDate) })}
         </div>
       )}
     </Card>
@@ -217,12 +220,13 @@ function GoalCard({ goal, onClick, muted }) {
 }
 
 function ProgressFooter({ goal }) {
+  const t = useT()
   const pct = goal.target ? Math.min(100, (savedTotal(goal) / goal.target) * 100) : 0
   return (
     <div className="mt-2 pl-10">
       <Bar pct={pct} color="#2fbf71" />
       <div className="mt-1 flex items-center justify-between text-[0.6875rem] font-semibold text-muted-foreground">
-        <span>{monthsLeft(goal.targetDate)} months left</span>
+        <span>{t('{n} months left', { n: monthsLeft(goal.targetDate) })}</span>
         <span className="flex items-center gap-1"><Flag className="h-3 w-3" />{ymLabel(goal.targetDate)}</span>
       </div>
     </div>
@@ -252,6 +256,7 @@ function MonthCircles({ goal }) {
 function GoalDetailDialog({ goal, onClose, onEdit }) {
   const { update } = useApp()
   const toast = useToast()
+  const t = useT()
   const [addingTx, setAddingTx] = useState(false)
   const [tx, setTx] = useState({ amount: '', date: today(), note: '', method: 'transfer' })
 
@@ -261,14 +266,15 @@ function GoalDetailDialog({ goal, onClose, onEdit }) {
   const need = neededPerMonth(goal)
   const series = cumulativeSeries(goal)
   const txList = (goal.txs || []).slice().sort((a, b) => b.date.localeCompare(a.date))
+  const methodOptions = METHOD_OPTIONS.map(([k, v]) => [k, t(v)])
 
   const saveTx = () => {
     const amount = parseFloat(tx.amount)
-    if (isNaN(amount) || amount === 0) return toast('Enter an amount', 'error')
+    if (isNaN(amount) || amount === 0) return toast(t('Enter an amount'), 'error')
     update((s) => {
       s.goals.find((x) => x.id === goal.id).txs.push({ id: uid('gtx'), date: tx.date, amount, note: tx.note.trim() || null, method: tx.method })
     })
-    toast('Progress updated')
+    toast(t('Progress updated'))
     setAddingTx(false)
     setTx({ amount: '', date: today(), note: '', method: 'transfer' })
   }
@@ -286,9 +292,9 @@ function GoalDetailDialog({ goal, onClose, onEdit }) {
         <div>
           <Money value={fmt0(saved)} className="text-2xl font-extrabold" />
           {reached ? (
-            <div className="mt-0.5 text-[0.75rem] font-bold text-emerald-400">Goal reached</div>
+            <div className="mt-0.5 text-[0.75rem] font-bold text-emerald-400">{t('Goal reached')}</div>
           ) : (
-            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">{fmt0(toGo)} to go</div>
+            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">{t('{amount} to go', { amount: fmt0(toGo) })}</div>
           )}
         </div>
 
@@ -305,36 +311,36 @@ function GoalDetailDialog({ goal, onClose, onEdit }) {
         )}
 
         {goal.targetDate && !reached && (
-          <div className="text-[0.75rem] font-semibold text-muted-foreground">You need to save <span className="text-foreground">{fmt0(need)}</span> per month</div>
+          <div className="text-[0.75rem] font-semibold text-muted-foreground">{t('You need to save')} <span className="text-foreground">{fmt0(need)}</span> {t('per month')}</div>
         )}
 
         <div className="grid grid-cols-2 gap-3 rounded-lg border bg-secondary/40 p-3 text-[0.78125rem]">
-          <div><div className="text-muted-foreground">Goal amount</div><div className="font-bold">{fmt0(goal.target)}</div></div>
-          <div><div className="text-muted-foreground">Target date</div><div className="font-bold">{goal.targetDate ? ymLabel(goal.targetDate) : '—'}</div></div>
+          <div><div className="text-muted-foreground">{t('Goal amount')}</div><div className="font-bold">{fmt0(goal.target)}</div></div>
+          <div><div className="text-muted-foreground">{t('Target date')}</div><div className="font-bold">{goal.targetDate ? ymLabel(goal.targetDate) : '—'}</div></div>
         </div>
 
         <div className="max-h-40 space-y-1.5 overflow-y-auto">
-          {txList.length ? txList.map((t) => (
-            <div key={t.id} className="flex items-center justify-between text-[0.78125rem]">
+          {txList.length ? txList.map((entry) => (
+            <div key={entry.id} className="flex items-center justify-between text-[0.78125rem]">
               <div>
-                <span className="font-semibold">{prettyDate(t.date)}</span>
-                <span className="ml-2 text-muted-foreground">{t.note || METHOD_LABELS[t.method] || 'Contribution'}</span>
+                <span className="font-semibold">{prettyDate(entry.date)}</span>
+                <span className="ml-2 text-muted-foreground">{entry.note || t(METHOD_LABELS[entry.method]) || t('Contribution')}</span>
               </div>
-              <span className={`font-bold ${t.amount < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                {t.amount < 0 ? '−' : '+'}{fmt0(Math.abs(t.amount))}
+              <span className={`font-bold ${entry.amount < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                {entry.amount < 0 ? '−' : '+'}{fmt0(Math.abs(entry.amount))}
               </span>
             </div>
-          )) : <div className="py-4 text-center text-[0.75rem] text-muted-foreground">No contributions yet.</div>}
+          )) : <div className="py-4 text-center text-[0.75rem] text-muted-foreground">{t('No contributions yet.')}</div>}
         </div>
 
         {addingTx && (
           <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-3">
-            <div><Label>Amount ($)</Label><Input type="number" step="0.01" value={tx.amount} onChange={(e) => setTx({ ...tx, amount: e.target.value })} placeholder="-50 to withdraw" /></div>
-            <div><Label>Date</Label><Input type="date" value={tx.date} onChange={(e) => setTx({ ...tx, date: e.target.value })} /></div>
-            <div><Label>Note (optional)</Label><Input value={tx.note} onChange={(e) => setTx({ ...tx, note: e.target.value })} /></div>
+            <div><Label>{t('Amount ($)')}</Label><Input type="number" step="0.01" value={tx.amount} onChange={(e) => setTx({ ...tx, amount: e.target.value })} placeholder={t('-50 to withdraw')} /></div>
+            <div><Label>{t('Date')}</Label><Input type="date" value={tx.date} onChange={(e) => setTx({ ...tx, date: e.target.value })} /></div>
+            <div><Label>{t('Note (optional)')}</Label><Input value={tx.note} onChange={(e) => setTx({ ...tx, note: e.target.value })} /></div>
             <div className="sm:col-span-3">
-              <Label>Method</Label>
-              <Segmented value={tx.method} onChange={(v) => setTx({ ...tx, method: v })} options={METHOD_OPTIONS} />
+              <Label>{t('Method')}</Label>
+              <Segmented value={tx.method} onChange={(v) => setTx({ ...tx, method: v })} options={methodOptions} />
             </div>
           </div>
         )}
@@ -342,15 +348,15 @@ function GoalDetailDialog({ goal, onClose, onEdit }) {
         <DialogFooter>
           {addingTx ? (
             <>
-              <Button variant="ghost" onClick={() => setAddingTx(false)}>Cancel</Button>
-              <Button onClick={saveTx}>Save</Button>
+              <Button variant="ghost" onClick={() => setAddingTx(false)}>{t('Cancel')}</Button>
+              <Button onClick={saveTx}>{t('Save')}</Button>
             </>
           ) : goal.status === 'archived' ? (
-            <Button variant="outline" onClick={() => { update((s) => { s.goals.find((x) => x.id === goal.id).status = 'active' }); toast('Goal unarchived') }}>Unarchive</Button>
+            <Button variant="outline" onClick={() => { update((s) => { s.goals.find((x) => x.id === goal.id).status = 'active' }); toast(t('Goal unarchived')) }}>{t('Unarchive')}</Button>
           ) : (
             <>
-              <Button variant="outline" onClick={() => { onClose(); onEdit(goal.id) }}>Goal settings</Button>
-              <Button onClick={() => setAddingTx(true)}>Update progress</Button>
+              <Button variant="outline" onClick={() => { onClose(); onEdit(goal.id) }}>{t('Goal settings')}</Button>
+              <Button onClick={() => setAddingTx(true)}>{t('Update progress')}</Button>
             </>
           )}
         </DialogFooter>
@@ -364,6 +370,7 @@ function GoalEditorDialog({ id, onClose }) {
   const goals = appState.goals || [] // guards stale caches from before the goals table existed
   const toast = useToast()
   const centerToast = useCenterToast()
+  const t = useT()
   const g = id ? goals.find((x) => x.id === id) : { name: '', icon: ICON_LIST[0], target: '', targetDate: '', status: 'active' }
   const [f, setF] = useState({ ...g, targetDate: g.targetDate || '' })
   const [confirmDel, setConfirmDel] = useState(false)
@@ -371,20 +378,20 @@ function GoalEditorDialog({ id, onClose }) {
 
   const save = () => {
     const name = String(f.name).trim()
-    if (!name) return toast('Enter a name', 'error')
+    if (!name) return toast(t('Enter a name'), 'error')
     const target = parseFloat(f.target)
-    if (isNaN(target) || target <= 0) return toast('Enter a goal amount', 'error')
+    if (isNaN(target) || target <= 0) return toast(t('Enter a goal amount'), 'error')
     update((s) => {
       const data = { name, icon: f.icon, target, targetDate: f.targetDate || null }
       if (id) Object.assign(s.goals.find((x) => x.id === id), data)
       else s.goals.push({ id: uid('g'), ...data, status: 'active', txs: [] })
     })
-    toast(id ? 'Goal updated' : 'Goal added')
+    toast(id ? t('Goal updated') : t('Goal added'))
     onClose()
   }
   const toggleArchive = () => {
     update((s) => { const gg = s.goals.find((x) => x.id === id); gg.status = gg.status === 'archived' ? 'active' : 'archived' })
-    toast(g.status === 'archived' ? 'Goal unarchived' : 'Goal archived')
+    toast(g.status === 'archived' ? t('Goal unarchived') : t('Goal archived'))
     onClose()
   }
   const del = async () => {
@@ -395,12 +402,12 @@ function GoalEditorDialog({ id, onClose }) {
     await new Promise((r) => setTimeout(r, 350))
     try {
       update((s) => { s.goals = s.goals.filter((x) => x.id !== id) })
-      centerToast('Goal deleted')
+      centerToast(t('Goal deleted'))
       setDeleting(false)
       setConfirmDel(false)
       onClose()
     } catch (e) {
-      centerToast(e?.message || 'Something went wrong', 'error')
+      centerToast(e?.message || t('Something went wrong'), 'error')
       setDeleting(false)
     }
   }
@@ -408,11 +415,11 @@ function GoalEditorDialog({ id, onClose }) {
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>{id ? 'Edit' : 'New'} Goal</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{id ? t('Edit Goal') : t('New Goal')}</DialogTitle></DialogHeader>
         <div className="grid gap-3">
-          <div><Label>Name</Label><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Trip to Japan" /></div>
+          <div><Label>{t('Name')}</Label><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder={t('e.g. Trip to Japan')} /></div>
           <div>
-            <Label>Icon</Label>
+            <Label>{t('Icon')}</Label>
             <div className="flex flex-wrap gap-2">
               {ICON_LIST.map((k) => {
                 const I = ICONS[k]
@@ -430,27 +437,27 @@ function GoalEditorDialog({ id, onClose }) {
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div><Label>Goal amount ($)</Label><Input type="number" min="0" step="1" value={f.target} onChange={(e) => setF({ ...f, target: e.target.value })} /></div>
+            <div><Label>{t('Goal amount ($)')}</Label><Input type="number" min="0" step="1" value={f.target} onChange={(e) => setF({ ...f, target: e.target.value })} /></div>
             <div>
-              <Label>Target date <span className="opacity-60">optional</span></Label>
+              <Label>{t('Target date')} <span className="opacity-60">{t('optional')}</span></Label>
               <div className="flex gap-1.5">
                 <Input type="month" value={f.targetDate} onChange={(e) => setF({ ...f, targetDate: e.target.value })} />
-                {f.targetDate && <Button variant="outline" size="xs" onClick={() => setF({ ...f, targetDate: '' })}>Clear</Button>}
+                {f.targetDate && <Button variant="outline" size="xs" onClick={() => setF({ ...f, targetDate: '' })}>{t('Clear')}</Button>}
               </div>
             </div>
           </div>
         </div>
         <DialogFooter>
-          {id && <Button variant="destructive" className="mr-auto" onClick={() => setConfirmDel(true)}>Delete</Button>}
-          {id && <Button variant="outline" onClick={toggleArchive}>{g.status === 'archived' ? 'Unarchive' : 'Archive'}</Button>}
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={save}>Save</Button>
+          {id && <Button variant="destructive" className="mr-auto" onClick={() => setConfirmDel(true)}>{t('Delete')}</Button>}
+          {id && <Button variant="outline" onClick={toggleArchive}>{g.status === 'archived' ? t('Unarchive') : t('Archive')}</Button>}
+          <Button variant="ghost" onClick={onClose}>{t('Cancel')}</Button>
+          <Button onClick={save}>{t('Save')}</Button>
         </DialogFooter>
       </DialogContent>
       {confirmDel && (
         <ConfirmDialog
-          title={`Delete the "${g.name}" goal?`}
-          desc="This can't be undone."
+          title={t('Delete the "{name}" goal?', { name: g.name })}
+          desc={t("This can't be undone.")}
           busy={deleting}
           onConfirm={del}
           onClose={() => setConfirmDel(false)}

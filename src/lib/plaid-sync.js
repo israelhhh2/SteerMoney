@@ -34,13 +34,34 @@ export async function syncPlaidItem(item, opts = {}) {
   let hasMore = true
   const allAdded = [], allModified = [], allRemoved = []
 
-  while (hasMore) {
-    const resp = await plaidClient.transactionsSync({ access_token: item.access_token, cursor })
-    allAdded.push(...resp.data.added)
-    allModified.push(...resp.data.modified)
-    allRemoved.push(...resp.data.removed)
-    hasMore = resp.data.has_more
-    cursor = resp.data.next_cursor
+  // Isolated from the balance refresh / Debt Tracker auto-sync below: a
+  // transactionsSync failure (ITEM_LOGIN_REQUIRED, revoked access, a stale/
+  // invalid cursor, a transient Plaid 5xx, etc.) used to throw straight out
+  // of this function, which — since accountsGet-based balance refresh and
+  // syncDebtsFromPlaid() (lib/plaid-debts.js) both run *after* this loop in
+  // the function body — meant neither ever ran for that item. That's the
+  // main reason an existing (already-linked) item's credit cards could sit
+  // in the Debt Tracker feature forever without a row ever getting created:
+  // any hiccup in the unrelated transactions pull silently blocked the debt
+  // sync every single time "Sync now"/the webhook fired for that item.
+  // Caught here so balance refresh + debt sync always get a chance to run;
+  // re-thrown at the end so callers still see/log the transaction-sync
+  // failure like before (status/reauth handling is unaffected — that's
+  // driven by the webhook's own ITEM_LOGIN_REQUIRED code, not this catch).
+  let txSyncError = null
+  try {
+    while (hasMore) {
+      const resp = await plaidClient.transactionsSync({ access_token: item.access_token, cursor })
+      allAdded.push(...resp.data.added)
+      allModified.push(...resp.data.modified)
+      allRemoved.push(...resp.data.removed)
+      hasMore = resp.data.has_more
+      cursor = resp.data.next_cursor
+    }
+  } catch (e) {
+    console.error('[plaid] transactionsSync failed for item', item.item_id, '— continuing with balance/debt sync only:', e?.response?.data || e?.message || e)
+    txSyncError = e
+    cursor = item.cursor || undefined // don't persist a partial/advanced cursor from a failed run
   }
 
   // Store pending transactions too (previously filtered out entirely) — the
@@ -147,8 +168,12 @@ export async function syncPlaidItem(item, opts = {}) {
   // sync proves it's healthy again. Defensive: `status` may not be migrated
   // onto plaid_items yet (see CLAUDE.md: `ALTER TABLE plaid_items ADD
   // COLUMN IF NOT EXISTS status text DEFAULT 'ok';`), so retry without it if so.
+  // If transactionsSync itself failed above (txSyncError), none of that
+  // "a clean sync proves it's healthy" logic holds — leave status exactly
+  // as it was rather than incorrectly clearing 'reauth_required'/'revoked'
+  // or 'syncing' off the back of a pass that didn't actually complete.
   const priorStatus = item.status || 'ok'
-  const nextStatus = priorStatus === 'syncing' ? (opts.clearSyncing ? 'ok' : 'syncing') : 'ok'
+  const nextStatus = txSyncError ? priorStatus : (priorStatus === 'syncing' ? (opts.clearSyncing ? 'ok' : 'syncing') : 'ok')
 
   const update = { cursor, last_synced: new Date().toISOString(), accounts, status: nextStatus }
   let { error: updErr } = await supabaseAdmin.from('plaid_items').update(update).eq('id', item.id)
@@ -157,6 +182,14 @@ export async function syncPlaidItem(item, opts = {}) {
     ;({ error: updErr } = await supabaseAdmin.from('plaid_items').update(rest).eq('id', item.id))
   }
   if (updErr) throw updErr
+
+  // Surface the transaction-sync failure to the caller now that the
+  // best-effort balance refresh / Debt Tracker sync above have both had
+  // their chance to run — callers (the manual "Sync now" route, the webhook
+  // route) already log/report a thrown error from this function the same
+  // way they did before this was deferred, so their behavior is unchanged
+  // except that it no longer costs the rest of this item's sync.
+  if (txSyncError) throw txSyncError
 
   return { added, modified, removed }
 }

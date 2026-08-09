@@ -8,11 +8,39 @@ import { Segmented } from '@/components/ui/segmented'
 import { Money, CardChip, CatIcon, CatChip, SourceBadge, ConfirmDialog, TransactionsSkeleton, ChartSkeleton, AccountTagsEditor, CardColorPicker } from '@/components/shared'
 import { useApp } from '@/store'
 import { useCenterToast } from '@/components/toast'
-import { fmt, fmt0, prettyDate } from '@/lib/utils'
+import { useT } from '@/lib/i18n'
+import { fmt, fmt0, prettyDate, today } from '@/lib/utils'
+import { matchesBankAccount } from '@/lib/finance'
 import {
   RANGE_KEYS, typeLabel, pctChange30, relTime, accountHistorySeries,
   usePlaidItems, findAccountByUrlId, deleteManualAccount, deleteDebt, backToAccounts, colorForAccount,
 } from '@/lib/accounts'
+
+// Same wording lib/recurring-detect.js's EXCLUDE_PATTERNS already treats as
+// "not a subscription, it's interest" — reused here (not imported, it's not
+// exported and this only needs the two interest-specific patterns, not the
+// whole cash-advance/fee/transfer exclusion list) to total up interest
+// charges for the Card summary section below.
+const INTEREST_PATTERNS = [/interest\s*charge/i, /finance\s*charge/i]
+
+// Finds the Debt Tracker row (APR/min payment/due day live there, not on the
+// Plaid account itself) behind a merged-inventory credit-card row. A `source
+// === 'debt'` row already carries its own debtId. A `source === 'plaid'` row
+// (no matching debt found by lib/accounts.js's buildAccountInventory, e.g.
+// the auto-sync in lib/plaid-debts.js hasn't run yet) gets one more direct
+// shot first via plaid_account_id — an exact id match that's stricter (and
+// cheaper) than fuzzy name matching — before falling back to the same
+// name/mask fuzzy matcher (lib/finance.js) the rest of the app already uses.
+function findLinkedDebt(account, debts) {
+  if (!debts?.length) return null
+  if (account.source === 'debt' && account.debtId) return debts.find((d) => d.id === account.debtId) || null
+  if (account.account_id) {
+    const exact = debts.find((d) => d.plaidAccountId === account.account_id)
+    if (exact) return exact
+    return debts.find((d) => matchesBankAccount(d, [account])) || null
+  }
+  return null
+}
 
 const TIP = { contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 } }
 const LABEL_COLOR = '#6f8bb8'
@@ -37,6 +65,7 @@ function ChangePill({ pct }) {
 // as the full page (app/(app)/accounts/[id]/page.jsx) and, byte-identical,
 // inside the Notion-style modal overlay (app/(app)/@modal/(.)accounts/[id]).
 export default function AccountDetail({ id }) {
+  const t = useT()
   const { state, update } = useApp()
   const { plaidItems, plaidChecked } = usePlaidItems()
   const [range, setRange] = useState('1M')
@@ -51,14 +80,14 @@ export default function AccountDetail({ id }) {
   )
 
   if (!state || !plaidChecked) {
-    return <div className="py-16 text-center text-[0.8125rem] text-muted-foreground">Loading account…</div>
+    return <div className="py-16 text-center text-[0.8125rem] text-muted-foreground">{t('Loading account…')}</div>
   }
 
   if (!account) {
     return (
       <div className="space-y-3 py-10 text-center">
-        <p className="text-[0.8125rem] text-muted-foreground">We couldn't find that account.</p>
-        <Link href="/accounts" className="text-[0.8125rem] font-semibold text-primary hover:underline">Back to Accounts</Link>
+        <p className="text-[0.8125rem] text-muted-foreground">{t("We couldn't find that account.")}</p>
+        <Link href="/accounts" className="text-[0.8125rem] font-semibold text-primary hover:underline">{t('Back to Accounts')}</Link>
       </div>
     )
   }
@@ -71,13 +100,32 @@ export default function AccountDetail({ id }) {
   const isSyncing = account.status === 'syncing'
   const isCredit = account.kind === 'credit' || account.kind === 'loan'
   const util = account.limit ? Math.min(999, Math.round((account.balance / account.limit) * 100)) : null
+
+  // Card summary (payment/interest info) — credit cards only, never loans:
+  // APR/minimum payment/due day aren't meaningful loan concepts the way this
+  // app models them (Debt Tracker rows only ever get those fields from a
+  // Plaid *credit card* liability, see lib/plaid-debts.js), so this stays
+  // narrower than the `isCredit` flag the top stat row/chart color use.
+  const isCreditCard = account.kind === 'credit'
+  const linkedDebt = isCreditCard ? findLinkedDebt(account, state.debts) : null
+  const cardApr = linkedDebt?.apr && linkedDebt.apr !== '—' ? linkedDebt.apr : null
+  const cardMinPayment = linkedDebt?.min ? linkedDebt.min : null
+  const cardDueDay = linkedDebt?.dueDay || null
+  // "Interest charged this month": only computable for a Plaid-linked
+  // account (needs real transactions to scan) — a manual/unlinked debt has
+  // no transaction feed to look at, so this stays null (hidden) for those.
+  const interestThisMonth = isCreditCard && account.account_id
+    ? (state.transactions || [])
+        .filter((t) => t.accountId === account.account_id && t.type === 'expense' && t.date.slice(0, 7) === today().slice(0, 7) && INTEREST_PATTERNS.some((re) => re.test(t.desc)))
+        .reduce((sum, t) => sum + t.amount, 0)
+    : null
   const history = accountHistorySeries(account, state.transactions, range)
   const changePct = pctChange30(account.history, account.balance)
   const lineColor = isCredit ? '#e08a3d' : '#5b9df9'
 
   const txHref = account.account_id ? `/transactions?account=${encodeURIComponent(account.account_id)}` : '/transactions'
   const manageHref = account.source === 'debt' ? '/debts' : account.source === 'plaid' ? '/settings' : null
-  const manageLabel = account.source === 'manual' ? 'Edit account' : account.source === 'debt' ? 'Manage in Debt Tracker' : 'Manage connection'
+  const manageLabel = account.source === 'manual' ? t('Edit account') : account.source === 'debt' ? t('Manage in Debt Tracker') : t('Manage connection')
 
   // Destructive action: manual rows delete straight out of the store (reusing
   // the exact mutations Accounts.jsx/Debts.jsx already use), Plaid rows can
@@ -85,17 +133,17 @@ export default function AccountDetail({ id }) {
   // per-account delete in Plaid's API.
   const isPlaid = account.source === 'plaid'
   const isDebt = account.source === 'debt'
-  const destructiveLabel = isPlaid ? 'Disconnect bank' : isDebt ? 'Delete debt' : 'Delete account'
-  const confirmTitle = isPlaid ? `Disconnect ${account.institution || 'this bank'}?` : `Delete ${account.name}?`
+  const destructiveLabel = isPlaid ? t('Disconnect bank') : isDebt ? t('Delete debt') : t('Delete account')
+  const confirmTitle = isPlaid ? t('Disconnect {bank}?', { bank: account.institution || t('this bank') }) : t('Delete {name}?', { name: account.name })
   const confirmDesc = isPlaid
-    ? 'All its accounts stop syncing. Existing transactions stay.'
-    : 'This removes it and its history from SteerMoney.'
+    ? t('All its accounts stop syncing. Existing transactions stay.')
+    : t('This removes it and its history from SteerMoney.')
 
   const goBack = () => backToAccounts(router)
 
   const handleDelete = async () => {
     if (isPlaid) {
-      if (!account.item_id) { centerToast("Couldn't find that bank connection", 'error'); setConfirmDelete(false); return }
+      if (!account.item_id) { centerToast(t("Couldn't find that bank connection"), 'error'); setConfirmDelete(false); return }
       setDeleting(true)
       try {
         const res = await fetch('/api/plaid/items', {
@@ -104,7 +152,7 @@ export default function AccountDetail({ id }) {
           body: JSON.stringify({ item_id: account.item_id }),
         })
         const data = await res.json()
-        if (!res.ok) throw new Error(data.error || "Couldn't disconnect that bank")
+        if (!res.ok) throw new Error(data.error || t("Couldn't disconnect that bank"))
         // Best-effort tag/color cleanup for this one account_id — a full item can
         // have several accounts, but this is the only one we have in hand here; any
         // sibling account's tags/colors are harmlessly orphaned (never shown again
@@ -113,7 +161,7 @@ export default function AccountDetail({ id }) {
           s.accountTags = (s.accountTags || []).filter((t) => t.accountKey !== account.account_id)
           s.accountColors = (s.accountColors || []).filter((c) => c.accountKey !== account.account_id)
         })
-        centerToast(`${account.institution || 'Bank'} disconnected`)
+        centerToast(t('{name} disconnected', { name: account.institution || t('Bank') }))
         setConfirmDelete(false)
         setDeleting(false)
         // Hard navigation, not router.push: the Accounts page fetches
@@ -136,12 +184,12 @@ export default function AccountDetail({ id }) {
     try {
       if (isDebt) deleteDebt(update, account.debtId)
       else deleteManualAccount(update, account.accountRowId)
-      centerToast(`${isDebt ? 'Debt' : account.name} deleted`)
+      centerToast(t('{name} deleted', { name: isDebt ? t('Debt') : account.name }))
       setConfirmDelete(false)
       setDeleting(false)
       goBack()
     } catch (e) {
-      centerToast(e?.message || 'Something went wrong', 'error')
+      centerToast(e?.message || t('Something went wrong'), 'error')
       setDeleting(false)
     }
   }
@@ -155,7 +203,7 @@ export default function AccountDetail({ id }) {
 
   return (
     <div className="flex flex-col items-center gap-4">
-      <span className="text-[0.625rem] font-bold uppercase tracking-wider" style={{ color: LABEL_COLOR }}>{typeLabel(account)}</span>
+      <span className="text-[0.625rem] font-bold uppercase tracking-wider" style={{ color: LABEL_COLOR }}>{t(typeLabel(account))}</span>
 
       <CardChip institution={account.institution} name={account.name} mask={account.mask} size="lg" colorOverride={colorForAccount(state, id)} />
 
@@ -164,15 +212,15 @@ export default function AccountDetail({ id }) {
       <div className="grid w-full max-w-sm grid-cols-3 gap-1.5 text-center sm:gap-2">
         {isCredit ? (
           <>
-            <div><StatLabel>Balance</StatLabel><Money value={fmt0(account.balance)} className="text-lg font-extrabold sm:text-xl" /></div>
-            <div><StatLabel>Limit</StatLabel>{account.limit ? <Money value={fmt0(account.limit)} className="text-lg font-extrabold sm:text-xl" /> : <div className="text-lg font-extrabold text-muted-foreground sm:text-xl">–</div>}</div>
-            <div><StatLabel>Utilized</StatLabel><div className="text-lg font-extrabold sm:text-xl">{util != null ? util + '%' : '–'}</div></div>
+            <div><StatLabel>{t('Balance')}</StatLabel><Money value={fmt0(account.balance)} className="text-lg font-extrabold sm:text-xl" /></div>
+            <div><StatLabel>{t('Limit')}</StatLabel>{account.limit ? <Money value={fmt0(account.limit)} className="text-lg font-extrabold sm:text-xl" /> : <div className="text-lg font-extrabold text-muted-foreground sm:text-xl">–</div>}</div>
+            <div><StatLabel>{t('Utilized')}</StatLabel><div className="text-lg font-extrabold sm:text-xl">{util != null ? util + '%' : '–'}</div></div>
           </>
         ) : (
           <>
-            <div><StatLabel>Available</StatLabel><Money value={fmt0(account.available ?? account.balance)} className="text-lg font-extrabold sm:text-xl" /></div>
-            <div><StatLabel>Current</StatLabel><Money value={fmt0(account.balance)} className="text-lg font-extrabold sm:text-xl" /></div>
-            <div><StatLabel>Change</StatLabel>{changePct == null ? <div className="text-lg font-extrabold text-muted-foreground sm:text-xl">–</div> : <ChangePill pct={changePct} />}</div>
+            <div><StatLabel>{t('Available')}</StatLabel><Money value={fmt0(account.available ?? account.balance)} className="text-lg font-extrabold sm:text-xl" /></div>
+            <div><StatLabel>{t('Current')}</StatLabel><Money value={fmt0(account.balance)} className="text-lg font-extrabold sm:text-xl" /></div>
+            <div><StatLabel>{t('Change')}</StatLabel>{changePct == null ? <div className="text-lg font-extrabold text-muted-foreground sm:text-xl">–</div> : <ChangePill pct={changePct} />}</div>
           </>
         )}
       </div>
@@ -203,9 +251,49 @@ export default function AccountDetail({ id }) {
       <div className="flex flex-col items-center gap-1.5">
         <SourceBadge accountId={account.account_id} institution={account.institution} />
         <p className="text-center text-[0.71875rem] text-muted-foreground">
-          {account.last_synced ? `Latest update received ${relTime(account.last_synced)}` : 'Manual account'}
+          {account.last_synced ? t('Latest update received {time}', { time: relTime(account.last_synced) }) : t('Manual account')}
         </p>
       </div>
+
+      {/* Card summary: APR/minimum payment/due day/credit-limit/balance/
+          utilization + this month's interest charges, credit cards only.
+          Hidden entirely for non-credit accounts (loans, depository) and
+          when the account has no debtId/account_id at all to look anything
+          up from; every individual field inside falls back to "–" rather
+          than showing blank/undefined/NaN, so a card with a Plaid balance
+          but no liabilities data (institution doesn't support the product,
+          or supabase/debts-plaid.sql hasn't been run yet — see
+          lib/plaid-debts.js) still renders a useful, non-broken card. Same
+          StatLabel/grid pattern the top-of-page stats and views/Accounts.jsx
+          already use, in its own bordered box (like Tags/Card color below)
+          rather than a plain grid, so it reads as one distinct "summary
+          card" — kept 2-up (not 3) and full-width for the interest row so
+          nothing crowds at a 390px mobile width. */}
+      {isCreditCard && (
+        <div className="w-full max-w-sm space-y-2.5">
+          <h3 className="px-0.5 text-[0.9375rem] font-semibold">{t('Card summary')}</h3>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border p-4">
+            <div><StatLabel>{t('Balance')}</StatLabel><Money value={fmt0(account.balance)} className="text-sm font-extrabold" /></div>
+            <div><StatLabel>{t('Credit limit')}</StatLabel>{account.limit ? <Money value={fmt0(account.limit)} className="text-sm font-extrabold" /> : <div className="text-sm font-extrabold text-muted-foreground">–</div>}</div>
+            <div><StatLabel>{t('Utilized')}</StatLabel><div className="text-sm font-extrabold">{util != null ? util + '%' : '–'}</div></div>
+            <div><StatLabel>{t('APR')}</StatLabel><div className="text-sm font-extrabold">{cardApr || '–'}</div></div>
+            <div><StatLabel>{t('Min payment')}</StatLabel>{cardMinPayment ? <Money value={fmt0(cardMinPayment)} className="text-sm font-extrabold" /> : <div className="text-sm font-extrabold text-muted-foreground">–</div>}</div>
+            <div><StatLabel>{t('Due day')}</StatLabel><div className="text-sm font-extrabold">{cardDueDay || '–'}</div></div>
+            {interestThisMonth != null && (
+              <div className="col-span-2 border-t border-border/60 pt-3">
+                <StatLabel>{t('Interest charged this month')}</StatLabel>
+                <Money value={fmt0(interestThisMonth)} className={`text-sm font-extrabold ${interestThisMonth > 0 ? 'text-red-400' : ''}`} />
+              </div>
+            )}
+          </div>
+          {!linkedDebt && (
+            <p className="px-0.5 text-[0.71875rem] text-muted-foreground">
+              {t('APR, minimum payment, and due day come from the Debt Tracker —')} {account.source === 'plaid' ? t('sync your accounts or') + ' ' : ''}
+              <Link href="/debts" className="font-semibold text-primary hover:underline">{t('add this card there')}</Link> {t('to fill them in.')}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Tags: per-account labels ("Mine"/"Julia's"/"Business") — see
           lib/accounts.js's tag helpers and CLAUDE.md 2026-08-08 (10). Works
@@ -218,7 +306,7 @@ export default function AccountDetail({ id }) {
           colorForAccount/setAccountColor. Same accountKey as the tags
           editor above, so it works unchanged for every account type. */}
       <div className="flex w-full max-w-sm flex-col items-center gap-1.5">
-        <span className="text-[0.625rem] font-bold uppercase tracking-wide" style={{ color: LABEL_COLOR }}>Card color</span>
+        <span className="text-[0.625rem] font-bold uppercase tracking-wide" style={{ color: LABEL_COLOR }}>{t('Card color')}</span>
         <CardColorPicker accountKey={id} />
       </div>
 
@@ -269,7 +357,7 @@ export default function AccountDetail({ id }) {
 
       <div className="w-full space-y-2.5 border-t border-border/60 pt-5">
         <div className="flex items-center justify-between px-0.5">
-          <h3 className="text-[0.9375rem] font-semibold">Transactions</h3>
+          <h3 className="text-[0.9375rem] font-semibold">{t('Transactions')}</h3>
           {account.account_id ? (
             // Hard navigation, not <Link>: a soft nav to a non-intercepted
             // route leaves the @modal slot's previous content mounted, so
@@ -278,7 +366,7 @@ export default function AccountDetail({ id }) {
               type="button"
               onClick={() => { if (typeof window !== 'undefined') window.location.assign(txHref) }}
               className="flex shrink-0 items-center text-[0.78125rem] font-bold text-primary/90 transition hover:text-primary"
-            >View all in Transactions ›</button>
+            >{t('View all in Transactions ›')}</button>
           ) : null}
         </div>
         {isSyncing ? (
@@ -304,8 +392,8 @@ export default function AccountDetail({ id }) {
         ) : (
           <div className="rounded-xl border p-6 text-center text-[0.78125rem] text-muted-foreground">
             {account.account_id
-              ? "No transactions linked to this account yet — older synced transactions may predate account linkage."
-              : "Manual accounts don't have linked transactions."}
+              ? t('No transactions linked to this account yet — older synced transactions may predate account linkage.')
+              : t("Manual accounts don't have linked transactions.")}
           </div>
         )}
       </div>

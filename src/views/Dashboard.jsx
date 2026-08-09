@@ -17,6 +17,7 @@ import { fmt, fmt0, today, isoDate, ymLabel, monthLabel, prettyDate, catColor, s
 import { simulatePlan, recMonthly, nextDueDate } from '@/lib/finance'
 import { useIsMobile } from '@/lib/useMediaQuery'
 import { ICONS } from '@/views/Goals'
+import { useT } from '@/lib/i18n'
 
 function GoalIcon({ icon, className = 'h-4 w-4' }) {
   const I = ICONS[icon] || Target
@@ -36,24 +37,24 @@ const TIP = {
 const MONTHS_VIEW_KEY = 'fin-dash-months'
 const MONTHS_VIEW_OPTIONS = [['3', 'Last 3 months'], ['6', 'Last 6 months'], ['12', 'Last 12 months'], ['all', 'All']]
 
-function cfBounds(range) {
-  const t = today()
-  const now = new Date(t + 'T00:00:00')
-  if (range.mode === 'month') return { from: t.slice(0, 7) + '-01', to: t, label: ymLabel(t.slice(0, 7)) + ' so far' }
+function cfBounds(range, t) {
+  const td = today()
+  const now = new Date(td + 'T00:00:00')
+  if (range.mode === 'month') return { from: td.slice(0, 7) + '-01', to: td, label: t('{month} so far', { month: ymLabel(td.slice(0, 7)) }) }
   if (range.mode === 'lastMonth') {
     const d = new Date(now.getFullYear(), now.getMonth() - 1, 1)
     const e = new Date(now.getFullYear(), now.getMonth(), 0)
     return { from: isoDate(d), to: isoDate(e), label: ymLabel(isoDate(d).slice(0, 7)) }
   }
-  if (range.mode === '7d') { const d = new Date(now); d.setDate(d.getDate() - 6); return { from: isoDate(d), to: t, label: 'Last 7 days' } }
-  if (range.mode === '30d') { const d = new Date(now); d.setDate(d.getDate() - 29); return { from: isoDate(d), to: t, label: 'Last 30 days' } }
-  if (range.mode === 'all') return { from: '0000-01-01', to: '9999-12-31', label: 'Everything imported' }
+  if (range.mode === '7d') { const d = new Date(now); d.setDate(d.getDate() - 6); return { from: isoDate(d), to: td, label: t('Last 7 days') } }
+  if (range.mode === '30d') { const d = new Date(now); d.setDate(d.getDate() - 29); return { from: isoDate(d), to: td, label: t('Last 30 days') } }
+  if (range.mode === 'all') return { from: '0000-01-01', to: '9999-12-31', label: t('Everything imported') }
   if (range.mode === 'ym') {
     const ym = range.ym
     const e = new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0)
     return { from: ym + '-01', to: isoDate(e), label: ymLabel(ym) }
   }
-  const f = range.from || t.slice(0, 7) + '-01', e = range.to || t
+  const f = range.from || td.slice(0, 7) + '-01', e = range.to || td
   return { from: f <= e ? f : e, to: e >= f ? e : f, label: prettyDate(f <= e ? f : e) + ' – ' + prettyDate(e >= f ? e : f) }
 }
 
@@ -61,7 +62,7 @@ export default function Dashboard() {
   const { state, catInfo, viewingAs } = useApp()
   const { user } = useUser()
   const isMobile = useIsMobile()
-  const es = user?.unsafeMetadata?.lang === 'es' && !viewingAs
+  const t = useT()
   const firstName = viewingAs ? viewingAs.name.split(' ')[0] : user?.firstName
   const [range, setRange] = useState({ mode: 'month', from: null, to: null })
   const [cfView, setCfView] = useState(null)
@@ -80,7 +81,7 @@ export default function Dashboard() {
   const recTotal = state.recurring.filter((r) => r.active !== false).reduce((s, r) => s + recMonthly(r), 0)
   const plan = useMemo(() => simulatePlan(state.debts, state.sim.budget, state.sim.strategy), [state.debts, state.sim])
 
-  const B = cfBounds(range)
+  const B = cfBounds(range, t)
   const rT = rangeTx(state, B.from, B.to)
   const rIn = rT.filter((t) => t.type === 'income' && t.cat !== 'transfer').reduce((s, t) => s + t.amount, 0)
   const rOut = rT.filter((t) => t.type === 'expense' && t.cat !== 'transfer').reduce((s, t) => s + t.amount, 0)
@@ -163,42 +164,42 @@ export default function Dashboard() {
     <div className="fade-in space-y-6">
       {firstName && (
         <div>
-          <h2 className="text-xl font-bold tracking-tight">{es ? 'Bienvenido' : 'Welcome'}, {firstName} 👋</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">{es ? 'Así va tu dinero hoy.' : 'Here is where your money stands today.'}</p>
+          <h2 className="text-xl font-bold tracking-tight">{t('Welcome')}, {firstName} 👋</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t('Here is where your money stands today.')}</p>
         </div>
       )}
       {/* Cash flow — only the header area navigates; the card itself is full of its
           own controls (range pills, breakdown toggle, month rows) so it stays inert. */}
       <Card className="p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <SectionHead title={`Cash Flow · ${B.label}`} desc="Money in minus money out · transfers between your own accounts don't count" href="/transactions" />
+          <SectionHead title={t('Cash Flow · {label}', { label: B.label })} desc={t("Money in minus money out · transfers between your own accounts don't count")} href="/transactions" />
           <Segmented
             className="sm:ml-auto"
             scroll
             value={range.mode === 'ym' ? '' : range.mode}
             onChange={(m) => setRange({ mode: m, from: null, to: null })}
-            options={[['month', 'This month'], ['lastMonth', 'Last month'], ['7d', '7 days'], ['30d', '30 days'], ['all', 'All'], ['custom', 'Custom']]}
+            options={[['month', t('This month')], ['lastMonth', t('Last month')], ['7d', t('7 days')], ['30d', t('30 days')], ['all', t('All')], ['custom', t('Custom')]]}
           />
         </div>
         {range.mode === 'custom' && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Label className="mb-0">From</Label>
+            <Label className="mb-0">{t('From')}</Label>
             <Input type="date" className="w-40" value={B.from} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} />
-            <Label className="mb-0">to</Label>
+            <Label className="mb-0">{t('to')}</Label>
             <Input type="date" className="w-40" value={B.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} />
           </div>
         )}
         <div className="mb-4 mt-4 grid grid-cols-3 gap-2 sm:gap-3">
-          <MoneyTile label="Money In" value={<Money value={fmt0(rIn)} />} tone="green" active={cfView === 'in'} hint={cfView === 'in' ? 'hide breakdown ▴' : 'where from? ▾'} onClick={() => setCfView(cfView === 'in' ? null : 'in')} />
-          <MoneyTile label="Money Out" value={<Money value={fmt0(rOut)} />} tone="red" active={cfView === 'out'} hint={cfView === 'out' ? 'hide breakdown ▴' : 'where to? ▾'} onClick={() => setCfView(cfView === 'out' ? null : 'out')} />
-          <MoneyTile label={rNet >= 0 ? 'Left Over' : 'In The Negative'} value={<Money value={(rNet >= 0 ? '' : '−') + fmt0(Math.abs(rNet))} />} tone={rNet >= 0 ? 'green' : 'red'} />
+          <MoneyTile label={t('Money In')} value={<Money value={fmt0(rIn)} />} tone="green" active={cfView === 'in'} hint={cfView === 'in' ? t('hide breakdown ▴') : t('where from? ▾')} onClick={() => setCfView(cfView === 'in' ? null : 'in')} />
+          <MoneyTile label={t('Money Out')} value={<Money value={fmt0(rOut)} />} tone="red" active={cfView === 'out'} hint={cfView === 'out' ? t('hide breakdown ▴') : t('where to? ▾')} onClick={() => setCfView(cfView === 'out' ? null : 'out')} />
+          <MoneyTile label={rNet >= 0 ? t('Left Over') : t('In The Negative')} value={<Money value={(rNet >= 0 ? '' : '−') + fmt0(Math.abs(rNet))} />} tone={rNet >= 0 ? 'green' : 'red'} />
         </div>
 
         {cfView && (
           <div className="mb-4 rounded-xl border bg-secondary/40 p-4 fade-in">
             <div className="mb-3 flex items-center justify-between">
               <span className={`text-xs font-semibold ${cfView === 'in' ? 'text-emerald-300' : 'text-red-300'}`}>
-                {cfView === 'in' ? 'Where the money came from' : 'Where the money went'} · {B.label}
+                {cfView === 'in' ? t('Where the money came from') : t('Where the money went')} · {B.label}
               </span>
               <button onClick={() => setCfView(null)} className="text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>
             </div>
@@ -229,14 +230,14 @@ export default function Dashboard() {
                 ) : (
                   <div key={r.label} className="flex items-center gap-3 py-2 text-[0.8125rem]">{inner}</div>
                 )
-              }) : <div className="py-4 text-center text-xs text-muted-foreground">Nothing recorded in this period.</div>}
+              }) : <div className="py-4 text-center text-xs text-muted-foreground">{t('Nothing recorded in this period.')}</div>}
             </div>
           </div>
         )}
 
         <div className="mb-1.5 flex items-center justify-end">
           <Select className="!h-7 w-auto max-w-[8.5rem] text-[0.6875rem] sm:max-w-none" value={monthsView} onChange={(e) => changeMonthsView(e.target.value)}>
-            {MONTHS_VIEW_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+            {MONTHS_VIEW_OPTIONS.map(([v, label]) => <option key={v} value={v}>{t(label)}</option>)}
           </Select>
         </div>
         <div className="divide-y divide-border/60">
@@ -247,11 +248,11 @@ export default function Dashboard() {
               <button
                 key={m}
                 onClick={() => setRange(on ? { mode: 'month', from: null, to: null } : { mode: 'ym', ym: m })}
-                title={on ? 'Back to this month' : `Show ${ymLabel(m)} in the cards above`}
+                title={on ? t('Back to this month') : t('Show {month} in the cards above', { month: ymLabel(m) })}
                 className={`-mx-2 flex w-[calc(100%+1rem)] items-center gap-1.5 rounded-lg px-2 py-2 text-[0.65625rem] tabular-nums transition sm:gap-3 sm:text-[0.8125rem] ${on ? 'bg-emerald-400/[0.07] ring-1 ring-emerald-400/25' : 'hover:bg-secondary/50'}`}
               >
                 <span className={`w-16 shrink-0 whitespace-nowrap text-left font-medium sm:w-24 ${on ? 'text-emerald-300' : ''}`}>
-                  {ymLabel(m)}{m === nowYm && <span className="hidden text-[0.625rem] text-muted-foreground sm:inline"> · so far</span>}
+                  {ymLabel(m)}{m === nowYm && <span className="hidden text-[0.625rem] text-muted-foreground sm:inline"> · {t('so far')}</span>}
                 </span>
                 <span className="min-w-0 flex-1 whitespace-nowrap text-right text-emerald-400">+{fmt0(inc)}</span>
                 <span className="min-w-0 flex-1 whitespace-nowrap text-right text-red-400">−{fmt0(ex)}</span>
@@ -260,23 +261,23 @@ export default function Dashboard() {
             )
           })}
           <div className="flex items-center gap-1.5 pt-2 text-[0.625rem] text-muted-foreground sm:gap-3 sm:text-[0.6875rem]">
-            <span className="w-16 shrink-0 sm:w-24">tap a month ↑</span><span className="min-w-0 flex-1 whitespace-nowrap text-right">money in</span><span className="min-w-0 flex-1 whitespace-nowrap text-right">money out</span><span className="w-16 shrink-0 text-right sm:w-28">left over</span>
+            <span className="w-16 shrink-0 sm:w-24">{t('tap a month ↑')}</span><span className="min-w-0 flex-1 whitespace-nowrap text-right">{t('money in')}</span><span className="min-w-0 flex-1 whitespace-nowrap text-right">{t('money out')}</span><span className="w-16 shrink-0 text-right sm:w-28">{t('left over')}</span>
           </div>
         </div>
       </Card>
 
       {/* KPIs — each tile is its own card, so each links straight to its detail page */}
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <Kpi label="Avg Monthly Income" value={<Money value={fmt0(avgIncome)} />} icon={TrendingUp} tone="text-emerald-400" sub={`${ymLabel(nowYm)} so far: ${fmt0(incomeIn(state, nowYm))}`} href="/charts?focus=income" />
-        <Kpi label="Avg Monthly Spending" value={<Money value={fmt0(avgExp)} />} icon={TrendingDown} sub={`${ymLabel(nowYm)} so far: ${fmt0(expensesIn(state, nowYm))}`} href="/charts?focus=spending" />
-        <Kpi label="Total Debt" value={<Money value={fmt0(totalDebt)} />} icon={CreditCard} tone="text-red-400" sub={plan.done ? `debt-free ${monthLabel(plan.end)} on your plan` : ''} href="/debts" />
-        <Kpi label="Fixed Monthly Payments" value={<Money value={fmt0(mins + recTotal)} />} icon={CalendarDays} sub={`${fmt0(mins)} debt + ${fmt0(recTotal)} bills`} href="/recurring" />
+        <Kpi label={t('Avg Monthly Income')} value={<Money value={fmt0(avgIncome)} />} icon={TrendingUp} tone="text-emerald-400" sub={t('{month} so far: {amount}', { month: ymLabel(nowYm), amount: fmt0(incomeIn(state, nowYm)) })} href="/charts?focus=income" />
+        <Kpi label={t('Avg Monthly Spending')} value={<Money value={fmt0(avgExp)} />} icon={TrendingDown} sub={t('{month} so far: {amount}', { month: ymLabel(nowYm), amount: fmt0(expensesIn(state, nowYm)) })} href="/charts?focus=spending" />
+        <Kpi label={t('Total Debt')} value={<Money value={fmt0(totalDebt)} />} icon={CreditCard} tone="text-red-400" sub={plan.done ? t('debt-free {month} on your plan', { month: monthLabel(plan.end) }) : ''} href="/debts" />
+        <Kpi label={t('Fixed Monthly Payments')} value={<Money value={fmt0(mins + recTotal)} />} icon={CalendarDays} sub={t('{mins} debt + {rec} bills', { mins: fmt0(mins), rec: fmt0(recTotal) })} href="/recurring" />
       </div>
 
       {/* Upcoming — bills/debts grouped by due date, Copilot-style horizontal scroller */}
       {up.length > 0 && (
         <div className="space-y-2.5">
-          <SectionLabel title="Upcoming" link="Recurrings" href="/recurring" />
+          <SectionLabel title={t('Upcoming')} link={t('Recurrings')} href="/recurring" />
           <div className="no-scrollbar -mx-4 flex gap-5 overflow-x-auto px-4 pr-8 sm:mx-0 sm:px-0 sm:pr-0">
             {upGroups.map((g) => (
               <div key={g.diff}>
@@ -299,7 +300,7 @@ export default function Dashboard() {
       {/* Budgets — circular progress ring row */}
       {ringBudgets.length > 0 && (
         <div className="space-y-2.5">
-          <SectionLabel title="Budgets" link="Categories" href="/budgets" />
+          <SectionLabel title={t('Budgets')} link={t('Categories')} href="/budgets" />
           <div className="no-scrollbar -mx-4 flex snap-x snap-proximity gap-5 overflow-x-auto px-4 pb-1 pr-8 sm:mx-0 sm:px-1 sm:pr-1">
             {ringBudgets.map((b) => {
               const over = b.spent > b.limit
@@ -310,7 +311,7 @@ export default function Dashboard() {
                   </Ring>
                   <div className="text-center leading-tight">
                     <div className="whitespace-nowrap text-[0.84375rem] font-bold tabular-nums">{fmt(Math.abs(b.limit - b.spent))}</div>
-                    <div className={`text-[0.6875rem] ${over ? 'text-red-400' : 'text-muted-foreground'}`}>{over ? 'over' : 'left'}</div>
+                    <div className={`text-[0.6875rem] ${over ? 'text-red-400' : 'text-muted-foreground'}`}>{over ? t('over') : t('left')}</div>
                   </div>
                 </div>
               )
@@ -323,7 +324,7 @@ export default function Dashboard() {
       {/* Goals — tight progress rows */}
       {activeGoals.length > 0 && (
         <div className="space-y-2.5">
-          <SectionLabel title="Goals" link="All goals" href="/goals" />
+          <SectionLabel title={t('Goals')} link={t('All goals')} href="/goals" />
           <Card className="p-4">
             <div className="divide-y divide-border/60">
               {activeGoals.map((g) => {
@@ -353,7 +354,7 @@ export default function Dashboard() {
       {/* charts */}
       <div className="grid gap-3 lg:grid-cols-2">
         <Card className="p-5">
-          <SectionHead title="Income vs Spending" desc={`From transactions · transfers excluded · ${ymLabel(nowYm)} is partial`} />
+          <SectionHead title={t('Income vs Spending')} desc={t('From transactions · transfers excluded · {month} is partial', { month: ymLabel(nowYm) })} />
           <div className="mt-4 h-56">
             <ResponsiveContainer>
               <BarChart data={flowData} margin={{ top: 4, right: 4, left: -12, bottom: 0 }}>
@@ -369,7 +370,7 @@ export default function Dashboard() {
         </Card>
         <Link href="/charts" className="group block min-w-0">
         <Card className="min-w-0 cursor-pointer p-5 transition hover:border-primary/40 hover:bg-secondary/[0.12]">
-          <SectionHead title="This Month by Category" desc={ymLabel(nowYm)} chevron />
+          <SectionHead title={t('This Month by Category')} desc={ymLabel(nowYm)} chevron />
           {donut.length ? (
             <div className="mt-4 h-48 sm:h-56">
               <ResponsiveContainer>
@@ -383,7 +384,7 @@ export default function Dashboard() {
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="mt-4 flex h-48 items-center justify-center text-center text-xs text-muted-foreground sm:h-56">Nothing recorded in this period.</div>
+            <div className="mt-4 flex h-48 items-center justify-center text-center text-xs text-muted-foreground sm:h-56">{t('Nothing recorded in this period.')}</div>
           )}
           {isMobile && donut.length > 0 && (
             <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[0.6875rem]">
@@ -404,27 +405,27 @@ export default function Dashboard() {
         <Link href="/recurring" className="group block min-w-0">
         <Card className="min-w-0 cursor-pointer p-5 transition hover:border-primary/40 hover:bg-secondary/[0.12]">
           <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
-            <SectionHead title="Due in 14 days" chevron />
+            <SectionHead title={t('Due in 14 days')} chevron />
             <Badge className="shrink-0">{fmt0(up.reduce((s, u) => s + (u.amt || 0), 0))}</Badge>
           </div>
           <div className="max-h-64 divide-y divide-border/60 overflow-y-auto">
             {up.length ? up.map((u, i) => (
               <div key={i} className="flex min-w-0 items-center gap-2.5 py-2 text-[0.8125rem]">
                 <span className={`w-11 shrink-0 rounded-md px-1 py-1 text-center text-[0.625rem] font-bold ${u.diff <= 3 ? 'bg-red-400/10 text-red-400' : 'bg-secondary text-muted-foreground'}`}>
-                  {u.diff === 0 ? 'today' : `in ${u.diff}d`}
+                  {u.diff === 0 ? t('today') : t('in {n}d', { n: u.diff })}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-foreground/90">{u.name}</span>
-                <Badge className="shrink-0" variant={u.tag === 'debt' ? 'destructive' : 'info'}>{u.tag}</Badge>
+                <Badge className="shrink-0" variant={u.tag === 'debt' ? 'destructive' : 'info'}>{u.tag === 'debt' ? t('debt') : t('bill')}</Badge>
                 <span className="shrink-0 whitespace-nowrap text-xs font-semibold">{u.amt ? fmt(u.amt) : ''}</span>
               </div>
-            )) : <p className="py-2 text-[0.8125rem] text-muted-foreground">Nothing due in the next two weeks.</p>}
+            )) : <p className="py-2 text-[0.8125rem] text-muted-foreground">{t('Nothing due in the next two weeks.')}</p>}
           </div>
         </Card>
         </Link>
         <Card className="min-w-0 p-5">
           <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
-            <SectionHead title="Credit Cards" total={fmt0(ccBal)} href="/debts" chevron />
-            <Badge className="shrink-0" variant={ccUtil > 80 ? 'destructive' : ccUtil > 30 ? 'warning' : 'success'}>{ccUtil}% used</Badge>
+            <SectionHead title={t('Credit Cards')} total={fmt0(ccBal)} href="/debts" chevron />
+            <Badge className="shrink-0" variant={ccUtil > 80 ? 'destructive' : ccUtil > 30 ? 'warning' : 'success'}>{t('{pct}% used', { pct: ccUtil })}</Badge>
           </div>
           <div className="max-h-64 divide-y divide-border/60 overflow-y-auto">
             {cards.map((d) => {
@@ -447,7 +448,7 @@ export default function Dashboard() {
         </Card>
         <Link href="/budgets" className="group block min-w-0">
         <Card className="min-w-0 cursor-pointer p-5 transition hover:border-primary/40 hover:bg-secondary/[0.12]">
-          <SectionHead title="Budgets" desc={`${ymLabel(nowYm)} spending by category`} chevron />
+          <SectionHead title={t('Budgets')} desc={t('{month} spending by category', { month: ymLabel(nowYm) })} chevron />
           <div className="mt-2 max-h-64 divide-y divide-border/60 overflow-y-auto">
             {state.budgets.slice().sort((a, b) => spentIn(state, nowYm, b.id) - spentIn(state, nowYm, a.id)).slice(0, 7).map((b) => {
               const sp = spentIn(state, nowYm, b.id)

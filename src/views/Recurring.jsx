@@ -14,6 +14,7 @@ import { fmt, fmt0, today, isoDate, prettyDate, ymLabel, ordinal, uid } from '@/
 import { recEvery, recMonthly, nextDueDate, simulatePlan, fmtMonths, findPaidTx } from '@/lib/finance'
 import { usePlaidItems, buildAccountInventory, accountUrlId, tagsForAccount } from '@/lib/accounts'
 import { detectRecurring, CADENCE_LABEL } from '@/lib/recurring-detect'
+import { useT } from '@/lib/i18n'
 
 const VIEW_KEY = 'fin-rec-view'
 // Suggested-subscription dismissals — a merchant the user explicitly said "not
@@ -28,6 +29,7 @@ const DISMISSED_KEY = 'fin-recur-dismissed'
 
 export default function Recurring() {
   const { state, update, catInfo } = useApp()
+  const t = useT()
   const toast = useToast()
   const centerToast = useCenterToast()
   const [filter, setFilter] = useState({ cat: 'all', status: 'all', sort: 'due', q: '' })
@@ -78,8 +80,8 @@ export default function Recurring() {
     return (
       <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[0.625rem] text-muted-foreground">
         <Landmark className="h-2.5 w-2.5 shrink-0" />
-        <span className="truncate">{acctRow.institution || 'Bank'}{acctRow.mask ? ` ••${acctRow.mask}` : ''}</span>
-        {tags.map((t) => <TagPill key={t.id} tag={t.tag} />)}
+        <span className="truncate">{acctRow.institution || t('Bank')}{acctRow.mask ? ` ••${acctRow.mask}` : ''}</span>
+        {tags.map((tag) => <TagPill key={tag.id} tag={tag.tag} />)}
       </div>
     )
   }
@@ -109,7 +111,7 @@ export default function Recurring() {
       })
     })
     dismissSuggestion(s.key)
-    centerToast(`${s.displayName} added to recurring`)
+    centerToast(t('{name} added to recurring', { name: s.displayName }))
   }
 
   // Deletion is a synchronous store mutation; the deliberate short delay +
@@ -121,11 +123,11 @@ export default function Recurring() {
     await new Promise((r) => setTimeout(r, 350))
     try {
       update((s) => { s.recurring = s.recurring.filter((x) => x.id !== id) })
-      centerToast('Recurring bill deleted')
+      centerToast(t('Recurring bill deleted'))
       setDeleting(false)
       setConfirmDelId(null)
     } catch (e) {
-      centerToast(e?.message || 'Something went wrong', 'error')
+      centerToast(e?.message || t('Something went wrong'), 'error')
       setDeleting(false)
     }
   }
@@ -169,7 +171,7 @@ export default function Recurring() {
         const d = new Date(rr.nextDate + 'T00:00:00'); d.setMonth(d.getMonth() + recEvery(rr)); rr.nextDate = isoDate(d)
       }
     })
-    toast(`${r.desc} logged`)
+    toast(t('{name} logged', { name: r.desc }))
   }
 
   // this month (or the selected past month): what's been paid vs what's still coming.
@@ -201,27 +203,27 @@ export default function Recurring() {
         <div className="flex items-center justify-around gap-4">
           <div className="text-center">
             <Money value={fmt0(leftSum)} className="text-2xl font-extrabold sm:text-3xl" />
-            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">{isCurrent ? 'left to pay' : 'went unpaid'}</div>
+            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">{isCurrent ? t('left to pay') : t('went unpaid')}</div>
           </div>
           <Ring pct={dueSum ? (paidSum / dueSum) * 100 : 0} color="#5b9df9" size={84} stroke={9} />
           <div className="text-center">
             <Money value={fmt0(paidSum)} className="text-2xl font-extrabold sm:text-3xl" />
-            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">paid so far</div>
+            <div className="mt-0.5 text-[0.75rem] font-semibold text-muted-foreground">{t('paid so far')}</div>
           </div>
         </div>
         <div className="mt-4 text-center text-[0.71875rem] font-semibold text-muted-foreground">
-          <b className="text-foreground">{act.length}</b> active recurring bills · <b className="text-amber-400">{hasMulti ? '≈' : ''}{fmt(total)}</b>/month
-          {hasMulti && <span className="text-[0.6875rem] opacity-70"> (2–3 mo bills averaged out)</span>}
+          <b className="text-foreground">{act.length}</b> {t('active recurring bills')} · <b className="text-amber-400">{hasMulti ? '≈' : ''}{fmt(total)}</b>/{t('month')}
+          {hasMulti && <span className="text-[0.6875rem] opacity-70"> {t('(2–3 mo bills averaged out)')}</span>}
         </div>
       </Card>
 
       {/* this month grid / list */}
       <div className="space-y-2.5">
         <div className="flex items-end justify-between">
-          <SectionLabel title={isCurrent ? 'This month' : ymLabel(ym)} />
+          <SectionLabel title={isCurrent ? t('This month') : ymLabel(ym)} />
           <div className="flex items-center gap-2">
             <ViewToggle value={view} onChange={changeView} />
-            <Button size="sm" onClick={() => setEditing(null)}><Plus />Add recurring</Button>
+            <Button size="sm" onClick={() => setEditing(null)}><Plus />{t('Add recurring')}</Button>
           </div>
         </div>
         {monthly.length > 0 && (view === 'cards' ? (
@@ -234,7 +236,7 @@ export default function Recurring() {
                 <button
                   key={r.id}
                   onClick={() => setEditing(r.id)}
-                  title="Edit this bill"
+                  title={t('Edit this bill')}
                   className="relative flex flex-col items-center gap-1 rounded-2xl bg-card px-2 py-4 text-center transition hover:bg-accent/60"
                 >
                   <span className={`absolute right-2 top-2 flex h-[18px] w-[18px] items-center justify-center rounded-full text-[0.625rem] font-black ${paid ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'}`}>✓</span>
@@ -268,9 +270,9 @@ export default function Recurring() {
                       {paidTx ? (
                         <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 className="h-3.5 w-3.5" />{prettyDate(paidTx.date)}</span>
                       ) : unpaid ? (
-                        <span className="text-red-400">unpaid</span>
+                        <span className="text-red-400">{t('unpaid')}</span>
                       ) : (
-                        <span className="text-muted-foreground">upcoming</span>
+                        <span className="text-muted-foreground">{t('upcoming')}</span>
                       )}
                     </span>
                   </button>
@@ -280,7 +282,7 @@ export default function Recurring() {
           </Card>
         ))}
         {!isCurrent && (
-          <p className="text-[0.6875rem] text-muted-foreground/70">Based on your current recurring list matched against that month's transactions.</p>
+          <p className="text-[0.6875rem] text-muted-foreground/70">{t("Based on your current recurring list matched against that month's transactions.")}</p>
         )}
       </div>
 
@@ -288,29 +290,29 @@ export default function Recurring() {
       <Card className="p-4">
         <div className="mb-2 flex items-center gap-2">
           <FlaskConical className="h-4 w-4 text-muted-foreground" />
-          <span className="text-[0.8125rem] font-semibold tracking-tight">What-if simulator</span>
-          <Badge className="uppercase tracking-wide">nothing is actually changed</Badge>
+          <span className="text-[0.8125rem] font-semibold tracking-tight">{t('What-if simulator')}</span>
+          <Badge className="uppercase tracking-wide">{t('nothing is actually changed')}</Badge>
         </div>
         {!sel.length ? (
-          <div className="text-xs text-muted-foreground">Check the box next to any bill below to see what canceling it would do to your monthly cash — and how much faster you could pay off your debt.</div>
+          <div className="text-xs text-muted-foreground">{t('Check the box next to any bill below to see what canceling it would do to your monthly cash — and how much faster you could pay off your debt.')}</div>
         ) : (
           <>
-            <div className="mb-2.5 text-xs text-muted-foreground">If you cancel <b className="text-foreground">{sel.length}</b> bill{sel.length === 1 ? '' : 's'} ({sel.map((r) => r.desc).join(', ')}):</div>
+            <div className="mb-2.5 text-xs text-muted-foreground">{t('If you cancel {count} bill{s} ({names}):', { count: sel.length, s: sel.length === 1 ? '' : 's', names: sel.map((r) => r.desc).join(', ') })}</div>
             <div className="mb-3 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[0.6875rem] text-muted-foreground">You free up</div><div className="font-bold tracking-tight text-emerald-400">{fmt(save)}<span className="text-[0.6875rem] font-normal text-muted-foreground">/mo</span></div></div>
-              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[0.6875rem] text-muted-foreground">Per year</div><div className="font-bold tracking-tight text-emerald-400">{fmt0(save * 12)}</div></div>
-              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[0.6875rem] text-muted-foreground">Bills become</div><div className="font-bold tracking-tight">{fmt(total - save)}<span className="text-[0.6875rem] font-normal text-muted-foreground">/mo</span></div><div className="text-[0.625rem] text-muted-foreground/70">was {fmt(total)}</div></div>
-              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[0.6875rem] text-muted-foreground">Of your income</div><div className="font-bold tracking-tight">{avgIncome ? ((save / avgIncome) * 100).toFixed(1) + '%' : '—'}</div><div className="text-[0.625rem] text-muted-foreground/70">≈{fmt0(avgIncome)}/mo avg</div></div>
+              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[0.6875rem] text-muted-foreground">{t('You free up')}</div><div className="font-bold tracking-tight text-emerald-400">{fmt(save)}<span className="text-[0.6875rem] font-normal text-muted-foreground">/mo</span></div></div>
+              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[0.6875rem] text-muted-foreground">{t('Per year')}</div><div className="font-bold tracking-tight text-emerald-400">{fmt0(save * 12)}</div></div>
+              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[0.6875rem] text-muted-foreground">{t('Bills become')}</div><div className="font-bold tracking-tight">{fmt(total - save)}<span className="text-[0.6875rem] font-normal text-muted-foreground">/mo</span></div><div className="text-[0.625rem] text-muted-foreground/70">{t('was {amount}', { amount: fmt(total) })}</div></div>
+              <div className="rounded-lg border bg-secondary/40 p-3"><div className="mb-0.5 text-[0.6875rem] text-muted-foreground">{t('Of your income')}</div><div className="font-bold tracking-tight">{avgIncome ? ((save / avgIncome) * 100).toFixed(1) + '%' : '—'}</div><div className="text-[0.625rem] text-muted-foreground/70">{t('≈{amount}/mo avg', { amount: fmt0(avgIncome) })}</div></div>
             </div>
             <div className="rounded-lg border border-primary/25 bg-primary/5 p-3 text-xs">
               <CreditCard className="mr-1 inline h-4 w-4 align-[-3px] text-muted-foreground" />
               {sooner != null ? (
-                <>Redirect that {fmt(save)}/mo at your debt and you'd be <b>debt-free {fmtMonths(Math.max(0, sooner))} sooner</b> and save <b className="text-emerald-400">{fmt0(Math.max(0, intSaved))}</b> in interest <span className="text-muted-foreground">(vs your current {fmt0(state.sim.budget)}/mo plan)</span>.</>
+                t('Redirect that {save}/mo at your debt and you\'d be debt-free {months} sooner and save {interest} in interest (vs your current {budget}/mo plan).', { save: fmt(save), months: fmtMonths(Math.max(0, sooner)), interest: fmt0(Math.max(0, intSaved)), budget: fmt0(state.sim.budget) })
               ) : (
-                <>Raise the payoff budget on the Debt page to see how redirecting this money would speed up your payoff.</>
+                t('Raise the payoff budget on the Debt page to see how redirecting this money would speed up your payoff.')
               )}
             </div>
-            <Button variant="outline" size="xs" className="mt-2.5" onClick={() => setWhatIf(new Set())}>Reset what-if</Button>
+            <Button variant="outline" size="xs" className="mt-2.5" onClick={() => setWhatIf(new Set())}>{t('Reset what-if')}</Button>
           </>
         )}
       </Card>
@@ -321,9 +323,9 @@ export default function Recurring() {
           <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="text-[0.8125rem] font-semibold tracking-tight">Suggested subscriptions</span>
+              <span className="text-[0.8125rem] font-semibold tracking-tight">{t('Suggested subscriptions')}</span>
             </div>
-            <Badge className="w-fit text-[0.625rem] uppercase tracking-wide">found in your transactions</Badge>
+            <Badge className="w-fit text-[0.625rem] uppercase tracking-wide">{t('found in your transactions')}</Badge>
           </div>
           <div className="space-y-2">
             {suggestions.map((s) => {
@@ -335,19 +337,28 @@ export default function Recurring() {
                   <div className="min-w-0 flex-1">
                     <div className="line-clamp-2 text-[0.8125rem] font-bold leading-snug">{s.displayName}</div>
                     <div className="flex flex-wrap items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
-                      <span className="shrink-0">{fmt(s.avgAmount)} · {CADENCE_LABEL[s.cadence] || s.cadence}</span>
+                      <span className="shrink-0">
+                        {fmt(s.avgAmount)} · {CADENCE_LABEL[s.cadence] || s.cadence}
+                        {s.typicalDay ? ` · ${t('usually the {day}', { day: ordinal(s.typicalDay) })}` : ''}
+                      </span>
+                      {/* Only flagged for the weaker 2-charge signal — a 3+
+                          match is the normal/trusted case and doesn't need
+                          a badge cluttering every row. */}
+                      {s.confidenceLabel === 'medium' && (
+                        <span className="shrink-0 rounded-full border border-amber-400/25 bg-amber-400/10 px-1.5 py-0 text-[0.625rem] font-semibold text-amber-300">{t('seen 2x')}</span>
+                      )}
                       {acctRow && (
                         <span className="flex min-w-0 items-center gap-1">
                           <Landmark className="h-2.5 w-2.5 shrink-0" />
-                          <span className="truncate">{acctRow.institution || 'Bank'}{acctRow.mask ? ` ••${acctRow.mask}` : ''}</span>
+                          <span className="truncate">{acctRow.institution || t('Bank')}{acctRow.mask ? ` ••${acctRow.mask}` : ''}</span>
                         </span>
                       )}
-                      {tags.map((t) => <TagPill key={t.id} tag={t.tag} />)}
+                      {tags.map((tag) => <TagPill key={tag.id} tag={tag.tag} />)}
                     </div>
                   </div>
                   <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
-                    <Button size="xs" onClick={() => addSuggestion(s)}>Add</Button>
-                    <Button variant="outline" size="xs" onClick={() => dismissSuggestion(s.key)}>Dismiss</Button>
+                    <Button size="xs" onClick={() => addSuggestion(s)}>{t('Add')}</Button>
+                    <Button variant="outline" size="xs" onClick={() => dismissSuggestion(s.key)}>{t('Dismiss')}</Button>
                   </div>
                 </div>
               )
@@ -360,22 +371,22 @@ export default function Recurring() {
       <Card className="flex flex-wrap items-center gap-2.5 p-3">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input className="w-40 pl-8" placeholder="Search bills…" value={filter.q} onChange={(e) => setFilter({ ...filter, q: e.target.value })} />
+          <Input className="w-40 pl-8" placeholder={t('Search bills…')} value={filter.q} onChange={(e) => setFilter({ ...filter, q: e.target.value })} />
         </div>
         <Select className="text-xs" value={filter.cat} onChange={(e) => setFilter({ ...filter, cat: e.target.value })}>
-          <option value="all">All categories</option>
+          <option value="all">{t('All categories')}</option>
           {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </Select>
         <Select className="text-xs" value={filter.status} onChange={(e) => setFilter({ ...filter, status: e.target.value })}>
-          <option value="all">Active + paused</option><option value="active">Active only</option><option value="paused">Paused only</option>
+          <option value="all">{t('Active + paused')}</option><option value="active">{t('Active only')}</option><option value="paused">{t('Paused only')}</option>
         </Select>
         <Select className="text-xs" value={filter.sort} onChange={(e) => setFilter({ ...filter, sort: e.target.value })}>
-          <option value="due">Sort: due day</option><option value="amtHigh">Sort: highest $</option><option value="amtLow">Sort: lowest $</option><option value="name">Sort: name A–Z</option>
+          <option value="due">{t('Sort: due day')}</option><option value="amtHigh">{t('Sort: highest $')}</option><option value="amtLow">{t('Sort: lowest $')}</option><option value="name">{t('Sort: name A–Z')}</option>
         </Select>
         {isFiltered && (
           <>
-            <Badge>{list.length} shown · <b className="text-amber-400">{fmt0(fTotal)}</b>/mo</Badge>
-            <Button variant="outline" size="xs" onClick={() => setFilter({ cat: 'all', status: 'all', sort: 'due', q: '' })}>Clear</Button>
+            <Badge>{t('{count} shown', { count: list.length })} · <b className="text-amber-400">{fmt0(fTotal)}</b>/mo</Badge>
+            <Button variant="outline" size="xs" onClick={() => setFilter({ cat: 'all', status: 'all', sort: 'due', q: '' })}>{t('Clear')}</Button>
           </>
         )}
       </Card>
@@ -389,12 +400,12 @@ export default function Recurring() {
             const wi = whatIf.has(r.id)
             return (
               <div key={r.id} className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 ${off ? 'opacity-40' : ''} ${wi ? 'bg-primary/5' : ''}`}>
-                <input type="checkbox" className="h-4 w-4 shrink-0 cursor-pointer accent-emerald-400" checked={wi} disabled={off} onChange={() => toggleWhatIf(r.id)} title="What if I cancel this?" />
+                <input type="checkbox" className="h-4 w-4 shrink-0 cursor-pointer accent-emerald-400" checked={wi} disabled={off} onChange={() => toggleWhatIf(r.id)} title={t('What if I cancel this?')} />
                 <span className="flex w-6 shrink-0 justify-center"><CatIcon cat={r.cat} /></span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[0.8125rem] font-bold">{r.desc}</div>
                   <div className="text-[0.6875rem] text-muted-foreground">
-                    {recEvery(r) > 1 ? `every ${recEvery(r)} mo · next ${r.nextDate ? prettyDate(r.nextDate) : 'set a date'}` : `day ${r.dueDay} · monthly`} · {catInfo(r.cat).name}
+                    {recEvery(r) > 1 ? t('every {n} mo · next {date}', { n: recEvery(r), date: r.nextDate ? prettyDate(r.nextDate) : t('set a date') }) : t('day {day} · monthly', { day: r.dueDay })} · {catInfo(r.cat).name}
                   </div>
                   {accountLineFor(r.accountId)}
                 </div>
@@ -403,11 +414,11 @@ export default function Recurring() {
                   {recEvery(r) > 1 && <span className="block text-[0.625rem] text-muted-foreground">≈{fmt0(recMonthly(r))}/mo</span>}
                 </span>
                 <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
-                  <Button variant={off || logged ? 'outline' : 'secondary'} size="xs" disabled={off || logged} onClick={() => logRecurring(r)} title={logged ? 'Already logged this month' : 'Add this charge to this month’s transactions'}>
-                    {logged ? '✓ Logged' : 'Log this month'}
+                  <Button variant={off || logged ? 'outline' : 'secondary'} size="xs" disabled={off || logged} onClick={() => logRecurring(r)} title={logged ? t('Already logged this month') : t('Add this charge to this month’s transactions')}>
+                    {logged ? t('✓ Logged') : t('Log this month')}
                   </Button>
                   <Button variant="outline" size="xs" onClick={() => { update((s) => { const rr = s.recurring.find((x) => x.id === r.id); rr.active = rr.active === false }); if (!off) setWhatIf((s) => { const n = new Set(s); n.delete(r.id); return n }) }}>
-                    {off ? 'Enable' : 'Pause'}
+                    {off ? t('Enable') : t('Pause')}
                   </Button>
                   <button className="shrink-0 text-muted-foreground transition hover:text-foreground" onClick={() => setEditing(r.id)}><Pencil className="h-3.5 w-3.5" /></button>
                   <button className="shrink-0 text-muted-foreground transition hover:text-red-400" onClick={() => setConfirmDelId(r.id)}><X className="h-3.5 w-3.5" /></button>
@@ -416,18 +427,18 @@ export default function Recurring() {
             )
           }) : (
             <div className="p-10 text-center text-[0.8125rem] text-muted-foreground">
-              {isFiltered ? <>No bills match your filters — <button className="text-primary hover:underline" onClick={() => setFilter({ cat: 'all', status: 'all', sort: 'due', q: '' })}>clear filters</button>.</> : 'No recurring bills yet.'}
+              {isFiltered ? <>{t('No bills match your filters')} — <button className="text-primary hover:underline" onClick={() => setFilter({ cat: 'all', status: 'all', sort: 'due', q: '' })}>{t('clear filters')}</button>.</> : t('No recurring bills yet.')}
             </div>
           )}
         </div>
       </Card>
-      <p className="text-[0.6875rem] text-muted-foreground/70">Recurring items show up in the dashboard's "due soon" list; "Log this month" records the charge as a transaction. Non-monthly bills advance their next date when logged.</p>
+      <p className="text-[0.6875rem] text-muted-foreground/70">{t('Recurring items show up in the dashboard\'s "due soon" list; "Log this month" records the charge as a transaction. Non-monthly bills advance their next date when logged.')}</p>
 
       {editing !== undefined && <RecurringDialog id={editing} onClose={() => setEditing(undefined)} />}
       {confirmDelBill && (
         <ConfirmDialog
-          title={`Delete recurring "${confirmDelBill.desc}"?`}
-          desc="This can't be undone."
+          title={t('Delete recurring "{name}"?', { name: confirmDelBill.desc })}
+          desc={t("This can't be undone.")}
           busy={deleting}
           onConfirm={handleDeleteRecurring}
           onClose={() => setConfirmDelId(null)}
@@ -439,52 +450,53 @@ export default function Recurring() {
 
 function RecurringDialog({ id, onClose }) {
   const { state, update } = useApp()
+  const t = useT()
   const toast = useToast()
   const r = id ? state.recurring.find((x) => x.id === id) : { desc: '', amount: '', dueDay: 1, cat: 'subscriptions', every: 1, nextDate: null }
   const [f, setF] = useState({ ...r, every: r.every || 1, nextDate: r.nextDate || isoDate(nextDueDate(r.dueDay || 1)) })
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
   const save = () => {
     const desc = String(f.desc).trim()
-    if (!desc) return toast('Enter a name', 'error')
+    if (!desc) return toast(t('Enter a name'), 'error')
     const amount = parseFloat(f.amount)
-    if (isNaN(amount)) return toast('Enter an amount', 'error')
+    if (isNaN(amount)) return toast(t('Enter an amount'), 'error')
     const every = parseInt(f.every) || 1
-    if (every > 1 && !f.nextDate) return toast('Pick the next payment date', 'error')
+    if (every > 1 && !f.nextDate) return toast(t('Pick the next payment date'), 'error')
     update((s) => {
       const data = { desc, amount, dueDay: Math.min(31, Math.max(1, parseInt(f.dueDay) || 1)), cat: f.cat, every, nextDate: every > 1 ? f.nextDate : null }
       if (id) Object.assign(s.recurring.find((x) => x.id === id), data)
       else s.recurring.push({ id: uid('r'), ...data, active: true })
     })
-    toast(id ? 'Recurring updated' : 'Recurring added')
+    toast(id ? t('Recurring updated') : t('Recurring added'))
     onClose()
   }
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>{id ? 'Edit' : 'Add'} Recurring Bill</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{id ? t('Edit Recurring Bill') : t('Add Recurring Bill')}</DialogTitle></DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="sm:col-span-2"><Label>Name</Label><Input value={f.desc} onChange={set('desc')} placeholder="e.g. Netflix" /></div>
-          <div><Label>Amount ($)</Label><Input type="number" step="0.01" value={f.amount} onChange={set('amount')} /></div>
-          <div><Label>Day of month (1–31)</Label><Input type="number" min="1" max="31" value={f.dueDay} onChange={set('dueDay')} /></div>
+          <div className="sm:col-span-2"><Label>{t('Name')}</Label><Input value={f.desc} onChange={set('desc')} placeholder={t('e.g. Netflix')} /></div>
+          <div><Label>{t('Amount ($)')}</Label><Input type="number" step="0.01" value={f.amount} onChange={set('amount')} /></div>
+          <div><Label>{t('Day of month (1–31)')}</Label><Input type="number" min="1" max="31" value={f.dueDay} onChange={set('dueDay')} /></div>
           <div>
-            <Label>Repeats</Label>
+            <Label>{t('Repeats')}</Label>
             <Select className="w-full" value={f.every} onChange={set('every')}>
-              {[[1, 'Every month'], [2, 'Every 2 months'], [3, 'Every 3 months'], [6, 'Every 6 months'], [12, 'Every year']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              {[[1, t('Every month')], [2, t('Every 2 months')], [3, t('Every 3 months')], [6, t('Every 6 months')], [12, t('Every year')]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </Select>
           </div>
           {parseInt(f.every) > 1 && (
-            <div><Label>Next payment date</Label><Input type="date" value={f.nextDate} onChange={set('nextDate')} /></div>
+            <div><Label>{t('Next payment date')}</Label><Input type="date" value={f.nextDate} onChange={set('nextDate')} /></div>
           )}
           <div className="sm:col-span-2">
-            <Label>Category</Label>
+            <Label>{t('Category')}</Label>
             <Select className="w-full" value={f.cat} onChange={set('cat')}>
               {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </Select>
           </div>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={save}>Save</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Cancel')}</Button>
+          <Button onClick={save}>{t('Save')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

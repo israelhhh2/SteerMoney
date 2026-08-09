@@ -22,20 +22,34 @@ export async function POST() {
     if (itemsErr) throw itemsErr
 
     let added = 0, modified = 0, removed = 0
+    const itemErrors = []
     for (const item of items || []) {
-      // Fallback for a 'syncing' item whose HISTORICAL_UPDATE/
-      // SYNC_UPDATES_AVAILABLE webhook never arrived (not registered yet,
-      // delivery failure, etc): once the item is old enough that Plaid's
-      // backfill has almost certainly finished, a manual "Sync now" clears
-      // the flag too, same as the webhook route does on its own timer.
-      const ageMs = item.created_at ? Date.now() - new Date(item.created_at).getTime() : Infinity
-      const r = await syncPlaidItem(item, { clearSyncing: ageMs > 15 * 60 * 1000 })
-      added += r.added
-      modified += r.modified
-      removed += r.removed
+      // Per-item try/catch: one broken connection (reauth required, a bad
+      // cursor, a Plaid outage for that institution) must not stop every
+      // *other* connected bank from syncing in the same "Sync now" click —
+      // previously a single throwing item aborted this whole loop, so a
+      // user with e.g. one Capital One item stuck needing reauth would never
+      // get their Wells Fargo item's transactions (or Debt Tracker
+      // auto-sync, see lib/plaid-debts.js) refreshed either, even though
+      // nothing was wrong with it.
+      try {
+        // Fallback for a 'syncing' item whose HISTORICAL_UPDATE/
+        // SYNC_UPDATES_AVAILABLE webhook never arrived (not registered yet,
+        // delivery failure, etc): once the item is old enough that Plaid's
+        // backfill has almost certainly finished, a manual "Sync now" clears
+        // the flag too, same as the webhook route does on its own timer.
+        const ageMs = item.created_at ? Date.now() - new Date(item.created_at).getTime() : Infinity
+        const r = await syncPlaidItem(item, { clearSyncing: ageMs > 15 * 60 * 1000 })
+        added += r.added
+        modified += r.modified
+        removed += r.removed
+      } catch (e) {
+        console.error('[plaid] sync failed for item', item.item_id, item.institution, e?.response?.data || e?.message || e)
+        itemErrors.push({ item_id: item.item_id, institution: item.institution || null, error: e?.response?.data?.error_message || e?.message || 'Sync failed' })
+      }
     }
 
-    return Response.json({ added, modified, removed })
+    return Response.json({ added, modified, removed, ...(itemErrors.length ? { itemErrors } : {}) })
   } catch (e) {
     return Response.json({ error: e?.response?.data?.error_message || e?.message || 'Sync failed' }, { status: 500 })
   }

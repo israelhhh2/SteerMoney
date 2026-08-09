@@ -14,18 +14,20 @@ import { OCCUPATIONS } from '@/components/onboarding'
 import { useApp } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
 import { prettyDate } from '@/lib/utils'
-import { SpaceNameDialog, InviteLinkDialog, RemoveMemberDialog, ConvertToSharedSpaceDialog } from '@/components/space-name-dialog'
+import { SpaceNameDialog, InviteLinkDialog, RemoveMemberDialog, ConvertToSharedSpaceDialog, DeleteSpaceDialog } from '@/components/space-name-dialog'
 import { ConnectBankButton, PlaidLinkRunner } from '@/components/connect-bank'
+import { useT } from '@/lib/i18n'
 
 export default function Settings() {
   const { viewingAs } = useApp()
+  const t = useT()
 
   return (
     <div className="fade-in space-y-6">
       {viewingAs ? (
         <Card className="flex items-center gap-2 p-5 text-[0.8125rem] text-muted-foreground">
           <Eye className="h-4 w-4 shrink-0" />
-          Settings aren't available while viewing another customer's account.
+          {t("Settings aren't available while viewing another customer's account.")}
         </Card>
       ) : (
         <>
@@ -44,6 +46,7 @@ export default function Settings() {
 function ProfileSection() {
   const { user } = useUser()
   const toast = useToast()
+  const t = useT()
   const [lang, setLang] = useState(user?.unsafeMetadata?.lang === 'es' ? 'es' : 'en')
   const [f, setF] = useState({
     firstName: user?.firstName || '',
@@ -55,19 +58,19 @@ function ProfileSection() {
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
 
   const save = async () => {
-    if (!f.firstName.trim()) return toast('Please enter your first name', 'error')
+    if (!f.firstName.trim()) return toast(t('Please enter your first name'), 'error')
     setSaving(true)
     const metadata = { ...user.unsafeMetadata, lang, dob: f.dob || null, occupation: f.occupation || null }
     try {
       await user.update({ firstName: f.firstName.trim(), lastName: f.lastName.trim(), unsafeMetadata: metadata })
-      toast('Profile saved')
+      toast(t('Profile saved'))
     } catch {
       // name updates can be restricted by Clerk settings; keep the metadata at least
       try {
         await user.update({ unsafeMetadata: metadata })
-        toast('Profile saved')
+        toast(t('Profile saved'))
       } catch {
-        toast("Couldn't save your profile", 'error')
+        toast(t("Couldn't save your profile"), 'error')
       }
     }
     setSaving(false)
@@ -75,26 +78,26 @@ function ProfileSection() {
 
   return (
     <div className="space-y-2.5">
-      <SectionLabel title="Profile" />
+      <SectionLabel title={t('Profile')} />
       <Card className="space-y-3 p-5">
         <div>
-          <Label>Language</Label>
-          <Segmented value={lang} onChange={setLang} options={[['en', 'English'], ['es', 'Español']]} />
+          <Label>{t('Language / Idioma')}</Label>
+          <Segmented value={lang} onChange={setLang} options={[['en', t('English')], ['es', t('Español')]]} />
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div><Label>First name</Label><Input value={f.firstName} onChange={set('firstName')} /></div>
-          <div><Label>Last name</Label><Input value={f.lastName} onChange={set('lastName')} /></div>
+          <div><Label>{t('First name')}</Label><Input value={f.firstName} onChange={set('firstName')} /></div>
+          <div><Label>{t('Last name')}</Label><Input value={f.lastName} onChange={set('lastName')} /></div>
         </div>
-        <div><Label>Date of birth</Label><Input type="date" value={f.dob} onChange={set('dob')} /></div>
+        <div><Label>{t('Date of birth')}</Label><Input type="date" value={f.dob} onChange={set('dob')} /></div>
         <div>
-          <Label>What do you do for work?</Label>
+          <Label>{t('What do you do for work?')}</Label>
           <Select className="w-full" value={f.occupation} onChange={set('occupation')}>
-            <option value="">Choose one…</option>
+            <option value="">{t('Choose one…')}</option>
             {OCCUPATIONS.map(([id, en, es]) => <option key={id} value={id}>{lang === 'es' ? es : en}</option>)}
           </Select>
         </div>
         <div className="flex justify-end">
-          <Button disabled={saving} onClick={save}>Save</Button>
+          <Button disabled={saving} onClick={save}>{t('Save')}</Button>
         </div>
       </Card>
     </div>
@@ -104,18 +107,19 @@ function ProfileSection() {
 function AccountSection() {
   const { user } = useUser()
   const { signOut, openUserProfile } = useClerk()
+  const t = useT()
 
   return (
     <div className="space-y-2.5">
-      <SectionLabel title="Account" />
+      <SectionLabel title={t('Account')} />
       <Card className="space-y-3 p-5">
         <div>
-          <div className="text-[0.6875rem] font-bold uppercase tracking-wider text-muted-foreground">Signed in as</div>
+          <div className="text-[0.6875rem] font-bold uppercase tracking-wider text-muted-foreground">{t('Signed in as')}</div>
           <div className="text-[0.84375rem] font-semibold">{user?.primaryEmailAddress?.emailAddress}</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => openUserProfile()}>Manage account</Button>
-          <Button variant="destructive" onClick={() => signOut({ redirectUrl: '/sign-in' })}>Sign out</Button>
+          <Button variant="outline" onClick={() => openUserProfile()}>{t('Manage account')}</Button>
+          <Button variant="destructive" onClick={() => signOut({ redirectUrl: '/sign-in' })}>{t('Sign out')}</Button>
         </div>
       </Card>
     </div>
@@ -124,6 +128,7 @@ function AccountSection() {
 
 function ConnectedBanksSection() {
   const toast = useToast()
+  const t = useT()
   const [items, setItems] = useState(null) // null = loading
   const [syncing, setSyncing] = useState(false)
   const [removing, setRemoving] = useState(null)
@@ -148,7 +153,17 @@ function ConnectedBanksSection() {
       const res = await fetch('/api/plaid/sync', { method: 'POST' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Sync failed')
-      toast(`Synced: ${data.added} new transactions`)
+      // itemErrors: some connections synced fine, one or more others hit an
+      // error (reauth needed, Plaid outage, etc.) — surfaced instead of
+      // silently dropped, see lib/plaid-sync.js's per-item isolation.
+      if (data.itemErrors?.length) {
+        toast(t('Synced {n} new transactions, but {count} connection{plural} failed ({banks}) — try Fix connection below', {
+          n: data.added, count: data.itemErrors.length, plural: data.itemErrors.length > 1 ? 's' : '',
+          banks: data.itemErrors.map((e) => e.institution || t('a bank')).join(', '),
+        }), 'error')
+      } else {
+        toast(t('Synced: {n} new transactions', { n: data.added }))
+      }
       setTimeout(() => window.location.reload(), 1200)
     } catch (e) {
       toast(e.message, 'error')
@@ -165,7 +180,7 @@ function ConnectedBanksSection() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Couldn't remove that connection")
-      toast('Bank disconnected')
+      toast(t('Bank disconnected'))
       await loadItems()
     } catch (e) {
       toast(e.message, 'error')
@@ -175,15 +190,15 @@ function ConnectedBanksSection() {
 
   return (
     <div className="space-y-2.5">
-      <SectionLabel title="Connected banks" />
+      <SectionLabel title={t('Connected banks')} />
       <Card className="space-y-4 p-5">
         <p className="text-[0.78125rem] leading-relaxed text-muted-foreground">
-          Connect a bank and SteerMoney pulls transactions in automatically. Connections are private to your personal data.
+          {t('Connect a bank and SteerMoney pulls transactions in automatically. Connections are private to your personal data.')}
         </p>
 
         {items === null ? (
           <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading connections…
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />{t('Loading connections…')}
           </div>
         ) : items.length > 0 ? (
           <div className="divide-y divide-border/60 overflow-hidden rounded-lg border">
@@ -193,40 +208,40 @@ function ConnectedBanksSection() {
                   <Landmark className="h-4 w-4 shrink-0 translate-y-0.5 text-muted-foreground" />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[0.8125rem] font-semibold">{it.institution || 'Bank'}</span>
+                      <span className="text-[0.8125rem] font-semibold">{it.institution || t('Bank')}</span>
                       {/* 'syncing' = the initial 730-day historical backfill hasn't
                           landed yet (see lib/plaid-sync.js) — this clears itself
                           (usePlaidItems()'s polling, or this list's own loadItems
                           refresh) once it does, so no action button is needed here. */}
                       {it.status === 'syncing' && <SyncingPill />}
-                      {it.status === 'reauth_required' && <Badge variant="warning">Needs attention</Badge>}
-                      {it.status === 'revoked' && <Badge variant="destructive">Access revoked</Badge>}
+                      {it.status === 'reauth_required' && <Badge variant="warning">{t('Needs attention')}</Badge>}
+                      {it.status === 'revoked' && <Badge variant="destructive">{t('Access revoked')}</Badge>}
                     </div>
                     <div className="text-[0.6875rem] text-muted-foreground">
-                      {(it.accounts || []).map((a) => a.name + (a.mask ? ' ••' + a.mask : '')).join(', ') || 'No accounts found'}
+                      {(it.accounts || []).map((a) => a.name + (a.mask ? ' ••' + a.mask : '')).join(', ') || t('No accounts found')}
                     </div>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="whitespace-nowrap text-[0.6875rem] text-muted-foreground">
-                    {it.last_synced ? `Last synced ${prettyDate(it.last_synced.slice(0, 10))}` : 'Not yet synced'}
+                    {it.last_synced ? t('Last synced {date}', { date: prettyDate(it.last_synced.slice(0, 10)) }) : t('Not yet synced')}
                   </span>
                   <div className="flex shrink-0 flex-wrap items-center gap-2">
                     {it.status === 'reauth_required' || it.status === 'revoked' ? (
                       <FixConnectionButton item={it} onFixed={loadItems} />
                     ) : (
                       <Button variant="outline" size="xs" disabled={syncing} onClick={sync}>
-                        {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}Sync now
+                        {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}{t('Sync now')}
                       </Button>
                     )}
-                    <Button variant="destructive" size="xs" onClick={() => setRemoving(it)}>Remove</Button>
+                    <Button variant="destructive" size="xs" onClick={() => setRemoving(it)}>{t('Remove')}</Button>
                   </div>
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <p className="py-1 text-xs text-muted-foreground">No banks connected yet.</p>
+          <p className="py-1 text-xs text-muted-foreground">{t('No banks connected yet.')}</p>
         )}
 
         <div className="flex justify-end">
@@ -235,7 +250,7 @@ function ConnectedBanksSection() {
       </Card>
       {removing && (
         <RemoveBankDialog
-          institution={removing.institution || 'this bank'}
+          institution={removing.institution || t('this bank')}
           onConfirm={confirmRemove}
           onClose={() => setRemoving(null)}
         />
@@ -259,6 +274,7 @@ function ConnectedBanksSection() {
 // banks needing attention at once.
 function FixConnectionButton({ item, onFixed }) {
   const toast = useToast()
+  const t = useT()
   const [linkToken, setLinkToken] = useState(null)
   const [connecting, setConnecting] = useState(false)
 
@@ -272,11 +288,11 @@ function FixConnectionButton({ item, onFixed }) {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Couldn't confirm the fix")
-      toast('Connection fixed')
+      toast(t('Connection fixed'))
       try {
         const syncRes = await fetch('/api/plaid/sync', { method: 'POST' })
         const syncData = await syncRes.json()
-        if (syncRes.ok) toast(`Synced: ${syncData.added} new transactions`)
+        if (syncRes.ok) toast(t('Synced: {n} new transactions', { n: syncData.added }))
       } catch { /* best effort */ }
       await onFixed()
     } catch (e) {
@@ -286,7 +302,7 @@ function FixConnectionButton({ item, onFixed }) {
 
   const handleExit = (err) => {
     setLinkToken(null)
-    if (err) toast(err.display_message || err.error_message || "Couldn't fix that connection", 'error')
+    if (err) toast(err.display_message || err.error_message || t("Couldn't fix that connection"), 'error')
   }
 
   const fix = async () => {
@@ -315,7 +331,7 @@ function FixConnectionButton({ item, onFixed }) {
         disabled={connecting}
         onClick={fix}
       >
-        {connecting ? <Loader2 className="animate-spin" /> : <AlertTriangle />}Fix connection
+        {connecting ? <Loader2 className="animate-spin" /> : <AlertTriangle />}{t('Fix connection')}
       </Button>
       {linkToken && <PlaidLinkRunner token={linkToken} onSuccess={handleSuccess} onExit={handleExit} />}
     </>
@@ -323,6 +339,7 @@ function FixConnectionButton({ item, onFixed }) {
 }
 
 function RemoveBankDialog({ institution, onConfirm, onClose }) {
+  const t = useT()
   const [removing, setRemoving] = useState(false)
 
   const confirm = async () => {
@@ -334,13 +351,13 @@ function RemoveBankDialog({ institution, onConfirm, onClose }) {
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Remove {institution}?</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{t('Remove {institution}?', { institution })}</DialogTitle></DialogHeader>
         <p className="text-xs text-muted-foreground">
-          SteerMoney stops pulling new transactions from this bank. Transactions already imported stay in your account.
+          {t('SteerMoney stops pulling new transactions from this bank. Transactions already imported stay in your account.')}
         </p>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="destructive" disabled={removing} onClick={confirm}>Remove</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Cancel')}</Button>
+          <Button variant="destructive" disabled={removing} onClick={confirm}>{t('Remove')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -349,15 +366,18 @@ function RemoveBankDialog({ institution, onConfirm, onClose }) {
 
 function SharedSpacesSection() {
   const { user } = useUser()
-  const { state, space, spaces, createSpace, createInvite, renameSpace, fetchMembers, removeMember, transferPersonalDataToSpace } = useApp()
+  const { state, space, spaces, createSpace, createInvite, renameSpace, fetchMembers, removeMember, deleteSpace, transferPersonalDataToSpace } = useApp()
   const toast = useToast()
   const centerToast = useCenterToast()
+  const t = useT()
   const [showNewSpace, setShowNewSpace] = useState(false)
   const [renaming, setRenaming] = useState(null)
   const [inviteUrl, setInviteUrl] = useState(null)
   const [expanded, setExpanded] = useState(null) // id of the space whose members are shown
   const [membersBySpace, setMembersBySpace] = useState({}) // id -> 'loading' | array
   const [removing, setRemoving] = useState(null) // { space, member }
+  const [deleting, setDeleting] = useState(null) // space pending owner-only permanent delete
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [moving, setMoving] = useState(null) // space the user is about to move their personal data into
   const [moveBusy, setMoveBusy] = useState(false)
   const [showConvert, setShowConvert] = useState(false) // naming dialog for "Convert my personal space into a shared space"
@@ -376,15 +396,15 @@ function SharedSpacesSection() {
 
   const saveNewSpace = async (name) => {
     const r = await createSpace(name)
-    if (r.error) toast("Couldn't create the space: " + r.error, 'error')
-    else toast(`"${name}" created. Copy the invite link to share it.`)
+    if (r.error) toast(t("Couldn't create the space: {error}", { error: r.error }), 'error')
+    else toast(t('"{name}" created. Copy the invite link to share it.', { name }))
   }
 
   const saveRename = async (name) => {
     if (name === renaming.name) return
     const r = await renameSpace(renaming.id, name)
-    if (r.error) toast("Couldn't rename the space: " + r.error, 'error')
-    else toast('Space renamed')
+    if (r.error) toast(t("Couldn't rename the space: {error}", { error: r.error }), 'error')
+    else toast(t('Space renamed'))
   }
 
   const copyInvite = async (sp) => {
@@ -392,7 +412,7 @@ function SharedSpacesSection() {
     if (r.error) return toast(r.error, 'error')
     try {
       await navigator.clipboard.writeText(r.url)
-      toast('Invite link copied. It works for 7 days.')
+      toast(t('Invite link copied. It works for 7 days.'))
     } catch {
       setInviteUrl(r.url)
     }
@@ -425,12 +445,12 @@ function SharedSpacesSection() {
       // failure aborts before anything is deleted, so personal data is
       // intact — the only side effect is the new (still-empty) space
       // sitting there, retryable via that space's own "Move my data here".
-      centerToast(`"${target.name}" was created, but moving your data failed: ${move.error} Your personal data wasn't touched — use "Move my data here" on "${target.name}" to try again.`, 'error')
+      centerToast(t('"{name}" was created, but moving your data failed: {error} Your personal data wasn\'t touched — use "Move my data here" on "{name}" to try again.', { name: target.name, error: move.error }), 'error')
       return
     }
     if (move.warning) centerToast(move.warning, 'error')
-    else if (move.bankError) centerToast(`"${target.name}" is ready — one bank connection needs manual attention (${move.bankError})`, 'error')
-    else centerToast(`"${target.name}" is ready with all your data.`)
+    else if (move.bankError) centerToast(t('"{name}" is ready — one bank connection needs manual attention ({error})', { name: target.name, error: move.bankError }), 'error')
+    else centerToast(t('"{name}" is ready with all your data.', { name: target.name }))
     // Surface the invite link the same way every other invite in this
     // section does — copies to the clipboard silently, or falls back to
     // the InviteLinkDialog if the clipboard isn't available.
@@ -440,7 +460,7 @@ function SharedSpacesSection() {
   const loadMembers = async (spaceId) => {
     setMembersBySpace((m) => ({ ...m, [spaceId]: 'loading' }))
     const r = await fetchMembers(spaceId)
-    if (r.error) { toast("Couldn't load members: " + r.error, 'error'); setMembersBySpace((m) => ({ ...m, [spaceId]: [] })) }
+    if (r.error) { toast(t("Couldn't load members: {error}", { error: r.error }), 'error'); setMembersBySpace((m) => ({ ...m, [spaceId]: [] })) }
     else setMembersBySpace((m) => ({ ...m, [spaceId]: r.members }))
   }
 
@@ -452,11 +472,27 @@ function SharedSpacesSection() {
 
   const confirmRemove = async () => {
     const { space: sp, member } = removing
-    const label = member.name || 'Member'
+    const label = member.name || t('Member')
     const r = await removeMember(sp.id, member.user_id)
-    if (r.error) toast(`Couldn't remove ${label}: ` + r.error, 'error')
-    else { toast(`${label} removed`); loadMembers(sp.id) }
+    if (r.error) toast(t("Couldn't remove {name}: {error}", { name: label, error: r.error }), 'error')
+    else { toast(t('{name} removed', { name: label })); loadMembers(sp.id) }
     setRemoving(null)
+  }
+
+  // Owner-only, permanent — see store.jsx's deleteSpace() for the full
+  // sweep (every data table scoped to the space, its bank connections, then
+  // the workspace row itself). DeleteSpaceDialog already gates this behind
+  // typing the space's exact name, so by the time this runs the user has
+  // confirmed deliberately.
+  const confirmDeleteSpace = async () => {
+    const sp = deleting
+    setDeleteBusy(true)
+    const r = await deleteSpace(sp.id)
+    setDeleteBusy(false)
+    setDeleting(null)
+    if (r.error) centerToast(t('Couldn\'t delete "{name}": {error}', { name: sp.name, error: r.error }), 'error')
+    else if (r.bankError) centerToast(t('"{name}" was deleted — one bank connection needs manual removal ({error})', { name: sp.name, error: r.bankError }), 'error')
+    else centerToast(t('"{name}" was deleted.', { name: sp.name }))
   }
 
   // "Move my data here" — brings this person's personal debts, accounts,
@@ -473,27 +509,27 @@ function SharedSpacesSection() {
     setMoving(null)
     if (r.error) centerToast(r.error, 'error')
     else if (r.warning) centerToast(r.warning, 'error')
-    else if (r.bankError) centerToast(`Your data moved into "${sp.name}" — one bank connection needs manual attention (${r.bankError})`, 'error')
-    else centerToast(`Your data moved into "${sp.name}"`)
+    else if (r.bankError) centerToast(t('Your data moved into "{name}" — one bank connection needs manual attention ({error})', { name: sp.name, error: r.bankError }), 'error')
+    else centerToast(t('Your data moved into "{name}"', { name: sp.name }))
   }
 
   return (
     <div className="space-y-2.5">
-      <SectionLabel title="Shared spaces" />
+      <SectionLabel title={t('Shared spaces')} />
       <Card className="space-y-4 p-5">
         <p className="text-[0.78125rem] leading-relaxed text-muted-foreground">
-          1. Create a shared space. 2. Copy the invite link and send it to your partner. 3. They open the link, create an account, and the space shows up for both of you. Use the switcher in the header to flip between Personal and the shared space. The person who created a space owns it and can remove members.
+          {t('1. Create a shared space. 2. Copy the invite link and send it to your partner. 3. They open the link, create an account, and the space shows up for both of you. Use the switcher in the header to flip between Personal and the shared space. The person who created a space owns it and can remove members.')}
         </p>
 
         {!space && hasDataToMove && (
           <div className="flex flex-col items-start gap-2 rounded-lg border border-dashed border-primary/30 bg-primary/[0.04] px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
             <p className="min-w-0 flex-1 text-[0.75rem] leading-relaxed text-muted-foreground">
-              Splitting finances with a partner? Turn your Personal space into a shared one — everything you already have moves with you.
+              {t('Splitting finances with a partner? Turn your Personal space into a shared one — everything you already have moves with you.')}
             </p>
             <Button size="sm" variant="outline" className="w-full max-w-full whitespace-normal text-center sm:w-auto" onClick={() => setShowConvert(true)}>
               <Users className="shrink-0" />
-              <span className="sm:hidden">Convert to shared space</span>
-              <span className="hidden sm:inline">Convert my personal space into a shared space</span>
+              <span className="sm:hidden">{t('Convert to shared space')}</span>
+              <span className="hidden sm:inline">{t('Convert my personal space into a shared space')}</span>
             </Button>
           </div>
         )}
@@ -515,32 +551,42 @@ function SharedSpacesSection() {
                       <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-semibold">{sp.name}</span>
                       {isOwner ? (
-                        <span
-                          role="button"
-                          title="Rename space"
-                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-accent [&_svg]:h-3.5 [&_svg]:w-3.5"
-                          onClick={(e) => { e.stopPropagation(); setRenaming(sp) }}
-                        >
-                          <Pencil />
-                        </span>
+                        <>
+                          <span
+                            role="button"
+                            title={t('Rename space')}
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-accent [&_svg]:h-3.5 [&_svg]:w-3.5"
+                            onClick={(e) => { e.stopPropagation(); setRenaming(sp) }}
+                          >
+                            <Pencil />
+                          </span>
+                          <span
+                            role="button"
+                            title={t('Delete space')}
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-red-400 hover:bg-red-400/10 [&_svg]:h-3.5 [&_svg]:w-3.5"
+                            onClick={(e) => { e.stopPropagation(); setDeleting(sp) }}
+                          >
+                            <Trash2 />
+                          </span>
+                        </>
                       ) : null}
                     </button>
                     <div className="flex flex-wrap items-center gap-2 pl-[22px]">
                       <span
                         role="button"
-                        title="Copy an invite link for this shared space"
+                        title={t('Copy an invite link for this shared space')}
                         className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 text-xs font-medium shadow-sm transition-colors hover:bg-accent [&_svg]:h-3.5 [&_svg]:w-3.5"
                         onClick={() => copyInvite(sp)}
                       >
-                        <Link2 />Copy invite link
+                        <Link2 />{t('Copy invite link')}
                       </span>
                       <span
                         role="button"
-                        title="Move your personal accounts, debts, budgets, transactions and bank connections into this space"
+                        title={t('Move your personal accounts, debts, budgets, transactions and bank connections into this space')}
                         className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 text-xs font-medium shadow-sm transition-colors hover:bg-accent [&_svg]:h-3.5 [&_svg]:w-3.5"
                         onClick={() => setMoving(sp)}
                       >
-                        <ArrowRightLeft />Move my data here
+                        <ArrowRightLeft />{t('Move my data here')}
                       </span>
                     </div>
                   </div>
@@ -549,10 +595,10 @@ function SharedSpacesSection() {
                     <div className="fade-in space-y-2.5 border-t border-border/60 bg-secondary/20 px-3 py-3">
                       {members === 'loading' ? (
                         <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading members…
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />{t('Loading members…')}
                         </div>
                       ) : (members || []).length === 0 ? (
-                        <p className="py-1 text-xs text-muted-foreground">No members found.</p>
+                        <p className="py-1 text-xs text-muted-foreground">{t('No members found.')}</p>
                       ) : (
                         members.map((m) => (
                           <div key={m.user_id} className="flex items-center gap-2.5">
@@ -561,14 +607,14 @@ function SharedSpacesSection() {
                             </span>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5">
-                                <span className="truncate text-[0.8125rem] font-medium">{m.name || 'Member'}</span>
-                                {m.user_id === sp.ownerId && <Badge variant="info">Owner</Badge>}
+                                <span className="truncate text-[0.8125rem] font-medium">{m.name || t('Member')}</span>
+                                {m.user_id === sp.ownerId && <Badge variant="info">{t('Owner')}</Badge>}
                               </div>
                               <div className="truncate text-[0.6875rem] text-muted-foreground">{m.email || ''}</div>
                             </div>
                             {isOwner && m.user_id !== sp.ownerId && (
                               <Button variant="outline" size="xs" onClick={() => setRemoving({ space: sp, member: m })}>
-                                <UserMinus />Remove
+                                <UserMinus />{t('Remove')}
                               </Button>
                             )}
                           </div>
@@ -583,20 +629,20 @@ function SharedSpacesSection() {
         )}
 
         <div className="flex justify-end">
-          <Button size="sm" onClick={() => setShowNewSpace(true)}><Plus />New shared space</Button>
+          <Button size="sm" onClick={() => setShowNewSpace(true)}><Plus />{t('New shared space')}</Button>
         </div>
       </Card>
       {showNewSpace && (
         <SpaceNameDialog
-          title="New shared space"
-          placeholder="Our finances"
+          title={t('New shared space')}
+          placeholder={t('Our finances')}
           onSave={saveNewSpace}
           onClose={() => setShowNewSpace(false)}
         />
       )}
       {renaming && (
         <SpaceNameDialog
-          title="Rename space"
+          title={t('Rename space')}
           initial={renaming.name}
           onSave={saveRename}
           onClose={() => setRenaming(null)}
@@ -604,9 +650,9 @@ function SharedSpacesSection() {
       )}
       {showConvert && (
         <ConvertToSharedSpaceDialog
-          initial={user?.firstName ? `${user.firstName} & partner` : 'Our finances'}
-          placeholder="Our finances"
-          desc="This creates a shared space, moves all your current data into it — accounts, debts, budgets, transactions, bank connections — and gives you an invite link for your partner. Your Personal space will be empty afterward."
+          initial={user?.firstName ? t('{name} & partner', { name: user.firstName }) : t('Our finances')}
+          placeholder={t('Our finances')}
+          desc={t('This creates a shared space, moves all your current data into it — accounts, debts, budgets, transactions, bank connections — and gives you an invite link for your partner. Your Personal space will be empty afterward.')}
           busy={convertBusy}
           onSave={convertToShared}
           onClose={() => !convertBusy && setShowConvert(false)}
@@ -615,17 +661,25 @@ function SharedSpacesSection() {
       {inviteUrl && <InviteLinkDialog url={inviteUrl} onClose={() => setInviteUrl(null)} />}
       {removing && (
         <RemoveMemberDialog
-          name={removing.member.name || 'Member'}
+          name={removing.member.name || t('Member')}
           spaceName={removing.space.name}
           onConfirm={confirmRemove}
           onClose={() => setRemoving(null)}
         />
       )}
+      {deleting && (
+        <DeleteSpaceDialog
+          space={deleting}
+          busy={deleteBusy}
+          onConfirm={confirmDeleteSpace}
+          onClose={() => !deleteBusy && setDeleting(null)}
+        />
+      )}
       {moving && (
         <ConfirmDialog
-          title={`Move your data into "${moving.name}"?`}
-          desc={`Your accounts, debts, budgets, recurring bills, transactions, goals, and bank connections will move into "${moving.name}". Everyone in the space will be able to see them, and they'll no longer show up in your Personal space. This can take a few seconds — don't close this page.`}
-          confirmLabel="Move my data"
+          title={t('Move your data into "{name}"?', { name: moving.name })}
+          desc={t('Your accounts, debts, budgets, recurring bills, transactions, goals, and bank connections will move into "{name}". Everyone in the space will be able to see them, and they\'ll no longer show up in your Personal space. This can take a few seconds — don\'t close this page.', { name: moving.name })}
+          confirmLabel={t('Move my data')}
           busy={moveBusy}
           onConfirm={confirmMove}
           onClose={() => !moveBusy && setMoving(null)}
@@ -645,6 +699,7 @@ function SharedSpacesSection() {
 function DangerZoneSection() {
   const { update } = useApp()
   const centerToast = useCenterToast()
+  const t = useT()
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -662,7 +717,7 @@ function DangerZoneSection() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ item_id: it.item_id }),
           })
-          if (!r.ok) { const d = await r.json().catch(() => ({})); bankError = bankError || d.error || 'Failed to disconnect a bank' }
+          if (!r.ok) { const d = await r.json().catch(() => ({})); bankError = bankError || d.error || t('Failed to disconnect a bank') }
         } catch (e) {
           bankError = bankError || e.message
         }
@@ -687,9 +742,9 @@ function DangerZoneSection() {
         s.goals = []
         s.accounts = []
       })
-      centerToast(bankError ? 'Data erased — one bank connection needs manual removal' : 'All data erased')
+      centerToast(bankError ? t('Data erased — one bank connection needs manual removal') : t('All data erased'))
     } catch (e) {
-      centerToast(e?.message || "Couldn't erase your data", 'error')
+      centerToast(e?.message || t("Couldn't erase your data"), 'error')
     }
     setBusy(false)
     setConfirming(false)
@@ -697,26 +752,25 @@ function DangerZoneSection() {
 
   return (
     <div className="space-y-2.5">
-      <SectionLabel title="Danger zone" />
+      <SectionLabel title={t('Danger zone')} />
       <Card className="space-y-3 border-destructive/40 bg-destructive/[0.04] p-5">
         <div>
-          <div className="text-[0.84375rem] font-bold text-red-400">Erase all data</div>
+          <div className="text-[0.84375rem] font-bold text-red-400">{t('Erase all data')}</div>
           <p className="mt-1 text-[0.78125rem] leading-relaxed text-muted-foreground">
-            Permanently deletes every debt, budget, goal, recurring bill, transaction, and account in this space, and
-            disconnects any connected banks. This can't be undone.
+            {t('Permanently deletes every debt, budget, goal, recurring bill, transaction, and account in this space, and disconnects any connected banks. This can\'t be undone.')}
           </p>
         </div>
         <div className="flex justify-end">
           <Button variant="destructive" size="sm" onClick={() => setConfirming(true)}>
-            <Trash2 />Erase all data
+            <Trash2 />{t('Erase all data')}
           </Button>
         </div>
       </Card>
       {confirming && (
         <ConfirmDialog
-          title="Erase all data?"
-          desc="This permanently deletes ALL your data in this space — accounts, debts, budgets, goals, recurring, transactions, payment history. Bank connections are also removed."
-          confirmLabel="Erase everything"
+          title={t('Erase all data?')}
+          desc={t('This permanently deletes ALL your data in this space — accounts, debts, budgets, goals, recurring, transactions, payment history. Bank connections are also removed.')}
+          confirmLabel={t('Erase everything')}
           busy={busy}
           onConfirm={eraseAll}
           onClose={() => setConfirming(false)}

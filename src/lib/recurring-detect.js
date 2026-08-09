@@ -5,6 +5,7 @@
 // other scheduled-ish work is Plaid's own webhook/backfill — see
 // lib/plaid-sync.js — which is unrelated).
 import { isoDate } from './utils'
+import { cleanDisplayName } from './tx-display'
 
 // ---- known subscription hints ----
 // [needle, canonical display name] — needle is matched as a case-insensitive
@@ -41,13 +42,23 @@ function knownSubMatch(rawDescLower) {
   return KNOWN_SUBS.find(([needle]) => rawDescLower.includes(needle)) || null
 }
 
-// General-purpose merchant-name cleanup — strips domain suffixes, store/POS/
-// terminal/ref numbers, card processor prefixes, dates, and long numeric
-// tails (card/store ids), then collapses whitespace. Used both as the
-// grouping key fallback (when no known-subscription hint matches) and to
-// build a friendly display name for merchants not in the known list.
+// General-purpose merchant-name cleanup — first runs the same bank-statement
+// cleanup Transactions.jsx's mobile rows use (lib/tx-display.js's
+// cleanDisplayName: strips "Check Card:"/"POS Debit:"/ACH prefixes, masked
+// card runs like "XXXXXXXX1234", trailing "Ref# 12345"/post dates), THEN
+// lowercases and strips remaining domain suffixes/punctuation/long numeric
+// tails. Running cleanDisplayName first is what makes the grouping key
+// consistent ACROSS DIFFERENT BANKS/CARDS — Wells Fargo, Capital One, and
+// Wescom each format the same merchant's statement line differently (one
+// might prefix "PURCHASE AUTHORIZED ON 4/12 NETFLIX.COM", another just
+// "NETFLIX.COM 8*3XXXX1234"), and without a shared cleanup pass first those
+// produced two different merchantKeys — meaning the same subscription never
+// reached the >=2-occurrences threshold if it happened to be split across
+// two accounts. Used both as the grouping key fallback (when no
+// known-subscription hint matches) and to build a friendly display name for
+// merchants not in the known list.
 export function normalizeMerchant(desc) {
-  let s = String(desc || '').toLowerCase()
+  let s = cleanDisplayName(desc).toLowerCase()
   s = s.replace(/\.(com|net|org|co)\b/g, ' ')            // "netflix.com" -> "netflix "
   s = s.replace(/[^a-z0-9\s]/g, ' ')                       // punctuation (*, #, /, -, etc.) -> space
   s = s.replace(/\b\d{4,}\b/g, ' ')                        // long numeric refs / store ids / card tails
@@ -60,7 +71,11 @@ export function normalizeMerchant(desc) {
 // Grouping key for a transaction description — a known-subscription match
 // collapses onto its canonical display name (lowercased, no spaces) so
 // "netflix.com" and "NETFLIX*123" land in the same bucket; otherwise falls
-// back to the cleaned merchant string.
+// back to the cleaned merchant string. Deliberately NOT scoped to an
+// account — callers pass every transaction across every linked account in
+// one list (see detectRecurring below), so a subscription charged to a
+// Wells Fargo card one month and a Capital One card the next still groups
+// into a single suggestion instead of two never-qualifying halves.
 export function merchantKey(desc) {
   const raw = String(desc || '').toLowerCase()
   const known = knownSubMatch(raw)
@@ -95,7 +110,8 @@ export function displayName(desc) {
 // of rows when they land under 'other' instead, which is what
 // mapPlaidCategory does for BANK_FEES and some LOAN_PAYMENTS sub-types).
 // Deliberately conservative and keyword-based (no ML/heuristics) so it's
-// easy to reason about and extend.
+// easy to reason about and extend. UNCHANGED from the previous detector —
+// kept exactly as-is per the "don't remove these" instruction.
 const EXCLUDE_PATTERNS = [
   /interest\s*charge/i,          // "Interest Charge On Cash Advances/Purchases"
   /finance\s*charge/i,
@@ -119,22 +135,25 @@ function isExcludedMerchant(desc) {
 
 // ---- cadence classification ----
 const DAY_MS = 86400000
-// "Go back 4 months" per the request: weekly/biweekly/monthly are classified
-// only against transactions from this recent window, so a bill that lapsed
-// months ago ages out of suggestions on its own instead of being detected
-// forever off old charges. Yearly obviously can't be seen inside 4 months, so
-// it's handled separately (tryYearly, below) against the full history as a
-// bonus path — it doesn't share this window.
-const WINDOW_DAYS = 120
+
+// [name, loGap, hiGap] — a single-period consecutive-gap band, in days.
+// Order matters: gapCadence (below) tries these in order and returns the
+// first (shortest-period) cadence whose band explains every gap in the
+// group, so a genuinely weekly merchant doesn't get mis-classified as
+// "biweekly with one missed week."
 const CADENCE_RANGES = [
   ['weekly', 6, 8],
-  ['biweekly', 12, 16],
-  ['monthly', 26, 35],
+  ['biweekly', 13, 16],
+  ['monthly', 28, 33],
+  ['quarterly', 88, 95],
+  ['yearly', 360, 372],
 ]
-const YEARLY_RANGE = [350, 380]
-const CADENCE_DAYS = { weekly: 7, biweekly: 14 }
-
-export const CADENCE_LABEL = { weekly: 'weekly', biweekly: 'every 2 weeks', monthly: 'monthly', yearly: 'yearly' }
+export const CADENCE_LABEL = { weekly: 'weekly', biweekly: 'every 2 weeks', monthly: 'monthly', quarterly: 'every 3 months', yearly: 'yearly' }
+const CADENCE_STEP_DAYS = { weekly: 7, biweekly: 14, monthly: 30, quarterly: 91, yearly: 365 }
+// Once a group's most recent charge is older than this many days for its
+// matched cadence, stop suggesting it — it's very likely been cancelled
+// rather than still "recurring." Roughly 2x the cadence step + slack.
+const MAX_STALE_DAYS = { weekly: 21, biweekly: 35, monthly: 70, quarterly: 200, yearly: 420 }
 
 function median(nums) {
   const s = [...nums].sort((a, b) => a - b)
@@ -143,86 +162,121 @@ function median(nums) {
   return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2
 }
 
-function classifyCadence(medianDays) {
+function dateOf(t) {
+  return new Date(t.date + 'T00:00:00').getTime()
+}
+
+// A gap fits a cadence's "missed period" band at roughly double the normal
+// band ("allowing one missed period" — a subscription that skipped a single
+// billing cycle, e.g. a declined card retried the next month, still reads
+// as that cadence rather than getting dropped for one irregular gap). The
+// missed-period band is widened a few days past a clean 2x to absorb
+// month-length drift (28 vs 31-day months compounding across two cycles).
+function inMissedBand(gapDays, lo, hi) {
+  const missedLo = lo * 2 - 3
+  const missedHi = hi * 2 + 5
+  return gapDays >= missedLo && gapDays <= missedHi
+}
+
+// Rule (a) — interval-based: every consecutive gap between sorted charges
+// fits one cadence's band. Two passes, both trying cadences shortest-period
+// first:
+//   1. Strict pass — every gap lands in the cadence's normal [lo,hi] band,
+//      no missed-period slack. Runs first and wins outright when it
+//      matches, because a "missed period" band and the NEXT cadence's
+//      normal band can overlap (biweekly-missed = ~23-37d, which swallows
+//      an ordinary ~30d monthly gap) — without this strict-first pass, a
+//      clean monthly-every-month merchant could get mis-read as "biweekly
+//      with one missed period" purely because biweekly sorts first.
+//   2. Missed-period pass — only reached if nothing matched strictly; every
+//      gap must land in the cadence's normal band OR its missed-period
+//      band (inMissedBand), so a merchant that actually skipped a cycle
+//      still classifies correctly.
+function gapCadence(sortedTxs) {
+  if (sortedTxs.length < 2) return null
+  const gaps = []
+  for (let i = 1; i < sortedTxs.length; i++) gaps.push(Math.round((dateOf(sortedTxs[i]) - dateOf(sortedTxs[i - 1])) / DAY_MS))
+  if (gaps.some((g) => g <= 0)) return null // same-day/out-of-order noise, shouldn't happen post-dedupe
+
   for (const [name, lo, hi] of CADENCE_RANGES) {
-    if (medianDays >= lo && medianDays <= hi) return name
+    if (gaps.every((g) => g >= lo && g <= hi)) return name
+  }
+  for (const [name, lo, hi] of CADENCE_RANGES) {
+    if (gaps.every((g) => (g >= lo && g <= hi) || inMissedBand(g, lo, hi))) return name
   }
   return null
 }
 
-// "Same amount" — within ~10% of the median (tightened from ~20%; a $0.50
-// floor still covers cent-level statement noise on very small charges).
-function amountsAreConsistent(amounts, medAmount) {
-  return amounts.every((a) => Math.abs(a - medAmount) <= Math.max(medAmount * 0.1, 0.5))
-}
-
-// "Around the same time" for a monthly cadence — the interval-median check
-// alone tolerates e.g. day 1 and day 30 landing 29 days apart (still "monthly"
-// by interval), which isn't what a user means by "same time each month."
-// Requires every charge's day-of-month within ±4 of the group's median day —
-// wide enough to absorb weekend/holiday posting drift and short-month shift
-// (Feb 28 vs Mar 2-4), tight enough to reject "same merchant, different week."
-// Weekly/biweekly don't need this — their tight interval bands already imply
-// consistent timing.
-function domConsistent(sortedTxs) {
+// Rule (b) — day-of-month based: every charge's day-of-month falls within
+// ±2 of the group's median day-of-month, regardless of exact interval.
+// Catches cases rule (a) misses — e.g. a bill that lands on the 1st most
+// months but the 3rd when the 1st is a Sunday, combined with one skipped
+// month, can produce a gap outside even the "missed period" band, while the
+// day-of-month itself stayed rock-steady. The group's own median gap then
+// picks which "same day, N months apart" cadence it actually is (monthly/
+// quarterly/yearly — weekly/biweekly dates don't share a day-of-month by
+// construction, so this rule naturally doesn't fire for them).
+function domCadence(sortedTxs) {
+  if (sortedTxs.length < 2) return null
   const doms = sortedTxs.map((t) => new Date(t.date + 'T00:00:00').getDate())
   const med = median(doms)
-  return doms.every((d) => Math.abs(d - med) <= 4)
+  if (!doms.every((d) => Math.abs(d - med) <= 2)) return null
+  const gaps = []
+  for (let i = 1; i < sortedTxs.length; i++) gaps.push(Math.round((dateOf(sortedTxs[i]) - dateOf(sortedTxs[i - 1])) / DAY_MS))
+  if (gaps.some((g) => g <= 0)) return null
+  const medGap = median(gaps)
+  if (medGap >= 20 && medGap <= 45) return 'monthly'
+  if (medGap >= 75 && medGap <= 105) return 'quarterly'
+  if (medGap >= 320 && medGap <= 410) return 'yearly'
+  return null
 }
 
-// Classifies one merchant group against the recent (4-month) window —
-// weekly/biweekly/monthly only. Returns { sorted, cadence } or null.
-function tryClassifyRecent(txs) {
-  if (txs.length < 2) return null
-  const sorted = txs.slice().sort((a, b) => a.date.localeCompare(b.date))
-  const dates = sorted.map((t) => new Date(t.date + 'T00:00:00').getTime())
-  const intervals = []
-  for (let i = 1; i < dates.length; i++) intervals.push(Math.round((dates[i] - dates[i - 1]) / DAY_MS))
-  const cadence = classifyCadence(median(intervals))
-  if (!cadence) return null
-
-  const amounts = sorted.map((t) => t.amount)
-  if (!amountsAreConsistent(amounts, median(amounts))) return null
-  if (cadence === 'monthly' && !domConsistent(sorted)) return null
-
-  return { sorted, cadence }
+// "Same amount" — within max($2, 15%) of the group median. Loosened from
+// the previous ~10%/$0.50 floor: subscriptions routinely carry a price bump
+// (e.g. $9.99 -> $11.99) or tax that a tight 10% band rejected outright,
+// which was silently dropping otherwise-obvious matches.
+function amountsAreConsistent(amounts, medAmount) {
+  return amounts.every((a) => Math.abs(a - medAmount) <= Math.max(medAmount * 0.15, 2))
 }
 
-// Yearly bonus path, against the FULL history (not the 4-month window) — per
-// the request, yearly cadence "obviously can't be detected in 4 months," so
-// this only requires at least two charges ~12 months apart somewhere in
-// everything we have, same amount-consistency rule as the recent path.
-function tryClassifyYearly(txs) {
-  if (txs.length < 2) return null
-  const sorted = txs.slice().sort((a, b) => a.date.localeCompare(b.date))
-  const dates = sorted.map((t) => new Date(t.date + 'T00:00:00').getTime())
-  const intervals = []
-  for (let i = 1; i < dates.length; i++) intervals.push(Math.round((dates[i] - dates[i - 1]) / DAY_MS))
-  const medianInterval = median(intervals)
-  if (medianInterval < YEARLY_RANGE[0] || medianInterval > YEARLY_RANGE[1]) return null
-
-  const amounts = sorted.map((t) => t.amount)
-  if (!amountsAreConsistent(amounts, median(amounts))) return null
-
-  return { sorted, cadence: 'yearly' }
+// Consecutive same-date entries (already date-sorted, so dupes are
+// adjacent) collapse to one — guards gapCadence/domCadence's gap math
+// against a 0-day gap, which would otherwise fail every cadence band. This
+// is what "dedupe if the same subscription shows on two accounts" means in
+// practice for a rare same-day double-post; the later entry in the sorted
+// list wins, which combined with sorting by date (not a secondary account
+// tiebreak) simply keeps one representative — see the accountId comment on
+// the group's `last` transaction below for the actual "prefer most recent
+// account" behavior that matters for the common case (a subscription that
+// moved from one card to another over time, not same-day duplicates).
+function dedupeSameDay(sorted) {
+  const out = []
+  for (const t of sorted) {
+    if (out.length && out[out.length - 1].date === t.date) out[out.length - 1] = t
+    else out.push(t)
+  }
+  return out
 }
 
 function estimateNextDate(lastDateIso, cadence) {
   const d = new Date(lastDateIso + 'T00:00:00')
   if (cadence === 'monthly') d.setMonth(d.getMonth() + 1)
+  else if (cadence === 'quarterly') d.setMonth(d.getMonth() + 3)
   else if (cadence === 'yearly') d.setFullYear(d.getFullYear() + 1)
-  else d.setDate(d.getDate() + (CADENCE_DAYS[cadence] || 30))
+  else d.setDate(d.getDate() + (CADENCE_STEP_DAYS[cadence] || 30))
   return isoDate(d)
 }
 
 // Confidence is a rough 0–1 signal for sort order only (higher shown first)
-// — not surfaced as a hard cutoff, so nothing gets silently hidden.
-function confidenceFor(count, amountsConsistent, known) {
-  let score = 0.5
-  if (count >= 4) score += 0.2
-  else if (count >= 3) score += 0.1
+// — not surfaced as a hard cutoff, so nothing gets silently hidden. Per the
+// brief, 2 occurrences is the minimum signal (weakest), 3+ is high
+// confidence; a known-subscription-list hit adds a little more certainty.
+function confidenceFor(count, known) {
+  let score = 0.45
+  if (count >= 4) score += 0.3
+  else if (count >= 3) score += 0.2
+  else score += 0.05
   if (known) score += 0.2
-  if (amountsConsistent) score += 0.1
   return Math.min(1, score)
 }
 
@@ -240,30 +294,44 @@ function alreadyTracked(dispNameLower, existingRecurring) {
 }
 
 // detectRecurring(transactions, existingRecurring) -> suggestion[]
-// {key, displayName, cadence, avgAmount, lastDate, nextEstDate, count,
-//  accountId, cat, confidence}
+// {key, displayName, cadence, avgAmount, amount, lastDate, nextEstDate,
+//  typicalDay, count, accountId, cat, confidence, confidenceLabel}
+//
 // Only considers expense transactions (excludes income/transfer/debt, which
 // aren't spending, and interest charges/CC payments/cash advances/fees per
-// EXCLUDE_PATTERNS above, which are spending but never subscriptions)
-// grouped by merchant key. Weekly/biweekly/monthly are
-// classified against only the last ~4 months (WINDOW_DAYS) of that group's
-// charges — "go back 4 months" per the request — so a bill that stopped
-// months ago stops being suggested on its own; yearly is a bonus check
-// against the group's full history (tryClassifyYearly) since 4 months can't
-// possibly show a yearly cadence. Either way a group needs >=2 qualifying
-// charges, amounts consistent within ~10% of the median (or the $0.50 floor),
-// and — for monthly specifically — day-of-month consistency (±4 days of the
-// median day), i.e. "same amount, around the same time," not just a
-// plausible average interval. Groups already covered by an existing
-// recurring bill (fuzzy name match) are dropped — the point is to surface
-// bills the user hasn't already added, not to duplicate what's tracked.
+// EXCLUDE_PATTERNS above, which are spending but never subscriptions),
+// grouped by merchant key ACROSS EVERY ACCOUNT AT ONCE — `transactions` is
+// the caller's full list (every linked Wells Fargo/Capital One/Wescom
+// account combined, plus manual/CSV rows), never filtered or grouped
+// per-account first, so a subscription that happens to post to more than
+// one card over its lifetime still accumulates enough occurrences in a
+// single bucket to qualify (previously a real risk if per-account grouping
+// had ever been introduced — it hasn't, but this is now explicit and
+// commented so it stays that way).
+//
+// A group qualifies with >=2 occurrences (>=3 is "high" confidence) once
+// same-date duplicates are collapsed (dedupeSameDay) AND amounts are within
+// max($2, 15%) of the group median AND EITHER gapCadence (rule a — interval
+// bands, one missed period tolerated) or domCadence (rule b — same
+// day-of-month within ±2, independent of exact interval) returns a cadence.
+// A group whose most recent charge is older than MAX_STALE_DAYS for its
+// matched cadence is dropped (very likely cancelled, not "still recurring").
+// Groups fuzzy-matching an existing recurring bill are dropped too — the
+// point is bills the user hasn't already added.
+//
+// `accountId`/`cat`/`amount` all come from the group's most recent charge
+// (`last`, after sorting) — so when the same subscription shows on two
+// accounts, the more recently-charged account naturally wins, per the
+// "prefer the most recent account" requirement, with zero extra bookkeeping
+// needed beyond sorting by date.
+//
 // Runs entirely client-side against state.transactions/state.recurring
 // (views/Recurring.jsx's useMemo) — no AI, no network call, no user prompt;
 // it just re-runs automatically whenever those change.
 export function detectRecurring(transactions, existingRecurring = []) {
   const expenses = (transactions || []).filter((t) => t.type === 'expense' && t.cat !== 'income' && t.cat !== 'transfer' && t.cat !== 'debt' && t.desc && !isExcludedMerchant(t.desc))
 
-  const groups = new Map() // key -> tx[] (full history)
+  const groups = new Map() // key -> tx[], spans every account
   for (const t of expenses) {
     const key = merchantKey(t.desc)
     if (!key) continue
@@ -271,33 +339,51 @@ export function detectRecurring(transactions, existingRecurring = []) {
     groups.get(key).push(t)
   }
 
-  const cutoff = Date.now() - WINDOW_DAYS * DAY_MS
+  const now = Date.now()
   const out = []
-  for (const [key, allTxs] of groups) {
-    const recentTxs = allTxs.filter((t) => new Date(t.date + 'T00:00:00').getTime() >= cutoff)
-    const match = tryClassifyRecent(recentTxs) || tryClassifyYearly(allTxs)
-    if (!match) continue
-    const { sorted, cadence } = match
+  for (const [key, txs] of groups) {
+    if (txs.length < 2) continue
+    const sorted = dedupeSameDay(txs.slice().sort((a, b) => a.date.localeCompare(b.date)))
+    if (sorted.length < 2) continue
 
-    const disp = displayName(sorted[sorted.length - 1].desc)
-    if (alreadyTracked(disp.toLowerCase(), existingRecurring)) continue
+    const amounts = sorted.map((t) => t.amount)
+    const medAmount = median(amounts)
+    if (!amountsAreConsistent(amounts, medAmount)) continue
+
+    const cadence = gapCadence(sorted) || domCadence(sorted)
+    if (!cadence) continue
 
     const last = sorted[sorted.length - 1]
-    const amounts = sorted.map((t) => t.amount)
-    const avgAmount = amounts.reduce((s, a) => s + a, 0) / amounts.length
+    const staleDays = (now - dateOf(last)) / DAY_MS
+    if (staleDays > (MAX_STALE_DAYS[cadence] || 90)) continue
+
+    const disp = displayName(last.desc)
+    if (alreadyTracked(disp.toLowerCase(), existingRecurring)) continue
+
+    const doms = sorted.map((t) => new Date(t.date + 'T00:00:00').getDate())
+    const typicalDay = ['monthly', 'quarterly', 'yearly'].includes(cadence) ? Math.round(median(doms)) : null
     const known = !!knownSubMatch(String(last.desc || '').toLowerCase())
 
     out.push({
       key,
       displayName: disp,
       cadence,
-      avgAmount,
+      // `amount` is the most recent charge per the spec ("amount (most
+      // recent)"); `avgAmount` is kept as the same value under its old name
+      // so views/Recurring.jsx's existing `s.avgAmount` reads keep working
+      // unchanged — it's simply no longer an average across history, which
+      // is a better number to prefill "Add" with anyway (price bumps mean
+      // the average trails what's actually being charged now).
+      amount: last.amount,
+      avgAmount: last.amount,
       lastDate: last.date,
       nextEstDate: estimateNextDate(last.date, cadence),
+      typicalDay,
       count: sorted.length,
       accountId: last.accountId || null,
       cat: last.cat || 'other',
-      confidence: confidenceFor(sorted.length, true, known),
+      confidence: confidenceFor(sorted.length, known),
+      confidenceLabel: sorted.length >= 3 ? 'high' : 'medium',
     })
   }
 

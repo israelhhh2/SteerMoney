@@ -497,6 +497,93 @@ export function AppProvider({ children }) {
     return { ok: true }
   }
 
+  // Owner-only, permanent: wipes a shared space's entire data footprint —
+  // every table any slice lives in, scoped by user_id === spaceId, exactly
+  // the tables stateRows()/the diff-sync effect above already know how to
+  // read/write — plus its bank connections, membership rows, and the
+  // workspace row itself. Settings' "Delete space" (views/Settings.jsx) is
+  // the only caller; DeleteSpaceDialog (space-name-dialog.jsx) requires
+  // typing the space's exact name before this ever runs.
+  //
+  // Table order mirrors TRANSFER_DELETE_ORDER below (payments/transactions/
+  // etc. before debts, so the debts->payments FK never blocks a delete) —
+  // though it barely matters here since every one of these tables' own rows
+  // eventually vanish anyway once the workspace row cascades away; explicit
+  // per-table deletes are still done first, while the caller is a confirmed
+  // member, so the RLS "own rows"/is_member() policies (collab.sql,
+  // accounts.sql, goals.sql, etc.) are guaranteed to allow it.
+  const DELETE_SPACE_TABLES = ['payments', 'transactions', 'budgets', 'recurring', 'goals', 'accounts', 'debts', 'account_tags', 'account_colors']
+
+  const deleteSpace = async (spaceId) => {
+    if (viewAs) return { error: 'Not available while viewing another customer' }
+    if (!supabase || !user?.id) return { error: 'Not signed in' }
+    const sp = spaces.find((s) => s.id === spaceId)
+    if (!sp) return { error: 'Space not found' }
+    if (sp.ownerId !== user.id) return { error: 'Only the space owner can delete this space' }
+
+    // Switch back to Personal FIRST if this space is the active view — resets
+    // synced/freshFor/dirty/state (same reset shape setSpace() always uses)
+    // so the debounced diff-sync effect above can't race a write against a
+    // space that's about to be gone.
+    if (space?.id === spaceId) setSpace(null)
+
+    try {
+      // 1. Wipe every data table scoped to this space's id. account_tags/
+      //    account_colors are the newest tables (may not be migrated on an
+      //    older project — see OPTIONAL_TABLES above) and skip-and-warn
+      //    rather than aborting; every other table here is core data and a
+      //    failure aborts the whole delete (nothing else has been removed
+      //    yet, so it's safely retryable).
+      for (const table of DELETE_SPACE_TABLES) {
+        const { error } = await supabase.from(table).delete().eq('user_id', spaceId)
+        if (error) {
+          if (OPTIONAL_TABLES.has(table)) { console.warn(`[deleteSpace] ${table} skipped:`, error.message); continue }
+          return { error: `Couldn't delete ${table}: ${error.message}` }
+        }
+      }
+      // settings (sim/mSim) is a single row keyed by user_id alone — best
+      // effort, not core financial data, so its own failure doesn't abort.
+      const { error: settingsErr } = await supabase.from('settings').delete().eq('user_id', spaceId)
+      if (settingsErr) console.warn('[deleteSpace] settings skipped:', settingsErr.message)
+
+      // 2. Bank connections are service-role only (RLS, no policies — see
+      //    plaid.sql) — hand off to the dedicated API route, same pattern as
+      //    "Move my data into this space" (app/api/plaid/transfer). Reported
+      //    back as a non-fatal warning: the space itself still gets deleted.
+      let bankError = null
+      try {
+        const res = await fetch('/api/plaid/items', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workspace_id: spaceId }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) bankError = data.error || 'Failed to disconnect bank connections'
+      } catch (e) {
+        bankError = e?.message || 'Failed to disconnect bank connections'
+      }
+
+      // 3. Delete the workspace row itself — cascades (on delete cascade,
+      //    see collab.sql) to workspace_members and workspace_invites
+      //    automatically; FK referential-integrity actions always bypass
+      //    RLS, so no extra delete policy is needed on those two tables.
+      //    Requires the "owner delete" policy from
+      //    supabase/workspace-delete.sql — without it this update is
+      //    silently rejected (0 rows affected, no error) by RLS, same
+      //    footgun workspace-rename.sql already documented for renames.
+      const { error: delErr } = await supabase.from('workspaces').delete().eq('id', spaceId)
+      if (delErr) return { error: `Couldn't delete the space: ${delErr.message}`, bankError }
+
+      // 4. Local cleanup: drop it from the spaces list and clear its cache.
+      setSpaces((s) => s.filter((x) => x.id !== spaceId))
+      try { localStorage.removeItem(CACHE(spaceId)) } catch {}
+
+      return { ok: true, bankError }
+    } catch (e) {
+      return { error: e?.message || 'Failed to delete the space' }
+    }
+  }
+
   // "Move my data into this space" (Settings → Shared spaces → per-space
   // "Move my data here"). A brand-new shared space starts empty (see
   // freshState()'s brand-new-user branch above) — this is what lets Israel
@@ -669,6 +756,7 @@ export function AppProvider({ children }) {
     joinSpace,
     fetchMembers,
     removeMember,
+    deleteSpace, // owner-only permanent space delete — see definition above
     transferPersonalDataToSpace, // "Move my data into this space" — see definition above
     // update(fn): fn receives a deep clone, mutates freely, returns nothing
     // no-op while viewing another customer — support mode is strictly read-only

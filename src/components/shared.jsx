@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { catColor, fmt0, cn } from '@/lib/utils'
 import { useApp } from '@/store'
 import { tagsForAccount, allAccountTags, addAccountTag, removeAccountTag, colorForAccount, setAccountColor } from '@/lib/accounts'
+import { useT } from '@/lib/i18n'
 
 const CAT_ICONS = {
   housing: Home, auto: Car, shopping: ShoppingBag, dining: Utensils, groceries: ShoppingCart,
@@ -47,10 +48,11 @@ export function CatChip({ cat }) {
 
 // Copilot-style cards/list view toggle, used by Recurring/Budgets/Goals; persistence key is left to the caller.
 export function ViewToggle({ value, onChange }) {
+  const t = useT()
   return (
     <div className="flex items-center gap-0.5 rounded-md border p-0.5">
-      <button title="Card view" onClick={() => onChange('cards')} className={`rounded px-1.5 py-1 transition ${value === 'cards' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}`}><LayoutGrid className="h-3.5 w-3.5" /></button>
-      <button title="List view" onClick={() => onChange('list')} className={`rounded px-1.5 py-1 transition ${value === 'list' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}`}><List className="h-3.5 w-3.5" /></button>
+      <button title={t('Card view')} onClick={() => onChange('cards')} className={`rounded px-1.5 py-1 transition ${value === 'cards' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}`}><LayoutGrid className="h-3.5 w-3.5" /></button>
+      <button title={t('List view')} onClick={() => onChange('list')} className={`rounded px-1.5 py-1 transition ${value === 'list' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}`}><List className="h-3.5 w-3.5" /></button>
     </div>
   )
 }
@@ -187,6 +189,7 @@ export function CardChip({ institution, name, mask, size = 'row', colorOverride 
 // account_id too, so this same `!!account_id` check is the single source of
 // truth for both — no separate manual/matched-debt branch needed.
 export function SourceBadge({ accountId, institution, className = '' }) {
+  const t = useT()
   const linked = !!accountId
   return (
     <span
@@ -197,7 +200,7 @@ export function SourceBadge({ accountId, institution, className = '' }) {
       )}
     >
       {linked ? <Link2 className="h-2.5 w-2.5" /> : <Pencil className="h-2.5 w-2.5" />}
-      {linked ? `Plaid · ${institution || 'Bank'}` : 'Manual'}
+      {linked ? t('Plaid · {institution}', { institution: institution || t('Bank') }) : t('Manual')}
     </span>
   )
 }
@@ -226,12 +229,13 @@ export function tagTone(tag) {
 // Read-only pill — Accounts.jsx list rows and AccountDetail.jsx both use this
 // for display; pass `onRemove` to also get an × (AccountTagsEditor below).
 export function TagPill({ tag, onRemove, className = '' }) {
+  const t = useT()
   const tone = tagTone(tag)
   return (
     <span className={cn('inline-flex max-w-[8rem] shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[0.625rem] font-bold', tone.bg, tone.text, tone.border, className)}>
       <span className="truncate">{tag}</span>
       {onRemove ? (
-        <button type="button" onClick={onRemove} aria-label={`Remove ${tag} tag`} className="shrink-0 rounded-full p-0.5 opacity-70 transition hover:opacity-100">
+        <button type="button" onClick={onRemove} aria-label={t('Remove {tag} tag', { tag })} className="shrink-0 rounded-full p-0.5 opacity-70 transition hover:opacity-100">
           <X className="h-2.5 w-2.5" />
         </button>
       ) : null}
@@ -258,6 +262,7 @@ function TagSuggestChip({ label, onClick }) {
 export function AccountTagsEditor({ accountKey, className = '' }) {
   const { state, update } = useApp()
   const { user } = useUser()
+  const t = useT()
   const [adding, setAdding] = useState(false)
   const [text, setText] = useState('')
 
@@ -291,16 +296,16 @@ export function AccountTagsEditor({ accountKey, className = '' }) {
                 if (e.key === 'Escape') { setAdding(false); setText('') }
               }}
               maxLength={24}
-              placeholder={noTagsYet ? (firstName ? `e.g. ${firstName}` : "e.g. Mine, Julia’s, Business") : 'Tag name'}
+              placeholder={noTagsYet ? (firstName ? t('e.g. {name}', { name: firstName }) : t("e.g. Mine, Julia’s, Business")) : t('Tag name')}
               className="h-6 w-28 rounded-full border border-input bg-transparent px-2.5 text-[0.6875rem] outline-none focus-visible:ring-1 focus-visible:ring-ring [color-scheme:dark]"
             />
-            <button type="button" onClick={() => commit(text)} className="shrink-0 rounded-full bg-primary/90 px-2 py-0.5 text-[0.625rem] font-bold text-primary-foreground">Add</button>
-            <button type="button" onClick={() => { setAdding(false); setText('') }} className="shrink-0 text-[0.625rem] font-semibold text-muted-foreground hover:text-foreground">Cancel</button>
+            <button type="button" onClick={() => commit(text)} className="shrink-0 rounded-full bg-primary/90 px-2 py-0.5 text-[0.625rem] font-bold text-primary-foreground">{t('Add')}</button>
+            <button type="button" onClick={() => { setAdding(false); setText('') }} className="shrink-0 text-[0.625rem] font-semibold text-muted-foreground hover:text-foreground">{t('Cancel')}</button>
           </span>
           {!text && noTagsYet && firstName && (
             <div className="flex w-full flex-wrap items-center justify-center gap-1.5 pt-0.5">
               <TagSuggestChip label={firstName} onClick={() => commit(firstName)} />
-              <TagSuggestChip label="Shared" onClick={() => commit('Shared')} />
+              <TagSuggestChip label={t('Shared')} onClick={() => commit('Shared')} />
             </div>
           )}
           {!text && !noTagsYet && suggestions.length > 0 && (
@@ -315,7 +320,7 @@ export function AccountTagsEditor({ accountKey, className = '' }) {
           onClick={() => setAdding(true)}
           className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[0.625rem] font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-primary"
         >
-          <Plus className="h-2.5 w-2.5" />Add tag
+          <Plus className="h-2.5 w-2.5" />{t('Add tag')}
         </button>
       )}
     </div>
@@ -338,6 +343,7 @@ export function AccountTagsEditor({ accountKey, className = '' }) {
 // override", not a distinct third state to track.
 export function CardColorPicker({ accountKey, className = '' }) {
   const { state, update } = useApp()
+  const t = useT()
   const current = colorForAccount(state, accountKey)
 
   return (
@@ -345,8 +351,8 @@ export function CardColorPicker({ accountKey, className = '' }) {
       <button
         type="button"
         onClick={() => setAccountColor(update, accountKey, null)}
-        aria-label="Reset to automatic color"
-        title="Auto"
+        aria-label={t('Reset to automatic color')}
+        title={t('Auto')}
         className={cn(
           'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 bg-secondary/60 text-muted-foreground transition',
           current == null ? 'border-primary' : 'border-transparent hover:border-border'

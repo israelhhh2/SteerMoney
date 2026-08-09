@@ -47,14 +47,44 @@ export async function GET() {
 // targets the row's own primary key rather than repeating the user_id
 // match, since that row's user_id may legitimately be a space id, not this
 // caller's own Clerk id.
+//
+// Also accepts `workspace_id` instead of `item_id` — bulk-disconnects every
+// bank connection owned by that shared space in one call, for Settings'
+// "Delete space" (src/store.jsx's deleteSpace()). plaid_items is
+// service-role only (see supabase/plaid.sql), so unlike every other
+// space-scoped table (which the client wipes itself via normal Supabase
+// calls, RLS-permitted while still a member) this needs a server route.
+// Ownership is checked explicitly here — service-role bypasses RLS, so
+// "only the space's owner can delete it" has to be enforced in this route,
+// not assumed from the caller having a valid session.
 export async function DELETE(req) {
   try {
     const { userId } = await auth()
     if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 })
     if (!plaidConfigured || !supabaseAdmin) return Response.json({ error: 'Plaid is not configured yet' }, { status: 503 })
 
-    const { item_id } = await req.json()
-    if (!item_id) return Response.json({ error: 'Missing item_id' }, { status: 400 })
+    const { item_id, workspace_id } = await req.json()
+
+    if (workspace_id) {
+      const { data: ws, error: wsErr } = await supabaseAdmin
+        .from('workspaces').select('owner_id').eq('id', workspace_id).maybeSingle()
+      if (wsErr) throw wsErr
+      if (!ws || ws.owner_id !== userId) return Response.json({ error: 'Only the space owner can do that' }, { status: 403 })
+
+      const { data: rows, error: findErr } = await supabaseAdmin
+        .from('plaid_items').select('id, access_token').eq('user_id', workspace_id)
+      if (findErr) throw findErr
+
+      for (const row of rows || []) {
+        try { await plaidClient.itemRemove({ access_token: row.access_token }) } catch { /* best effort */ }
+      }
+      const { error: delErr } = await supabaseAdmin.from('plaid_items').delete().eq('user_id', workspace_id)
+      if (delErr) throw delErr
+
+      return Response.json({ ok: true, removed: (rows || []).length })
+    }
+
+    if (!item_id) return Response.json({ error: 'Missing item_id or workspace_id' }, { status: 400 })
 
     const ownerIds = await ownerIdsFor(userId)
     const { data: row, error: findErr } = await supabaseAdmin

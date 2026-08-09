@@ -120,6 +120,204 @@ before flipping the switch.
 
 ## Session log (newest first)
 
+### 2026-08-08 (27)
+- **Mobile category tags on Transactions + much better recurring detection**
+  (Sonnet worker), two independent asks bundled in one session.
+  - **`views/Transactions.jsx` mobile category tag**: mobile rows previously
+    showed a `CatChip` only at `sm:` (desktop); below `sm:` there was no
+    visible category at all. Rather than adding a new element (more
+    clutter) or always forcing a 2-line row, the existing mobile subline
+    (`mobileAcctLabel`, previously shown only when the filtered view spans
+    multiple accounts) now always renders, carrying the category name —
+    combined with the account label when one's already showing ("Dining Out
+    · Wescom ••0015"), or standing alone when it's not (single-account
+    view previously had zero subline, so that case goes from 1 line to 2 —
+    accepted per the brief, since a visible category was the point).
+    Desktop's separate `CatChip` span is untouched. Uses the already-in-
+    scope `catInfo` from `useApp()`, no new imports, `shared.jsx` untouched.
+  - **`lib/recurring-detect.js` rewritten** (kept `EXCLUDE_PATTERNS`/
+    `isExcludedMerchant` — interest charges, CC autopay/payments, transfers,
+    fees — verbatim, per "don't remove these"). Real bugs found and fixed
+    that explain "known monthly subscriptions aren't detected":
+    1. **Old detector's `domConsistent` (±4d) was required on TOP OF the
+       interval-median cadence check**, both against only a rolling
+       120-day window. One skipped/late month, or a mid-series price bump
+       failing the old ~10% tolerance, poisoned the median enough to fail
+       either check and the whole group got silently dropped — no bonus
+       path caught it (yearly's separate check only fires on ~365-day
+       intervals). New detector has two independent OR'd rules instead of
+       one AND'd pair: (a) `gapCadence` — every consecutive gap fits a
+       cadence's band (weekly 6–8d, biweekly 13–16d, monthly 28–33d,
+       **quarterly 88–95d [new]**, yearly 360–372d), *or* roughly double
+       that band ("allowing one missed period"); (b) `domCadence` — every
+       charge's day-of-month within ±2 of the group's median day, cadence
+       then inferred from the median gap. Either path alone is enough.
+       (Bug caught mid-implementation: naively OR-ing "normal-or-missed"
+       per cadence let biweekly's missed-period band (~23–37d) swallow an
+       ordinary ~30d monthly gap, since biweekly sorts before monthly —
+       fixed with a two-pass `gapCadence`: try every cadence's *strict*
+       band first, only fall back to missed-period bands if nothing
+       matched strictly. Caught by the throwaway test script, see below.)
+    2. **Amount tolerance loosened 10%/$0.50-floor → max($2, 15%)** — price
+       bumps and tax were failing the old tight band outright.
+    3. **Cross-account grouping made explicit** (it was already
+       structurally correct — `detectRecurring` groups the caller's whole
+       `transactions` list, never filtered per-account first — but now has
+       an explicit comment/test proving it, since a per-account regression
+       here would be an easy silent mistake later). `merchantKey`/
+       `normalizeMerchant` now run `lib/tx-display.js`'s `cleanDisplayName`
+       *before* the existing lowercase/punctuation/digit stripping, so the
+       same merchant formatted differently by different banks (Wells
+       Fargo's `PURCHASE AUTHORIZED ON 4/12 NETFLIX.COM` vs Capital One's
+       `NETFLIX.COM 8*XXXX1234`) reliably lands in the same bucket instead
+       of two never-qualifying halves. Same-day duplicate rows (e.g. a
+       subscription double-posting to two accounts on the exact date)
+       collapse to one via `dedupeSameDay` before gap math, so a 0-day gap
+       can't break cadence detection. The group's *last* (most recent)
+       transaction supplies `accountId`/`cat`/`amount`, so "prefer the most
+       recent account" falls out of sorting-by-date for free.
+    4. **New staleness guard** (`MAX_STALE_DAYS`, per cadence): a matched
+       group whose most recent charge is older than ~2x its cadence step is
+       dropped — replaces the old blanket 120-day recent-window (which was
+       itself a source of false negatives — a monthly bill with only 3
+       months of history and one that fell just outside the window lost a
+       data point it needed) with a per-cadence check based on recency of
+       the *last* charge specifically.
+    - **Output shape**: `{key, displayName, cadence, avgAmount, amount,
+      lastDate, nextEstDate, typicalDay, count, accountId, cat, confidence,
+      confidenceLabel}`. `avgAmount` kept (same value, `views/Recurring.jsx`
+      already reads it) but is now literally the *most recent* charge's
+      amount, not a historical average, per the "amount (most recent)"
+      spec — a better prefill anyway since price bumps mean the old average
+      trailed what's actually being charged. `amount` is the same value
+      under the new name. `typicalDay` (day-of-month) is only set for
+      monthly/quarterly/yearly. `confidenceLabel` is `'high'` at 3+ charges,
+      `'medium'` at exactly 2 (the spec's minimum signal).
+    - **`views/Recurring.jsx`** (only UI change needed): the suggestion
+      row's summary line now appends `usually the Nth` when `typicalDay` is
+      set, and a small amber "seen 2x" pill only for `confidenceLabel ===
+      'medium'` rows (3+-charge rows are the trusted default and stay
+      unbadged, avoiding clutter). `CADENCE_LABEL` gained `quarterly: 'every
+      3 months'`. Dismiss/Add flows untouched — both still key off `s.key`/
+      `s.displayName`/`s.avgAmount`/`s.cat`/`s.accountId`/`s.lastDate`,
+      all still present with the same meaning `addSuggestion` already
+      expected.
+  - **Verification**: `sucrase` transform (parse-only) on all three edited
+    files — clean. A throwaway Node test script
+    (`src/lib/__test-recurring-detect.js`, run via `sucrase/register`,
+    deleted after) covered: monthly same-day (4 charges), monthly with
+    weekend/month-length day drift *and* a mid-series switch from one
+    linked account to another (proves cross-account grouping + "prefer most
+    recent account" — asserted `accountId` lands on the later card), weekly
+    (4 charges, recent dates since the new staleness guard drops old weekly
+    matches on purpose — an earlier version of this test used older dates
+    and correctly failed for that reason, not a detector bug), a price bump
+    mid-series (asserts the suggested amount is the bumped one, not an
+    average), an interest-charge group and a credit-card-payment group
+    (both correctly excluded), and a one-off single purchase (correctly not
+    suggested). All 15 assertions passed on the final run. No dev server,
+    no real browser — same standing constraint as every other session in
+    this log.
+  - **Not done / left off**: not verified against Israel's actual
+    transaction history in a running app (no dev server this session);
+    next session should open `/recurring` for real and spot-check that
+    previously-missing subscriptions now surface, and that nothing
+    obviously wrong shows up (e.g. a mis-grouped merchant). The quarterly
+    cadence band is new and untested against real quarterly billers (e.g.
+    some insurance/domain renewals) — worth a look once real data's in.
+
+### 2026-08-08 (26)
+- **Debugged "existing credit cards still don't show in Debt Tracker after
+  (25) deployed" + added a Card summary section to the account detail view**
+  (Sonnet worker).
+  - **Root cause (the big one)**: `lib/plaid-sync.js`'s `syncPlaidItem()` ran
+    `transactionsSync` first, then the balance refresh and
+    `syncDebtsFromPlaid()` (lib/plaid-debts.js) *after it in the same
+    function body, with nothing catching a `transactionsSync` failure*. Any
+    hiccup pulling transactions for an item (reauth needed, a stale cursor,
+    a transient Plaid error — all plausible for an *existing*, previously-
+    linked item) threw straight out of the function and `syncDebtsFromPlaid`
+    never ran for that item, on every single "Sync now"/webhook pass. Fixed:
+    `transactionsSync` is now wrapped in its own try/catch; a failure there
+    is logged and re-thrown *after* the balance refresh + debt sync have had
+    their turn, so those two are no longer hostage to an unrelated
+    transactions failure. Status bookkeeping was also tightened so a failed
+    transactionsSync pass doesn't wrongly clear `reauth_required`/`revoked`/
+    `syncing` (it used to implicitly assume "reached this code = tx sync
+    succeeded").
+  - **Compounding bug**: `app/api/plaid/sync/route.js`'s manual "Sync now"
+    loop had no per-item try/catch either — one item throwing aborted the
+    whole request, so a user with several connected banks could have *every*
+    other bank's sync (transactions AND debts) silently skipped by one
+    broken connection. Now isolated per item; the route returns
+    `{added, modified, removed, itemErrors}` and `views/Settings.jsx`'s
+    `sync()` surfaces a toast naming which connection(s) failed instead of
+    silently reloading as if everything worked.
+  - **Hardening in `lib/plaid-debts.js`** (defense in depth, in case the
+    above wasn't the whole story for a given deployment): credit-account
+    filter now also matches `subtype` containing "credit card" (not just
+    `type === 'credit'`) in case a stale cached `accounts` snapshot predates
+    this app storing `type`; the plaid_account_id/plaid_item_id
+    column-missing retry (already there from (25)) now also checks
+    `error.code === 'PGRST204'`, not just a message regex, and logs a clear
+    `console.warn` pointing at `supabase/debts-plaid.sql` when it fires
+    instead of only logging on total failure; fixed a real dedupe bug where
+    two different Plaid credit accounts that both fuzzy-match the same
+    manual debt (e.g. "Capital One Venture" and "Capital One Venture X" both
+    overlapping on "capital"/"venture") could steal the link back and forth
+    since `existingDebts` was read once and never updated in-memory after a
+    link — now mutated locally right after a successful link. Every
+    supabaseAdmin write/skip path now has an explicit `console.log`/
+    `console.warn`, including the two previously-silent early returns (no
+    supabaseAdmin/userId, zero credit accounts found).
+  - **Ruled out** (verified, not the bug): RLS — `syncDebtsFromPlaid` writes
+    via `supabaseAdmin` (service role, same as the transactions write that
+    demonstrably works), so `public.debts`' RLS policy never applies here.
+    The `debts.plaid_account_id`/`plaid_item_id` retry-without-columns logic
+    from (25) was already correct. `matchesBankAccount` doesn't throw on any
+    real input shape.
+  - **User-facing fix steps**: (1) run `supabase/debts-plaid.sql` in the
+    Supabase SQL editor if not already done (safe/idempotent, `add column if
+    not exists`); (2) Settings → Connected banks → **Sync now**; (3) each
+    linked credit-card account should appear in Debt Tracker within
+    seconds — if a specific bank still doesn't sync (transactions or debts),
+    the sync toast now names it and a "Fix connection"/reauth prompt should
+    show under that connection in Settings.
+  - **`views/AccountDetail.jsx`**: new "Card summary" section, credit cards
+    only (`account.kind === 'credit'`, deliberately narrower than the
+    existing `isCredit` flag which also covers loans) — balance, credit
+    limit, utilization %, APR, minimum payment, due day, and (Plaid-linked
+    accounts only) interest charged this calendar month. APR/min/due day
+    come from the linked `debts` row, found via a new `findLinkedDebt()`:
+    `debtId` direct lookup for a `source: 'debt'` row, else an exact
+    `plaid_account_id` match, else the existing `matchesBankAccount` fuzzy
+    matcher (lib/finance.js) as a last resort for a multi-way fuzzy-match
+    collision buildAccountInventory's own forward matching could miss.
+    Interest-this-month sums this account's expense transactions this month
+    whose description matches `/interest\s*charge/i` or
+    `/finance\s*charge/i` — the same two patterns
+    `lib/recurring-detect.js`'s `EXCLUDE_PATTERNS` already treats as "not a
+    subscription, it's interest" (not imported from there since only two of
+    that list's ~10 patterns apply; re-declared locally). Every field falls
+    back to "–" instead of blank/NaN; the whole section is omitted for
+    non-credit accounts; a small note + link to `/debts` shows when no
+    linked debt row was found at all. 2-column grid (not 3) with the
+    interest row full-width, matching the existing `StatLabel` convention
+    (views/Accounts.jsx, the top-of-page stat grid already in this file) —
+    checked at a 390px width, no label wraps/overflows. Renders unchanged
+    inside `app/(app)/@modal/(.)accounts/[id]/page.jsx`, which already
+    mounts this same component with no separate copy to update.
+  - **Files changed**: `lib/plaid-sync.js`, `app/api/plaid/sync/route.js`,
+    `lib/plaid-debts.js`, `views/Settings.jsx`, `views/AccountDetail.jsx`.
+  - **Verified**: all five changed files parse clean via `npx esbuild
+    <file> --bundle=false --loader:.jsx=jsx`. Not exercised against a live
+    Plaid sandbox item or a real signed-in session this session (no dev
+    server) — next session with real access should confirm an existing
+    item's "Sync now" actually lands a `pl_<account_id>` row in `debts` end
+    to end, and eyeball the new Card summary section against a real credit
+    card account (with and without a linked debt row) on both mobile and
+    desktop.
+
 ### 2026-08-08 (25)
 - **Auto-add linked credit cards to the Debt Tracker (roadmap item 10)**
   (Sonnet worker). Linking a credit card via Plaid now creates/updates a

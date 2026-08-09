@@ -5,6 +5,7 @@ import { Landmark, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/toast'
 import { exchangeAndSync, PLAID_LINK_TOKEN_KEY } from '@/lib/plaid-client'
+import { useT } from '@/lib/i18n'
 
 // The ONE place react-plaid-link's `usePlaidLink` hook gets called anywhere
 // in this app. react-plaid-link creates a hidden, fullscreen "initial"
@@ -49,6 +50,7 @@ export function PlaidLinkRunner({ token, receivedRedirectUri, onSuccess, onExit 
 // an idle button (no link_token yet) renders no PlaidLinkRunner at all, so
 // it mounts zero iframes.
 export function ConnectBankButton({ onDone, variant = 'default', size, children }) {
+  const t = useT()
   const toast = useToast()
   const [linkToken, setLinkToken] = useState(null)
   const [connecting, setConnecting] = useState(false)
@@ -71,7 +73,7 @@ export function ConnectBankButton({ onDone, variant = 'default', size, children 
 
   const handleExit = (err) => {
     stop()
-    if (err) toast(err.display_message || err.error_message || 'Bank connection failed', 'error')
+    if (err) toast(err.display_message || err.error_message || t('Bank connection failed'), 'error')
   }
 
   const connect = async () => {
@@ -80,9 +82,9 @@ export function ConnectBankButton({ onDone, variant = 'default', size, children 
       const res = await fetch('/api/plaid/link-token', { method: 'POST' })
       const data = await res.json()
       if (res.status === 503) {
-        toast(data.error || 'Bank connections are not set up yet. Add the Plaid keys to the server to turn this on.', 'error')
+        toast(data.error || t('Bank connections are not set up yet. Add the Plaid keys to the server to turn this on.'), 'error')
       } else if (!res.ok) {
-        throw new Error(data.error || "Couldn't start a bank connection")
+        throw new Error(data.error || t("Couldn't start a bank connection"))
       } else {
         setLinkToken(data.link_token)
       }
@@ -96,7 +98,7 @@ export function ConnectBankButton({ onDone, variant = 'default', size, children 
     <>
       <Button variant={variant} size={size} disabled={connecting} onClick={connect}>
         {connecting ? <Loader2 className="animate-spin" /> : <Landmark />}
-        {children || 'Connect a bank'}
+        {children || t('Connect a bank')}
       </Button>
       {linkToken && <PlaidLinkRunner token={linkToken} onSuccess={handleSuccess} onExit={handleExit} />}
     </>
