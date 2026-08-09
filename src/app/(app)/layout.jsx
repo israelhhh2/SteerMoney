@@ -248,15 +248,17 @@ function Frame({ children, modal }) {
           </div>
         )}
 
-        {/* Mobile header: centered wordmark, Copilot style */}
+        {/* Mobile header: wordmark left, space switcher centered */}
         <div className="sticky top-0 z-30 border-b border-border/60 bg-background/90 backdrop-blur-md md:hidden">
-          <div className="flex h-14 items-center gap-2 px-4">
-            {!viewingAs ? spaceSelect('!h-8 max-w-[6.5rem] rounded-full border-none bg-secondary/60 px-2.5 text-xs font-bold') : <span className="w-16" />}
-            <div className="flex flex-1 items-center justify-center gap-1.5">
-              <Logo className="h-5 w-5" />
-              <Wordmark className="text-[0.9375rem]" />
+          <div className="grid h-14 grid-cols-[1fr_auto_1fr] items-center gap-2 px-4">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Logo className="h-5 w-5 shrink-0" />
+              <Wordmark className="truncate text-[0.9375rem]" />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex justify-center">
+              {!viewingAs ? spaceSelect('!h-8 max-w-[7.5rem] rounded-full border-none bg-secondary/60 px-2.5 text-xs font-bold') : <span />}
+            </div>
+            <div className="flex items-center justify-end gap-2">
               {syncError ? <CloudOff className="h-4 w-4 text-red-400" title={syncError} /> : null}
               {state ? <RemindersBell /> : null}
             </div>

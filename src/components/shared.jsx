@@ -528,9 +528,12 @@ export function MoneyTile({ label, hint, value, tone, active, onClick }) {
       onClick={onClick}
       className={`min-w-0 rounded-xl border px-2 py-3 text-center transition sm:p-4 ${base} ${active ? activeCls : ''} ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
     >
-      <div className="mb-1 text-[0.625rem] font-bold uppercase tracking-wider text-muted-foreground sm:text-[0.6875rem]">{label}</div>
+      {/* Fixed-height label + always-rendered hint zones keep the three
+          tiles' amounts and bottoms aligned even when one label wraps to
+          two lines or a tile has no hint. */}
+      <div className="mb-1 flex min-h-[1.75rem] items-end justify-center text-[0.625rem] font-bold uppercase leading-tight tracking-wider text-muted-foreground sm:min-h-[1rem] sm:text-[0.6875rem]">{label}</div>
       <div className={`text-base font-extrabold tracking-tight sm:text-xl md:text-2xl ${isNeg ? 'text-red-400' : 'text-emerald-400'}`}>{value}</div>
-      {hint ? <div className={`mt-1 text-[0.625rem] font-semibold ${active ? (isNeg ? 'text-red-300' : 'text-emerald-300') : 'text-muted-foreground'}`}>{hint}</div> : null}
+      <div className={`mt-1 min-h-[0.875rem] text-[0.625rem] font-semibold ${active ? (isNeg ? 'text-red-300' : 'text-emerald-300') : 'text-muted-foreground'}`}>{hint || ' '}</div>
     </button>
   )
 }

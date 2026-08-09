@@ -193,6 +193,11 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
             {byDate[dt].map((t) => {
               const acct = t.accountId ? accountsById[t.accountId] : null
               const acctLabel = acct ? `${acct.institution || 'Bank'}${acct.mask ? ` ••${acct.mask}` : acct.name ? ` — ${acct.name}` : ''}` : null
+              // Mobile subline: short institution ("Wescom Financial" → "Wescom")
+              // + mask, so rows stay identifiable with 3+ accounts without the
+              // full-institution clutter.
+              const shortInst = acct?.institution ? acct.institution.replace(/\s+(financial|bank|credit union|federal credit union|n\.?a\.?)\.?$/i, '') : null
+              const mobileAcctLabel = acct ? `${shortInst || 'Bank'}${acct.mask ? ` ••${acct.mask}` : ''}` : null
               const displayName = cleanDisplayName(t.desc)
               return (
               <div
@@ -209,8 +214,8 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
                       subline, exactly as before. */}
                   <span className="block truncate text-[0.8125rem] text-foreground/90 sm:hidden" title={t.desc}>{displayName}</span>
                   <span className="hidden truncate text-[0.8125rem] text-foreground/90 sm:block" title={t.desc}>{t.desc}</span>
-                  {multiAccount && acct?.mask && (
-                    <span className="block truncate text-[0.625rem] text-muted-foreground/80 sm:hidden">••{acct.mask}</span>
+                  {multiAccount && mobileAcctLabel && (
+                    <span className="block truncate text-[0.625rem] text-muted-foreground/80 sm:hidden">{mobileAcctLabel}</span>
                   )}
                   {acctLabel && (
                     <span className="hidden items-center gap-1 truncate text-[0.625rem] text-muted-foreground sm:flex" title={acctLabel}>
