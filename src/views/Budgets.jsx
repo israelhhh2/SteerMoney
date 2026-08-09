@@ -104,8 +104,22 @@ export default function Budgets({ onViewTx }) {
 
       {view === 'list' ? (
         <Card className="overflow-hidden">
-          <div className="flex items-center border-b bg-secondary/40 px-4 py-2.5 text-[0.65625rem] font-bold uppercase tracking-wider text-muted-foreground">
-            <span>Spent</span><span className="ml-auto">Budget · tap a row for its transactions</span>
+          {/* Column headers, spaced to line up with the row layout below
+              (icon spacer · name · spent · bar · budget · pencil spacer) so
+              "Spent" and "Budget" never collide. The "tap a row" hint gets
+              its own line underneath instead of sharing the header row. */}
+          <div className="border-b bg-secondary/40 px-3 py-2 sm:px-4 sm:py-2.5">
+            <div className="flex items-center gap-2 text-[0.625rem] font-bold uppercase tracking-wider text-muted-foreground sm:gap-3">
+              <span className="w-5 shrink-0 sm:w-7" />
+              <span className="min-w-0 flex-1 sm:w-44 sm:flex-none">Category</span>
+              <span className="w-12 shrink-0 text-right sm:w-16">Spent</span>
+              <span className="hidden flex-1 sm:block" />
+              <span className="w-12 shrink-0 text-right sm:w-16">Budget</span>
+              <span className="w-3.5 shrink-0" />
+            </div>
+            <div className="mt-0.5 pl-7 text-[0.5625rem] font-semibold normal-case tracking-normal text-muted-foreground/70 sm:pl-10">
+              Tap a row for its transactions
+            </div>
           </div>
           <div className="divide-y divide-border/60">
             {state.budgets.slice().sort((a, b) => spentIn(state, ym, b.id) - spentIn(state, ym, a.id)).map((b) => {
@@ -115,16 +129,16 @@ export default function Budgets({ onViewTx }) {
               const n = monthTx(state, ym).filter((t) => t.type === 'expense' && t.cat === b.id).length
               return (
                 <div key={b.id} className="group flex cursor-pointer items-center gap-2 px-3 py-3 transition hover:bg-secondary/40 sm:gap-3 sm:px-4" onClick={() => onViewTx && onViewTx(b.id)}>
-                  <span className="flex w-6 shrink-0 justify-center sm:w-7"><CatIcon cat={b.id} className="h-5 w-5" /></span>
+                  <span className="flex w-5 shrink-0 justify-center sm:w-7"><CatIcon cat={b.id} className="h-5 w-5" /></span>
                   <div className="min-w-0 flex-1 sm:w-44 sm:flex-none">
                     <div className="truncate text-[0.84375rem] font-bold">{b.name}</div>
-                    <div className="truncate text-[0.65625rem] font-semibold text-muted-foreground">
+                    <div className="text-[0.65625rem] font-semibold leading-snug text-muted-foreground">
                       {n} purchase{n === 1 ? '' : 's'}{over && <> · <span className="font-bold text-red-400">{fmt0(sp - b.limit)} over</span></>}
                     </div>
                   </div>
-                  <span className={`w-14 shrink-0 text-right text-[0.8125rem] font-extrabold sm:w-16 ${over ? 'text-red-400' : ''}`}>{fmt0(sp)}</span>
+                  <span className={`w-12 shrink-0 text-right text-[0.8125rem] font-extrabold sm:w-16 ${over ? 'text-red-400' : ''}`}>{fmt0(sp)}</span>
                   <div className="hidden flex-1 sm:block"><Bar pct={barPct} color={budgetTone(sp, b.limit)} /></div>
-                  <span className="w-14 shrink-0 text-right text-[0.8125rem] font-semibold text-muted-foreground sm:w-16">{b.limit ? fmt0(b.limit) : '—'}</span>
+                  <span className="w-12 shrink-0 text-right text-[0.8125rem] font-semibold text-muted-foreground sm:w-16">{b.limit ? fmt0(b.limit) : '—'}</span>
                   <button
                     className="shrink-0 text-muted-foreground transition hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100"
                     title="Edit limit"

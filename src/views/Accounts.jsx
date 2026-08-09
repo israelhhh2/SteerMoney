@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Plus, Wallet, ChevronDown, ChevronRight } from 'lucide-react'
+import { Plus, Wallet, ChevronDown, ChevronRight, Link2, Pencil } from 'lucide-react'
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -197,7 +197,27 @@ function ChangePill({ pct, invert = false }) {
 }
 
 function StatLabel({ children }) {
-  return <div className="truncate text-[0.65rem] font-bold uppercase tracking-wide" style={{ color: LABEL_COLOR }}>{children}</div>
+  return <div className="whitespace-nowrap text-[0.625rem] font-bold uppercase tracking-wide sm:text-[0.65rem]" style={{ color: LABEL_COLOR }}>{children}</div>
+}
+
+// Mobile-only stand-in for shared.jsx's SourceBadge — same pill styling, but
+// "Plaid"/"Manual" only (no institution name) so it never has to truncate
+// inside the tight space next to a CardChip at 390px. shared.jsx is out of
+// scope for this pass, so this is a small local duplicate rather than a prop
+// on the shared component. Full "Plaid · {institution}" still shows at sm+.
+function CompactSourceBadge({ accountId }) {
+  const linked = !!accountId
+  return (
+    <span
+      className={cn(
+        'inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide',
+        linked ? 'border-indigo-400/25 bg-indigo-400/10 text-indigo-300' : 'border-border bg-secondary/60 text-muted-foreground'
+      )}
+    >
+      {linked ? <Link2 className="h-2.5 w-2.5" /> : <Pencil className="h-2.5 w-2.5" />}
+      {linked ? 'Plaid' : 'Manual'}
+    </span>
+  )
 }
 
 // "All" + one pill per tag in the space, filtering the Credit cards/Loans/
@@ -247,14 +267,31 @@ function Section({ title, total, addHref, onAdd, children, defaultOpen = true })
 // Rows now navigate to /accounts/{id} — a Notion-style modal on in-app clicks
 // (intercepted route, app/(app)/@modal/(.)accounts/[id]) or the full detail
 // page on direct load/refresh. See views/AccountDetail.jsx.
+// Row layout: below `sm` the card chip + readable name sit on their own top
+// line, then badges/stats get the row's full width beneath them (rather than
+// being squeezed into whatever's left next to a 128px-wide CardChip, which is
+// what produced the "AVAI… CURR… CHA…" label truncation). `sm:contents` on
+// the top-line wrapper drops it from the box model at sm+, so the CardChip
+// rejoins the row as a plain leading element and the layout matches the
+// original single-row look on larger screens.
 function CardRow({ account, tags = [], colorOverride }) {
   const hasLimit = !!account.limit
   const util = hasLimit ? Math.min(999, Math.round((account.balance / account.limit) * 100)) : null
   return (
-    <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
-      <CardChip institution={account.institution} name={account.name} mask={account.mask} colorOverride={colorOverride} />
+    <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full flex-col gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:flex-row sm:items-center sm:px-4">
+      <div className="flex items-center gap-3 sm:contents">
+        <CardChip institution={account.institution} name={account.name} mask={account.mask} colorOverride={colorOverride} />
+        <div className="min-w-0 flex-1 sm:hidden">
+          <div className="truncate text-sm font-bold">{account.name}</div>
+          {account.mask ? <div className="truncate text-xs font-semibold text-muted-foreground">••{account.mask}</div> : null}
+        </div>
+      </div>
       <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex justify-center gap-1.5"><SourceBadge accountId={account.account_id} institution={account.institution} />{account.status === 'syncing' && <SyncingPill />}</div>
+        <div className="flex flex-wrap justify-center gap-1.5">
+          <span className="sm:hidden"><CompactSourceBadge accountId={account.account_id} /></span>
+          <span className="hidden sm:inline-flex"><SourceBadge accountId={account.account_id} institution={account.institution} /></span>
+          {account.status === 'syncing' && <SyncingPill />}
+        </div>
         {tags.length > 0 && <div className="flex flex-wrap justify-center gap-1">{tags.map((t) => <TagPill key={t} tag={t} />)}</div>}
         {hasLimit ? (
           <div className="grid grid-cols-3 items-center gap-1 text-center">
@@ -267,8 +304,10 @@ function CardRow({ account, tags = [], colorOverride }) {
           </div>
         ) : (
           <div className="space-y-1.5">
-            <div className="w-full rounded-full border border-amber-400/40 px-2 py-1 text-center text-[0.625rem] font-bold uppercase tracking-wide text-amber-400">
-              Credit limit needed
+            <div className="flex justify-center">
+              <span className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full border border-amber-400/40 px-2 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-amber-400">
+                Credit limit needed
+              </span>
             </div>
             <div className="text-center">
               <StatLabel>Balance</StatLabel>
@@ -283,10 +322,20 @@ function CardRow({ account, tags = [], colorOverride }) {
 
 function LoanRow({ account, tags = [], colorOverride }) {
   return (
-    <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
-      <CardChip institution={account.institution} name={account.name} mask={account.mask} colorOverride={colorOverride} />
+    <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full flex-col gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:flex-row sm:items-center sm:px-4">
+      <div className="flex items-center gap-3 sm:contents">
+        <CardChip institution={account.institution} name={account.name} mask={account.mask} colorOverride={colorOverride} />
+        <div className="min-w-0 flex-1 sm:hidden">
+          <div className="truncate text-sm font-bold">{account.name}</div>
+          {account.mask ? <div className="truncate text-xs font-semibold text-muted-foreground">••{account.mask}</div> : null}
+        </div>
+      </div>
       <div className="min-w-0 flex-1 space-y-1.5 text-center">
-        <div className="flex justify-center gap-1.5"><SourceBadge accountId={account.account_id} institution={account.institution} />{account.status === 'syncing' && <SyncingPill />}</div>
+        <div className="flex flex-wrap justify-center gap-1.5">
+          <span className="sm:hidden"><CompactSourceBadge accountId={account.account_id} /></span>
+          <span className="hidden sm:inline-flex"><SourceBadge accountId={account.account_id} institution={account.institution} /></span>
+          {account.status === 'syncing' && <SyncingPill />}
+        </div>
         {tags.length > 0 && <div className="flex flex-wrap justify-center gap-1">{tags.map((t) => <TagPill key={t} tag={t} />)}</div>}
         <StatLabel>Balance</StatLabel>
         <Money value={fmt0(account.balance)} className="text-xl font-extrabold sm:text-2xl" />
@@ -299,10 +348,20 @@ function DepositoryRow({ account, tags = [], colorOverride }) {
   const pct = pctChange30(account.history, account.balance)
   const available = account.available ?? account.balance
   return (
-    <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:px-4">
-      <CardChip institution={account.institution} name={account.name} mask={account.mask} colorOverride={colorOverride} />
+    <Link href={`/accounts/${accountUrlId(account)}`} className="flex w-full flex-col gap-3 px-3.5 py-3.5 text-left transition hover:bg-accent/60 sm:flex-row sm:items-center sm:px-4">
+      <div className="flex items-center gap-3 sm:contents">
+        <CardChip institution={account.institution} name={account.name} mask={account.mask} colorOverride={colorOverride} />
+        <div className="min-w-0 flex-1 sm:hidden">
+          <div className="truncate text-sm font-bold">{account.name}</div>
+          {account.mask ? <div className="truncate text-xs font-semibold text-muted-foreground">••{account.mask}</div> : null}
+        </div>
+      </div>
       <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex justify-center gap-1.5"><SourceBadge accountId={account.account_id} institution={account.institution} />{account.status === 'syncing' && <SyncingPill />}</div>
+        <div className="flex flex-wrap justify-center gap-1.5">
+          <span className="sm:hidden"><CompactSourceBadge accountId={account.account_id} /></span>
+          <span className="hidden sm:inline-flex"><SourceBadge accountId={account.account_id} institution={account.institution} /></span>
+          {account.status === 'syncing' && <SyncingPill />}
+        </div>
         {tags.length > 0 && <div className="flex flex-wrap justify-center gap-1">{tags.map((t) => <TagPill key={t} tag={t} />)}</div>}
         <div className="grid grid-cols-3 items-center gap-1 text-center">
           <div><StatLabel>Available</StatLabel><Money value={fmt0(available)} className="text-sm font-extrabold sm:text-base" /></div>

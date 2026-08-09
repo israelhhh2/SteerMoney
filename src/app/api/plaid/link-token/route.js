@@ -57,6 +57,16 @@ export async function POST(req) {
       params.access_token = row.access_token
     } else {
       params.products = ['transactions']
+      // Liabilities (roadmap item 10 — auto-fill the Debt Tracker's APR/min
+      // payment/due date from Plaid instead of fuzzy-matching guesswork):
+      // required_if_supported_products asks for it on every institution that
+      // offers it, without narrowing which institutions show up in Link at
+      // all for ones that don't (unlike putting it in `products`, which
+      // would hide any bank lacking Liabilities support entirely). See
+      // app/api/plaid/exchange and lib/plaid-sync.js's syncDebtsFromPlaid()
+      // (lib/plaid-debts.js), which handles a liabilitiesGet failure on an
+      // unsupported Item gracefully either way.
+      params.required_if_supported_products = ['liabilities']
       // Request the maximum available history (Plaid's cap is 730 days) so a
       // freshly connected account backfills as much of the user's real
       // transaction history as the institution will give up, instead of the

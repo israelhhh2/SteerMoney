@@ -19,7 +19,7 @@ const LABEL_COLOR = '#6f8bb8'
 const TX_ROW_LIMIT = 60 // detail view shows recent activity; "View all" hands off to /transactions
 
 function StatLabel({ children }) {
-  return <div className="truncate text-[0.65rem] font-bold uppercase tracking-wide" style={{ color: LABEL_COLOR }}>{children}</div>
+  return <div className="whitespace-nowrap text-[0.625rem] font-bold uppercase tracking-wide sm:text-[0.65rem]" style={{ color: LABEL_COLOR }}>{children}</div>
 }
 
 function ChangePill({ pct }) {
@@ -161,7 +161,7 @@ export default function AccountDetail({ id }) {
 
       <h1 className="max-w-full truncate text-center text-lg font-extrabold tracking-tight">{account.name}</h1>
 
-      <div className="grid w-full max-w-sm grid-cols-3 gap-2 text-center">
+      <div className="grid w-full max-w-sm grid-cols-3 gap-1.5 text-center sm:gap-2">
         {isCredit ? (
           <>
             <div><StatLabel>Balance</StatLabel><Money value={fmt0(account.balance)} className="text-lg font-extrabold sm:text-xl" /></div>

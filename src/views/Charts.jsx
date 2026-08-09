@@ -104,9 +104,9 @@ export default function Charts({ focus } = {}) {
         <SectionHead title="Income by Month" desc="Last 12 months, from transactions (transfers excluded)" />
         <div className="mt-4 h-56">
           <ResponsiveContainer>
-            <BarChart data={incomeByMonth}>
-              <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#52525b', fontSize: 10 }} tickFormatter={kfmt} axisLine={false} tickLine={false} />
+            <BarChart data={incomeByMonth} margin={{ top: 4, right: 4, left: -12, bottom: 0 }}>
+              <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} interval={isMobile ? 'preserveStartEnd' : 0} minTickGap={isMobile ? 24 : 5} />
+              <YAxis tick={{ fill: '#52525b', fontSize: 10 }} tickFormatter={kfmt} axisLine={false} tickLine={false} width={isMobile ? 34 : 44} />
               <Tooltip {...TIP} cursor={{ fill: '#ffffff08' }} formatter={(v) => fmt0(v)} />
               <Bar dataKey="total" fill="#34d399" radius={[5, 5, 0, 0]} maxBarSize={36} style={{ filter: 'drop-shadow(0 0 4px rgba(52,211,153,0.35))' }} />
             </BarChart>
@@ -117,9 +117,9 @@ export default function Charts({ focus } = {}) {
         <SectionHead title="Spending by Month" desc="Last 12 months, from transactions (transfers excluded)" />
         <div className="mt-4 h-56">
           <ResponsiveContainer>
-            <BarChart data={spendByMonth}>
-              <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#52525b', fontSize: 10 }} tickFormatter={kfmt} axisLine={false} tickLine={false} />
+            <BarChart data={spendByMonth} margin={{ top: 4, right: 4, left: -12, bottom: 0 }}>
+              <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} interval={isMobile ? 'preserveStartEnd' : 0} minTickGap={isMobile ? 24 : 5} />
+              <YAxis tick={{ fill: '#52525b', fontSize: 10 }} tickFormatter={kfmt} axisLine={false} tickLine={false} width={isMobile ? 34 : 44} />
               <Tooltip {...TIP} cursor={{ fill: '#ffffff08' }} formatter={(v) => fmt0(v)} />
               <Bar dataKey="total" fill="#e0655f" radius={[5, 5, 0, 0]} maxBarSize={36} style={{ filter: 'drop-shadow(0 0 4px rgba(224,101,95,0.35))' }} />
             </BarChart>

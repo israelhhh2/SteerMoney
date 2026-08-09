@@ -82,6 +82,41 @@ export function displayName(desc) {
   return String(desc || '').trim().slice(0, 40) || 'Unknown merchant'
 }
 
+// ---- non-subscription exclusions ----
+// Interest charges, credit-card bill payments/autopay, transfers, cash
+// advances, and fees are real, recurring-looking transactions (same amount,
+// roughly monthly) — but they're never "subscriptions": a user paying down
+// their card balance every month, or eating a monthly interest charge,
+// shouldn't be suggested as a bill to add. Matched case-insensitively
+// against the raw description (same field cadence detection already groups
+// on), as a net ON TOP OF (not instead of) the existing category-based
+// filter in detectRecurring below (that filter already drops rows Plaid/the
+// user filed under 'transfer' or 'debt' — this list catches the same kinds
+// of rows when they land under 'other' instead, which is what
+// mapPlaidCategory does for BANK_FEES and some LOAN_PAYMENTS sub-types).
+// Deliberately conservative and keyword-based (no ML/heuristics) so it's
+// easy to reason about and extend.
+const EXCLUDE_PATTERNS = [
+  /interest\s*charge/i,          // "Interest Charge On Cash Advances/Purchases"
+  /finance\s*charge/i,
+  /cash\s*advance/i,             // cash-advance fees/transactions
+  /crcardpmt/i,                  // "Capital One Type Crcardpmt Co..."
+  /cr\s*crd\s*pmt/i,
+  /credit\s*card\s*pay(ment)?/i,
+  /card\s*pmt/i,
+  /payment\s*thank\s*you/i,      // "AMEX Payment Thank You"-style CC autopay
+  /\bautopay\b/i,
+  /\bepay\b/i,
+  /\bpymt\b/i,
+  /\btransfer\b/i,
+  /\bxfer\b/i,
+  /\bfee\b/i,                    // late/overdraft/annual/maintenance/NSF/ATM fees
+]
+
+function isExcludedMerchant(desc) {
+  return EXCLUDE_PATTERNS.some((re) => re.test(String(desc || '')))
+}
+
 // ---- cadence classification ----
 const DAY_MS = 86400000
 // "Go back 4 months" per the request: weekly/biweekly/monthly are classified
@@ -208,7 +243,9 @@ function alreadyTracked(dispNameLower, existingRecurring) {
 // {key, displayName, cadence, avgAmount, lastDate, nextEstDate, count,
 //  accountId, cat, confidence}
 // Only considers expense transactions (excludes income/transfer/debt, which
-// aren't spending) grouped by merchant key. Weekly/biweekly/monthly are
+// aren't spending, and interest charges/CC payments/cash advances/fees per
+// EXCLUDE_PATTERNS above, which are spending but never subscriptions)
+// grouped by merchant key. Weekly/biweekly/monthly are
 // classified against only the last ~4 months (WINDOW_DAYS) of that group's
 // charges — "go back 4 months" per the request — so a bill that stopped
 // months ago stops being suggested on its own; yearly is a bonus check
@@ -224,7 +261,7 @@ function alreadyTracked(dispNameLower, existingRecurring) {
 // (views/Recurring.jsx's useMemo) — no AI, no network call, no user prompt;
 // it just re-runs automatically whenever those change.
 export function detectRecurring(transactions, existingRecurring = []) {
-  const expenses = (transactions || []).filter((t) => t.type === 'expense' && t.cat !== 'income' && t.cat !== 'transfer' && t.cat !== 'debt' && t.desc)
+  const expenses = (transactions || []).filter((t) => t.type === 'expense' && t.cat !== 'income' && t.cat !== 'transfer' && t.cat !== 'debt' && t.desc && !isExcludedMerchant(t.desc))
 
   const groups = new Map() // key -> tx[] (full history)
   for (const t of expenses) {

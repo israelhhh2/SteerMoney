@@ -102,8 +102,11 @@ export default function Dashboard() {
   }, [cfView, B.from, B.to, state.transactions])
   const bTot = breakdown.reduce((s, r) => s + r.sum, 0) || 1
 
-  // charts
-  const flowData = months.slice().reverse().map((m) => ({ name: ymLabel(m), Income: Math.round(incomeIn(state, m)), Spending: Math.round(expensesIn(state, m)) }))
+  // charts — capped to the last 12 months on mobile so ~2 years of monthly
+  // data doesn't cram dozens of bars into a 390px-wide chart (desktop keeps
+  // the full history; `months` is already sorted newest-first).
+  const flowMonths = isMobile ? months.slice(0, 12) : months
+  const flowData = flowMonths.slice().reverse().map((m) => ({ name: ymLabel(m), Income: Math.round(incomeIn(state, m)), Spending: Math.round(expensesIn(state, m)) }))
   const catSums = {}
   monthTx(state, nowYm).forEach((t) => { if (t.type === 'expense' && t.cat !== 'transfer') catSums[t.cat] = (catSums[t.cat] || 0) + t.amount })
   const donut = Object.entries(catSums).sort((a, b) => b[1] - a[1]).slice(0, 9).map(([c, v]) => ({ name: catInfo(c).name, value: Math.round(v), color: catColor(c) }))
@@ -245,9 +248,9 @@ export default function Dashboard() {
                 key={m}
                 onClick={() => setRange(on ? { mode: 'month', from: null, to: null } : { mode: 'ym', ym: m })}
                 title={on ? 'Back to this month' : `Show ${ymLabel(m)} in the cards above`}
-                className={`-mx-2 flex w-[calc(100%+1rem)] items-center gap-2 rounded-lg px-2 py-2 text-[0.71875rem] transition sm:gap-3 sm:text-[0.8125rem] ${on ? 'bg-emerald-400/[0.07] ring-1 ring-emerald-400/25' : 'hover:bg-secondary/50'}`}
+                className={`-mx-2 flex w-[calc(100%+1rem)] items-center gap-1.5 rounded-lg px-2 py-2 text-[0.65625rem] tabular-nums transition sm:gap-3 sm:text-[0.8125rem] ${on ? 'bg-emerald-400/[0.07] ring-1 ring-emerald-400/25' : 'hover:bg-secondary/50'}`}
               >
-                <span className={`w-14 shrink-0 whitespace-nowrap text-left font-medium sm:w-24 ${on ? 'text-emerald-300' : ''}`}>
+                <span className={`w-16 shrink-0 whitespace-nowrap text-left font-medium sm:w-24 ${on ? 'text-emerald-300' : ''}`}>
                   {ymLabel(m)}{m === nowYm && <span className="hidden text-[0.625rem] text-muted-foreground sm:inline"> · so far</span>}
                 </span>
                 <span className="min-w-0 flex-1 whitespace-nowrap text-right text-emerald-400">+{fmt0(inc)}</span>
@@ -256,8 +259,8 @@ export default function Dashboard() {
               </button>
             )
           })}
-          <div className="flex items-center gap-2 pt-2 text-[0.625rem] text-muted-foreground sm:gap-3 sm:text-[0.6875rem]">
-            <span className="w-14 shrink-0 sm:w-24">tap a month ↑</span><span className="min-w-0 flex-1 whitespace-nowrap text-right">money in</span><span className="min-w-0 flex-1 whitespace-nowrap text-right">money out</span><span className="w-16 shrink-0 text-right sm:w-28">left over</span>
+          <div className="flex items-center gap-1.5 pt-2 text-[0.625rem] text-muted-foreground sm:gap-3 sm:text-[0.6875rem]">
+            <span className="w-16 shrink-0 sm:w-24">tap a month ↑</span><span className="min-w-0 flex-1 whitespace-nowrap text-right">money in</span><span className="min-w-0 flex-1 whitespace-nowrap text-right">money out</span><span className="w-16 shrink-0 text-right sm:w-28">left over</span>
           </div>
         </div>
       </Card>
@@ -274,7 +277,7 @@ export default function Dashboard() {
       {up.length > 0 && (
         <div className="space-y-2.5">
           <SectionLabel title="Upcoming" link="Recurrings" href="/recurring" />
-          <div className="no-scrollbar -mx-4 flex gap-5 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+          <div className="no-scrollbar -mx-4 flex gap-5 overflow-x-auto px-4 pr-8 sm:mx-0 sm:px-0 sm:pr-0">
             {upGroups.map((g) => (
               <div key={g.diff}>
                 <div className="mb-1.5 whitespace-nowrap text-[0.6875rem] font-bold text-primary/90">{g.label}</div>
@@ -297,21 +300,22 @@ export default function Dashboard() {
       {ringBudgets.length > 0 && (
         <div className="space-y-2.5">
           <SectionLabel title="Budgets" link="Categories" href="/budgets" />
-          <div className="no-scrollbar -mx-4 flex gap-5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-1">
+          <div className="no-scrollbar -mx-4 flex snap-x snap-proximity gap-5 overflow-x-auto px-4 pb-1 pr-8 sm:mx-0 sm:px-1 sm:pr-1">
             {ringBudgets.map((b) => {
               const over = b.spent > b.limit
               return (
-                <div key={b.id} className="flex w-[4.5rem] shrink-0 flex-col items-center gap-1.5">
+                <div key={b.id} className="flex w-[4.5rem] shrink-0 snap-start flex-col items-center gap-1.5">
                   <Ring pct={over ? 100 : (b.spent / b.limit) * 100} color={budgetTone(b.spent, b.limit)} size={68} stroke={5.5}>
                     <CatIcon cat={b.id} className="h-6 w-6" />
                   </Ring>
                   <div className="text-center leading-tight">
-                    <div className="text-[0.84375rem] font-bold">{fmt(Math.abs(b.limit - b.spent))}</div>
+                    <div className="whitespace-nowrap text-[0.84375rem] font-bold tabular-nums">{fmt(Math.abs(b.limit - b.spent))}</div>
                     <div className={`text-[0.6875rem] ${over ? 'text-red-400' : 'text-muted-foreground'}`}>{over ? 'over' : 'left'}</div>
                   </div>
                 </div>
               )
             })}
+            <div className="w-px shrink-0" aria-hidden="true" />
           </div>
         </div>
       )}
@@ -352,9 +356,9 @@ export default function Dashboard() {
           <SectionHead title="Income vs Spending" desc={`From transactions · transfers excluded · ${ymLabel(nowYm)} is partial`} />
           <div className="mt-4 h-56">
             <ResponsiveContainer>
-              <BarChart data={flowData}>
-                <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#52525b', fontSize: 10 }} tickFormatter={(v) => '$' + (v >= 1000 ? v / 1000 + 'k' : v)} axisLine={false} tickLine={false} />
+              <BarChart data={flowData} margin={{ top: 4, right: 4, left: -12, bottom: 0 }}>
+                <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} interval={isMobile ? 'preserveStartEnd' : 0} minTickGap={isMobile ? 24 : 5} />
+                <YAxis tick={{ fill: '#52525b', fontSize: 10 }} tickFormatter={(v) => '$' + (v >= 1000 ? v / 1000 + 'k' : v)} axisLine={false} tickLine={false} width={isMobile ? 34 : 44} />
                 <Tooltip {...TIP} cursor={{ fill: '#ffffff08' }} formatter={(v) => fmt0(v)} />
                 <Legend wrapperStyle={{ fontSize: 11 }} formatter={(v) => <span style={{ color: '#a1a1aa' }}>{v}</span>} />
                 <RBar dataKey="Income" fill="#34d399" radius={[5, 5, 0, 0]} maxBarSize={36} style={{ filter: 'drop-shadow(0 0 4px rgba(52,211,153,0.35))' }} />

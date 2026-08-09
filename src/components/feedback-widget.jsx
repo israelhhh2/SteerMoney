@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Segmented } from '@/components/ui/segmented'
 import { useCenterToast } from '@/components/toast'
+import { useIsMobile } from '@/lib/useMediaQuery'
 
 // Floating "send feedback / report a bug" widget, mounted once in
 // app/(app)/layout.jsx so it's on every authed page. Deliberately sits below
@@ -29,6 +30,26 @@ export function FeedbackWidget() {
   const [wantsReply, setWantsReply] = useState(true)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
+  const isMobile = useIsMobile()
+
+  // Shrink/fade the FAB while the page is actively scrolling on mobile — it
+  // sits over live content (balances, row actions, budget rings), so keeping
+  // it at full size/opacity mid-scroll makes it more likely to obscure
+  // whatever's currently passing underneath it. Settles back to full size
+  // shortly after scrolling stops. Desktop (fixed bottom-right, out of the
+  // content column) is unaffected.
+  const [scrolling, setScrolling] = useState(false)
+  useEffect(() => {
+    if (!isMobile) return
+    let t
+    const onScroll = () => {
+      setScrolling(true)
+      clearTimeout(t)
+      t = setTimeout(() => setScrolling(false), 500)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => { window.removeEventListener('scroll', onScroll); clearTimeout(t) }
+  }, [isMobile])
 
   useEffect(() => {
     if (!open) return
@@ -116,12 +137,13 @@ export function FeedbackWidget() {
         onClick={() => setOpen((o) => !o)}
         aria-label={open ? 'Close feedback' : 'Send feedback or report a bug'}
         className={cn(
-          'fixed right-4 z-[55] h-12 w-12 items-center justify-center rounded-full border border-border/60 bg-primary text-primary-foreground shadow-lg transition hover:opacity-90',
+          'fixed right-3 z-[55] h-10 w-10 items-center justify-center rounded-full border border-border/60 bg-primary text-primary-foreground shadow-lg transition hover:opacity-90 sm:right-4 md:h-12 md:w-12',
           'bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-6',
+          scrolling && !open ? 'scale-90 opacity-50' : 'scale-100 opacity-100',
           open ? 'hidden md:flex' : 'flex'
         )}
       >
-        {open ? <X className="h-5 w-5" /> : <MessageCircle className="h-5 w-5" />}
+        {open ? <X className="h-4 w-4 md:h-5 md:w-5" /> : <MessageCircle className="h-4 w-4 md:h-5 md:w-5" />}
       </button>
 
       {open ? (

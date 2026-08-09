@@ -122,37 +122,46 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
   return (
     <div className="fade-in space-y-5">
       <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={(e) => { importFile(e.target.files[0]); e.target.value = '' }} />
-      <Card className="flex flex-wrap items-center gap-3 p-3">
+      {/* Mobile: a tight vertical stack (month nav / search / the two selects
+          side-by-side / chips / actions) so the filter block doesn't eat the
+          whole viewport before any transactions show. `sm:contents` on the
+          select-pair and `sm:flex` on the actions revert everything to the
+          original single flex-wrap row at sm+. */}
+      <Card className="flex flex-col gap-2.5 p-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
         <div className="flex items-center gap-1">
           <Button variant="outline" size="xs" className="px-1.5" onClick={() => shift(-1)}><ChevronLeft /></Button>
           <span className="w-24 text-center text-[0.8125rem] font-semibold">{ymLabel(ym)}</span>
           <Button variant="outline" size="xs" className="px-1.5" onClick={() => shift(1)}><ChevronRight /></Button>
         </div>
-        <div className="relative">
+        <div className="relative w-full sm:w-auto">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input className="w-44 pl-8" placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <Input className="w-full pl-8 sm:w-44" placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        <Select className="text-xs" value={cat} onChange={(e) => setCat(e.target.value)}>
-          <option value="all">All categories</option>
-          {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          <option value="debt">Debt Payment</option><option value="income">Income</option><option value="transfer">Transfer</option>
-        </Select>
-        {/* Only rendered once there's at least one connected bank — manual-only
-            users have nothing to filter by, so no dropdown clutter (design goal 3). */}
-        {accountOptions.length > 0 && (
-          <Select
-            className="max-w-[9.5rem] text-xs sm:max-w-[13rem]"
-            value={accountFilter || ''}
-            onChange={(e) => setAccountFilter(e.target.value || null)}
-          >
-            <option value="">All accounts</option>
-            {accountOptions.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+        <div className="grid grid-cols-2 gap-2 sm:contents">
+          <Select className="w-full text-xs sm:w-auto" value={cat} onChange={(e) => setCat(e.target.value)}>
+            <option value="all">All categories</option>
+            {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            <option value="debt">Debt Payment</option><option value="income">Income</option><option value="transfer">Transfer</option>
           </Select>
-        )}
-        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
+          {/* Only rendered once there's at least one connected bank — manual-only
+              users have nothing to filter by, so no dropdown clutter (design goal 3). */}
+          {accountOptions.length > 0 && (
+            <Select
+              className="w-full text-xs sm:w-auto sm:max-w-[9.5rem] md:max-w-[13rem]"
+              value={accountFilter || ''}
+              onChange={(e) => setAccountFilter(e.target.value || null)}
+            >
+              <option value="">All accounts</option>
+              {accountOptions.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+            </Select>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs sm:ml-auto">
           <Badge>In <b className="text-emerald-400">{fmt0(inc)}</b></Badge>
           <Badge>Out <b className="text-foreground">{fmt0(exp)}</b></Badge>
           <Badge>Net <b className={inc - exp >= 0 ? 'text-emerald-400' : 'text-red-400'}>{fmt0(inc - exp)}</b></Badge>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2">
           <Button variant="outline" size="sm" onClick={() => fileRef.current.click()}><Upload />Import</Button>
           <Button size="sm" onClick={() => setEditing(null)}><Plus />Add</Button>
         </div>
@@ -170,8 +179,8 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
               const acct = t.accountId ? accountsById[t.accountId] : null
               const acctLabel = acct ? `${acct.institution || 'Bank'}${acct.mask ? ` ••${acct.mask}` : acct.name ? ` — ${acct.name}` : ''}` : null
               return (
-              <div key={t.id} className="group flex items-center gap-3 px-4 py-2 transition-colors hover:bg-secondary/30">
-                <span className="flex w-6 shrink-0 justify-center"><CatIcon cat={t.cat} /></span>
+              <div key={t.id} className="group flex items-center gap-2 px-4 py-2 transition-colors hover:bg-secondary/30 sm:gap-3">
+                <span className="flex w-5 shrink-0 justify-center sm:w-6"><CatIcon cat={t.cat} /></span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[0.8125rem] text-foreground/90" title={t.desc}>{t.desc}</span>
                   {acctLabel && (
@@ -182,12 +191,12 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
                   )}
                 </span>
                 <span className="hidden sm:inline-flex"><CatChip cat={t.cat} /></span>
-                <span className={`w-20 shrink-0 text-right text-[0.8125rem] font-semibold sm:w-24 ${t.type === 'income' ? 'text-emerald-400' : t.cat === 'transfer' ? 'text-muted-foreground' : ''}`}>
+                <span className={`w-16 shrink-0 text-right text-[0.8125rem] font-semibold sm:w-24 ${t.type === 'income' ? 'text-emerald-400' : t.cat === 'transfer' ? 'text-muted-foreground' : ''}`}>
                   {t.type === 'income' ? '+' : '−'}{fmt(t.amount)}
                 </span>
-                <span className="flex w-12 shrink-0 justify-end gap-1.5">
-                  <button className="text-muted-foreground transition hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100" title="Edit" onClick={() => setEditing(t.id)}><Pencil className="h-3.5 w-3.5" /></button>
-                  <button className="text-muted-foreground transition hover:text-red-400 sm:opacity-0 sm:group-hover:opacity-100" title="Delete" onClick={() => setConfirmDelId(t.id)}><X className="h-3.5 w-3.5" /></button>
+                <span className="flex w-10 shrink-0 justify-end gap-1 sm:w-12 sm:gap-1.5">
+                  <button className="text-muted-foreground transition hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100" title="Edit" onClick={() => setEditing(t.id)}><Pencil className="h-3 w-3 sm:h-3.5 sm:w-3.5" /></button>
+                  <button className="text-muted-foreground transition hover:text-red-400 sm:opacity-0 sm:group-hover:opacity-100" title="Delete" onClick={() => setConfirmDelId(t.id)}><X className="h-3 w-3 sm:h-3.5 sm:w-3.5" /></button>
                 </span>
               </div>
               )

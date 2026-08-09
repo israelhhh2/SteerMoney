@@ -128,6 +128,30 @@ function Frame({ children, modal }) {
   const [showNewSpace, setShowNewSpace] = useState(false)
   const [inviteUrl, setInviteUrl] = useState(null)
 
+  // Recharts tooltips are driven by mouseenter/mousemove/mouseleave, which
+  // touch devices only approximate — there's no touch equivalent of
+  // "pointer left the element," so a tapped bar/slice's tooltip otherwise
+  // stays glued to the screen indefinitely. Global, not per-chart: fires a
+  // synthetic mouseleave at any .recharts-wrapper the touch didn't land in
+  // (dismisses on an outside tap) and, after a short delay, at whichever
+  // chart WAS touched (so a tap-and-hold doesn't get stuck open forever
+  // either). No-op on pages without a chart.
+  useEffect(() => {
+    let hideTimer
+    function onTouchEnd(e) {
+      const wrappers = document.querySelectorAll('.recharts-wrapper')
+      wrappers.forEach((el) => {
+        if (!el.contains(e.target)) el.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }))
+      })
+      clearTimeout(hideTimer)
+      hideTimer = setTimeout(() => {
+        wrappers.forEach((el) => el.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true })))
+      }, 1600)
+    }
+    document.addEventListener('touchend', onTouchEnd, { passive: true })
+    return () => { document.removeEventListener('touchend', onTouchEnd); clearTimeout(hideTimer) }
+  }, [])
+
   const switchSpace = async (v) => {
     if (v === 'personal') return setSpace(null)
     if (v === '__new') {
@@ -259,7 +283,7 @@ function Frame({ children, modal }) {
           </div>
         </header>
 
-        <main className="mx-auto max-w-6xl px-4 py-5 pb-28 sm:px-8 sm:py-6 md:pb-12">
+        <main className="mx-auto max-w-6xl px-4 py-5 pb-32 sm:px-8 sm:py-6 md:pb-12">
           {state ? children : (
             <div className="flex items-center justify-center gap-2 py-24 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading your finances…

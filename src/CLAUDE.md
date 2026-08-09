@@ -111,13 +111,64 @@ Ordered; check off as done.
 - [ ] **9. Hardening** — rate limiting on plaid routes, error states in UI
       (item error badge), handle pending transactions or accept the gap,
       monitoring for failed syncs.
-- [ ] **10. Nice-to-have** — add `liabilities` product to auto-fill APR/min
-      payment/due date on Debts (replaces fuzzy matching guesswork).
+- [x] **10. Nice-to-have** — `liabilities` product now auto-fills APR/min
+      payment/due date on Debts (see 2026-08-08 (25) session log entry).
+      Still fuzzy-matches against pre-existing manual debts to avoid dupes.
 
 Costs note: production Plaid is pay-per-item/product — check current pricing
 before flipping the switch.
 
 ## Session log (newest first)
+
+### 2026-08-08 (25)
+- **Auto-add linked credit cards to the Debt Tracker (roadmap item 10)**
+  (Sonnet worker). Linking a credit card via Plaid now creates/updates a
+  Debt Tracker row automatically instead of requiring the manual Add Debt
+  dialog.
+  - **`app/api/plaid/link-token`**: added `required_if_supported_products:
+    ['liabilities']` (not `products`, so institutions without Liabilities
+    support still link fine — Link just won't request it for them).
+  - **`lib/plaid-debts.js`** (new) — `syncDebtsFromPlaid({ userId, itemId,
+    institution, accessToken, accounts })`: for every `type === 'credit'`
+    account, calls `plaidClient.liabilitiesGet` (best-effort — an
+    unsupported institution just leaves APR/min payment/due day blank,
+    same as a manually-added debt) and maps `balances.current` → balance,
+    `balances.limit` → credit_limit, the `purchase_apr` entry's
+    `apr_percentage` → apr (as `"12.99%"`), `minimum_payment_amount` → min
+    payment, day-of-month of `next_payment_due_date` → due day. Name is
+    `institution + account name + mask`.
+    - Upserts by a deterministic `pl_<account_id>` debts.id: re-syncs
+      UPDATE the same row (balance/min/due always refresh when Plaid has a
+      value; apr/credit_limit refresh too but never get written `null` —
+      "only fill/refresh fields Plaid actually returns").
+    - Dedupe: before creating a new row, fuzzy-matches
+      (`lib/finance.js`'s `matchesBankAccount`, the same one
+      `reconcileDebtLimits`/Debts.jsx's "Bank connected" badge already use)
+      against existing *manual* debts (no `plaid_account_id`) — a match
+      gets linked in place (fill-once for apr/limit, same conservative
+      rule as `reconcileDebtLimits`) instead of creating a duplicate.
+    - Called from `app/api/plaid/exchange` (right after a new bank links)
+      and from `lib/plaid-sync.js`'s `syncPlaidItem()` (every "Sync now" /
+      webhook pass), both best-effort/try-caught so a failure here never
+      blocks linking or transaction syncing.
+  - **`supabase/debts-plaid.sql`** (new migration) — `ALTER TABLE debts ADD
+    COLUMN IF NOT EXISTS plaid_account_id text` + `plaid_item_id text` +
+    a partial index. Not yet run against prod — every write that touches
+    these columns retries without them on a column-missing error, same
+    defensive pattern as `transactions.account_id`/`plaid_items.status`.
+  - **`store.jsx`**: `mappers.debts.fromRow` now round-trips
+    `plaid_account_id`/`plaid_item_id` → `plaidAccountId`/`plaidItemId`
+    (only when the column exists, same convention as `recurring`/
+    `transactions`' `account_id`). Deliberately NOT added to `toRow` — it's
+    read-only from the client's perspective, so an ordinary debt edit
+    (payment, note, etc.) can never accidentally clear the link.
+  - **`views/Debts.jsx`**: the existing "Bank connected"/"Manual entry"
+    badge now shows **"Synced from Plaid"** when `d.plaidAccountId` is set
+    (exact link) ahead of the older fuzzy-match badge.
+  - **Not done**: no dedupe against an *already-Plaid-linked* debt from a
+    different item (can't happen — one Plaid account only ever produces
+    one `pl_<account_id>` id). Migration still needs to be run against prod
+    (see roadmap item 8, same as always).
 
 ### 2026-08-08 (24)
 - **FormSubmit moved server→browser (fix for live 403) + admin feedback

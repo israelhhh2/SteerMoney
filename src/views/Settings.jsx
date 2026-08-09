@@ -188,34 +188,40 @@ function ConnectedBanksSection() {
         ) : items.length > 0 ? (
           <div className="divide-y divide-border/60 overflow-hidden rounded-lg border">
             {items.map((it) => (
-              <div key={it.id} className="flex flex-wrap items-center gap-2.5 px-3 py-2.5">
-                <Landmark className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="truncate text-[0.8125rem] font-semibold">{it.institution || 'Bank'}</span>
-                    {/* 'syncing' = the initial 730-day historical backfill hasn't
-                        landed yet (see lib/plaid-sync.js) — this clears itself
-                        (usePlaidItems()'s polling, or this list's own loadItems
-                        refresh) once it does, so no action button is needed here. */}
-                    {it.status === 'syncing' && <SyncingPill />}
-                    {it.status === 'reauth_required' && <Badge variant="warning">Needs attention</Badge>}
-                    {it.status === 'revoked' && <Badge variant="destructive">Access revoked</Badge>}
-                  </div>
-                  <div className="truncate text-[0.6875rem] text-muted-foreground">
-                    {(it.accounts || []).map((a) => a.name + (a.mask ? ' ••' + a.mask : '')).join(', ') || 'No accounts found'}
-                  </div>
-                  <div className="text-[0.6875rem] text-muted-foreground">
-                    {it.last_synced ? `Last synced ${prettyDate(it.last_synced.slice(0, 10))}` : 'Not yet synced'}
+              <div key={it.id} className="flex flex-col gap-2 px-3 py-3">
+                <div className="flex items-start gap-2.5">
+                  <Landmark className="h-4 w-4 shrink-0 translate-y-0.5 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[0.8125rem] font-semibold">{it.institution || 'Bank'}</span>
+                      {/* 'syncing' = the initial 730-day historical backfill hasn't
+                          landed yet (see lib/plaid-sync.js) — this clears itself
+                          (usePlaidItems()'s polling, or this list's own loadItems
+                          refresh) once it does, so no action button is needed here. */}
+                      {it.status === 'syncing' && <SyncingPill />}
+                      {it.status === 'reauth_required' && <Badge variant="warning">Needs attention</Badge>}
+                      {it.status === 'revoked' && <Badge variant="destructive">Access revoked</Badge>}
+                    </div>
+                    <div className="text-[0.6875rem] text-muted-foreground">
+                      {(it.accounts || []).map((a) => a.name + (a.mask ? ' ••' + a.mask : '')).join(', ') || 'No accounts found'}
+                    </div>
                   </div>
                 </div>
-                {it.status === 'reauth_required' || it.status === 'revoked' ? (
-                  <FixConnectionButton item={it} onFixed={loadItems} />
-                ) : (
-                  <Button variant="outline" size="xs" disabled={syncing} onClick={sync}>
-                    {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}Sync now
-                  </Button>
-                )}
-                <Button variant="destructive" size="xs" onClick={() => setRemoving(it)}>Remove</Button>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="whitespace-nowrap text-[0.6875rem] text-muted-foreground">
+                    {it.last_synced ? `Last synced ${prettyDate(it.last_synced.slice(0, 10))}` : 'Not yet synced'}
+                  </span>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {it.status === 'reauth_required' || it.status === 'revoked' ? (
+                      <FixConnectionButton item={it} onFixed={loadItems} />
+                    ) : (
+                      <Button variant="outline" size="xs" disabled={syncing} onClick={sync}>
+                        {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}Sync now
+                      </Button>
+                    )}
+                    <Button variant="destructive" size="xs" onClick={() => setRemoving(it)}>Remove</Button>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
@@ -480,12 +486,14 @@ function SharedSpacesSection() {
         </p>
 
         {!space && hasDataToMove && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-primary/30 bg-primary/[0.04] px-3 py-2.5">
+          <div className="flex flex-col items-start gap-2 rounded-lg border border-dashed border-primary/30 bg-primary/[0.04] px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
             <p className="min-w-0 flex-1 text-[0.75rem] leading-relaxed text-muted-foreground">
               Splitting finances with a partner? Turn your Personal space into a shared one — everything you already have moves with you.
             </p>
-            <Button size="sm" variant="outline" onClick={() => setShowConvert(true)}>
-              <Users />Convert my personal space into a shared space
+            <Button size="sm" variant="outline" className="w-full max-w-full whitespace-normal text-center sm:w-auto" onClick={() => setShowConvert(true)}>
+              <Users className="shrink-0" />
+              <span className="sm:hidden">Convert to shared space</span>
+              <span className="hidden sm:inline">Convert my personal space into a shared space</span>
             </Button>
           </div>
         )}
@@ -497,41 +505,45 @@ function SharedSpacesSection() {
               const members = membersBySpace[sp.id]
               return (
                 <div key={sp.id}>
-                  <button
-                    type="button"
-                    className="flex w-full flex-wrap items-center gap-2 px-3 py-2.5 text-left transition hover:bg-secondary/30"
-                    onClick={() => toggleExpand(sp)}
-                  >
-                    <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${expanded === sp.id ? 'rotate-90' : ''}`} />
-                    <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0 flex-1 truncate text-[0.8125rem] font-semibold">{sp.name}</div>
-                    {isOwner ? (
+                  <div className="flex flex-col gap-1.5 px-3 py-2.5">
+                    <button
+                      type="button"
+                      className="-mx-1 flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left transition hover:bg-secondary/30"
+                      onClick={() => toggleExpand(sp)}
+                    >
+                      <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${expanded === sp.id ? 'rotate-90' : ''}`} />
+                      <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-semibold">{sp.name}</span>
+                      {isOwner ? (
+                        <span
+                          role="button"
+                          title="Rename space"
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-accent [&_svg]:h-3.5 [&_svg]:w-3.5"
+                          onClick={(e) => { e.stopPropagation(); setRenaming(sp) }}
+                        >
+                          <Pencil />
+                        </span>
+                      ) : null}
+                    </button>
+                    <div className="flex flex-wrap items-center gap-2 pl-[22px]">
                       <span
                         role="button"
-                        title="Rename space"
-                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-accent [&_svg]:h-3.5 [&_svg]:w-3.5"
-                        onClick={(e) => { e.stopPropagation(); setRenaming(sp) }}
+                        title="Copy an invite link for this shared space"
+                        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 text-xs font-medium shadow-sm transition-colors hover:bg-accent [&_svg]:h-3.5 [&_svg]:w-3.5"
+                        onClick={() => copyInvite(sp)}
                       >
-                        <Pencil />
+                        <Link2 />Copy invite link
                       </span>
-                    ) : null}
-                    <span
-                      role="button"
-                      title="Copy an invite link for this shared space"
-                      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 text-xs font-medium shadow-sm transition-colors hover:bg-accent [&_svg]:h-3.5 [&_svg]:w-3.5"
-                      onClick={(e) => { e.stopPropagation(); copyInvite(sp) }}
-                    >
-                      <Link2 />Copy invite link
-                    </span>
-                    <span
-                      role="button"
-                      title="Move your personal accounts, debts, budgets, transactions and bank connections into this space"
-                      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 text-xs font-medium shadow-sm transition-colors hover:bg-accent [&_svg]:h-3.5 [&_svg]:w-3.5"
-                      onClick={(e) => { e.stopPropagation(); setMoving(sp) }}
-                    >
-                      <ArrowRightLeft />Move my data here
-                    </span>
-                  </button>
+                      <span
+                        role="button"
+                        title="Move your personal accounts, debts, budgets, transactions and bank connections into this space"
+                        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 text-xs font-medium shadow-sm transition-colors hover:bg-accent [&_svg]:h-3.5 [&_svg]:w-3.5"
+                        onClick={() => setMoving(sp)}
+                      >
+                        <ArrowRightLeft />Move my data here
+                      </span>
+                    </div>
+                  </div>
 
                   {expanded === sp.id && (
                     <div className="fade-in space-y-2.5 border-t border-border/60 bg-secondary/20 px-3 py-3">

@@ -318,20 +318,22 @@ export default function Recurring() {
       {/* suggested subscriptions — detected from transaction history, see lib/recurring-detect.js */}
       {suggestions.length > 0 && (
         <Card className="p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-muted-foreground" />
-            <span className="text-[0.8125rem] font-semibold tracking-tight">Suggested subscriptions</span>
-            <Badge className="uppercase tracking-wide">found in your transactions</Badge>
+          <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="text-[0.8125rem] font-semibold tracking-tight">Suggested subscriptions</span>
+            </div>
+            <Badge className="w-fit text-[0.625rem] uppercase tracking-wide">found in your transactions</Badge>
           </div>
           <div className="space-y-2">
             {suggestions.map((s) => {
               const acctRow = accountRowFor(s.accountId)
               const tags = acctRow ? tagsForAccount(state, accountUrlId(acctRow)) : []
               return (
-                <div key={s.key} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border bg-secondary/30 px-3 py-2.5">
-                  <span className="flex w-6 shrink-0 justify-center"><CatIcon cat={s.cat} /></span>
+                <div key={s.key} className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-xl border bg-secondary/30 px-3 py-2.5">
+                  <span className="flex w-6 shrink-0 justify-center pt-0.5"><CatIcon cat={s.cat} /></span>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[0.8125rem] font-bold">{s.displayName}</div>
+                    <div className="line-clamp-2 text-[0.8125rem] font-bold leading-snug">{s.displayName}</div>
                     <div className="flex flex-wrap items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
                       <span className="shrink-0">{fmt(s.avgAmount)} · {CADENCE_LABEL[s.cadence] || s.cadence}</span>
                       {acctRow && (

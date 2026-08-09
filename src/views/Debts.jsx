@@ -354,7 +354,9 @@ function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, on
             <div className="flex items-center gap-1.5 text-[0.9375rem] font-semibold tracking-tight">
               <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
               <span className="min-w-0 flex-1 truncate">{d.name}</span>
-              {bankMatch ? (
+              {d.plaidAccountId ? (
+                <Badge variant="success" className="shrink-0"><Landmark className="h-3 w-3" />Synced from Plaid</Badge>
+              ) : bankMatch ? (
                 <Badge variant="success" className="shrink-0"><Landmark className="h-3 w-3" />Bank connected</Badge>
               ) : (
                 <Badge className="shrink-0">Manual entry</Badge>

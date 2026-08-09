@@ -1,5 +1,6 @@
 import { plaidClient, supabaseAdmin } from '@/lib/plaid-server'
 import { mapPlaidCategory } from '@/lib/plaid-categories'
+import { syncDebtsFromPlaid } from '@/lib/plaid-debts'
 
 // Small keyword map from Plaid's merchant/transaction name to this app's
 // category ids. Kept only as a defensive fallback for the rare transaction
@@ -117,6 +118,18 @@ export async function syncPlaidItem(item, opts = {}) {
       available: a.balances?.available ?? null,
     }))
   } catch { /* keep previously stored accounts */ }
+
+  // Roadmap item 10: keep any Debt Tracker row auto-created/linked from a
+  // credit account in this item synced with reality on every pass (manual
+  // "Sync now", SYNC_UPDATES_AVAILABLE/HISTORICAL_UPDATE/INITIAL_UPDATE
+  // webhooks all funnel through here) — see lib/plaid-debts.js. Best-effort,
+  // same as the balance refresh right above: a failure here never breaks
+  // transaction syncing.
+  try {
+    await syncDebtsFromPlaid({ userId, itemId: item.item_id, institution: item.institution || null, accessToken: item.access_token, accounts })
+  } catch (e) {
+    console.error('[plaid] auto-sync to Debt Tracker failed for item', item.item_id, e?.message || e)
+  }
 
   // Status bookkeeping ("please wait, transactions are loading" placeholder
   // — see CLAUDE.md 2026-08-08 session entry). A brand-new item starts life

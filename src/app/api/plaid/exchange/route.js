@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server'
 import { plaidClient, plaidConfigured, supabaseAdmin } from '@/lib/plaid-server'
+import { syncDebtsFromPlaid } from '@/lib/plaid-debts'
 
 // Exchanges a Plaid Link public_token for a permanent access_token and
 // stores the connection. The access token never leaves this route.
@@ -54,6 +55,18 @@ export async function POST(req) {
       ;({ error } = await supabaseAdmin.from('plaid_items').insert(rest))
     }
     if (error) throw error
+
+    // Roadmap item 10: any newly-linked credit card is added to the Debt
+    // Tracker right away (name/balance/limit from the accounts data above,
+    // APR/min payment/due day from liabilitiesGet when the institution
+    // supports it — see lib/plaid-debts.js). Best-effort: this never blocks
+    // or fails the bank-linking response itself, matching how the balance
+    // refresh in lib/plaid-sync.js is best-effort too.
+    try {
+      await syncDebtsFromPlaid({ userId, itemId: item_id, institution: institution || null, accessToken: access_token, accounts })
+    } catch (e) {
+      console.error('[plaid] auto-creating debts for new connection failed', e?.message || e)
+    }
 
     return Response.json({ ok: true, institution: institution || null })
   } catch (e) {

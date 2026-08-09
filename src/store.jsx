@@ -19,6 +19,13 @@ const mappers = {
       id: r.id, name: r.name, balance: Number(r.balance), apr: r.apr ?? '—',
       min: Number(r.min_payment), dueDay: r.due_day, limit: r.credit_limit == null ? null : Number(r.credit_limit),
       note: r.note ?? '', position: r.position ?? 0, payments: [],
+      // Set only when the debts-plaid.sql migration has run and this row was
+      // auto-created/linked from a Plaid credit account (lib/plaid-debts.js)
+      // — read-only here, never written back by toRow, so a client-side edit
+      // (payment, note, etc.) can never accidentally clear the link. Drives
+      // the "Synced from Plaid" badge in views/Debts.jsx.
+      ...(r.plaid_account_id !== undefined ? { plaidAccountId: r.plaid_account_id } : {}),
+      ...(r.plaid_item_id !== undefined ? { plaidItemId: r.plaid_item_id } : {}),
     }),
   },
   payments: {

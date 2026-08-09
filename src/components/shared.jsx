@@ -454,10 +454,10 @@ export function Kpi({ label, value, tone = 'text-foreground', icon: Icon, sub, h
   const tint = tone.includes('red') ? '#f4514c' : tone.includes('amber') ? '#fbbf24' : tone.includes('emerald') ? '#2fbf71' : '#5b9df9'
   const inner = (
     <>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="flex min-w-0 items-center gap-1 text-[0.65625rem] font-bold uppercase tracking-wider text-muted-foreground">
-          <span className="truncate">{label}</span>
-          {href ? <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/50 transition group-hover:translate-x-0.5 group-hover:text-primary" /> : null}
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <span className="flex min-w-0 items-start gap-1 text-[0.625rem] font-bold uppercase leading-tight tracking-tight text-muted-foreground sm:text-[0.65625rem] sm:tracking-wider">
+          <span className="min-w-0 break-words">{label}</span>
+          {href ? <ChevronRight className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground/50 transition group-hover:translate-x-0.5 group-hover:text-primary" /> : null}
         </span>
         {Icon ? <Icon className="h-4 w-4 shrink-0" style={{ color: tint + '99' }} /> : null}
       </div>
