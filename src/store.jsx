@@ -360,12 +360,17 @@ export function AppProvider({ children }) {
         try {
           const prevRows = stateRows(prev, userId)
           const nextRows = stateRows(next, userId)
+          // DB table names (snake_case) -> stateRows keys (camelCase). Looking
+          // up prevRows['account_tags'] directly returns undefined and crashes
+          // the whole sync pass with "Cannot read properties of undefined
+          // (reading 'map')" — every save silently dies, nothing persists.
+          const rowsKey = (table) => ({ account_tags: 'accountTags', account_colors: 'accountColors' }[table] || table)
           // deletes first for payments (FK), debts last so payment FKs stay valid.
           // account_tags/account_colors have no FK relationship to anything else in
           // this list, so their position doesn't matter — they're last purely for
           // readability.
           for (const table of ['payments', 'transactions', 'budgets', 'recurring', 'goals', 'accounts', 'debts', 'account_tags', 'account_colors']) {
-            const { deletes } = diffRows(prevRows[table], nextRows[table])
+            const { deletes } = diffRows(prevRows[rowsKey(table)], nextRows[rowsKey(table)])
             if (!deletes.length) continue
             const { error } = await supabase.from(table).delete().eq('user_id', userId).in('id', deletes)
             if (error) {
@@ -376,7 +381,7 @@ export function AppProvider({ children }) {
             }
           }
           for (const table of ['debts', 'payments', 'budgets', 'recurring', 'transactions', 'goals', 'accounts', 'account_tags', 'account_colors']) {
-            const { upserts } = diffRows(prevRows[table], nextRows[table])
+            const { upserts } = diffRows(prevRows[rowsKey(table)], nextRows[rowsKey(table)])
             if (!upserts.length) continue
             const { error } = await supabase.from(table).upsert(upserts, { onConflict: 'user_id,id' })
             if (error) {
