@@ -335,6 +335,15 @@ function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, on
   const pays = d.payments || []
   const paidTotal = pays.reduce((s, p) => s + p.amount, 0)
 
+  // Fields the payoff math depends on that are empty — common for Plaid-synced
+  // cards from banks that don't share them (e.g. Capital One never reports
+  // credit limit or APR). Surfaced as an amber tap-to-fix notice on the card.
+  const missingInfo = []
+  if (!d.apr || d.apr === '—') missingInfo.push(t('APR'))
+  if (!d.min) missingInfo.push(t('minimum payment'))
+  if (d.limit == null && d.plaidAccountId) missingInfo.push(t('credit limit'))
+  if (!d.dueDay) missingInfo.push(t('due day'))
+
   // Deletion itself is a synchronous store mutation; the deliberate short
   // delay + busy spinner in ConfirmDialog matches the "it's working"
   // feedback the async Plaid-disconnect path gets elsewhere in the app.
@@ -381,6 +390,16 @@ function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, on
             <div className="text-xs font-semibold text-amber-400">{t('min {amount}', { amount: fmt(d.min) })}<span className="text-[0.625rem] font-normal text-muted-foreground">/mo</span></div>
           </div>
         </div>
+        {missingInfo.length > 0 && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onEdit() }}
+            className="mt-2.5 flex w-full items-center gap-1.5 rounded-lg border border-amber-400/25 bg-amber-400/10 px-2.5 py-1.5 text-left text-[0.6875rem] font-medium text-amber-300 transition hover:bg-amber-400/20"
+          >
+            <Pencil className="h-3 w-3 shrink-0" />
+            <span>{t('Missing {fields} — tap to fill in for accurate readings', { fields: missingInfo.join(', ') })}</span>
+          </button>
+        )}
         <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-xs">
           <span className="text-muted-foreground">{t('At minimum:')} {pm != null ? <b className="text-foreground/80">{fmtMonths(pm)}</b> : <b className="text-red-400">{t('never pays off')}</b>}</span>
           {planDate && <span className="text-muted-foreground">{t('Your plan:')} <b className="text-emerald-400">{monthLabel(planDate)}</b></span>}
