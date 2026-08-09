@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { CreditCard, CalendarDays, CheckCircle2, Target, ChevronRight, Pencil, X, Flame, Snowflake, Plus, DollarSign, Search, Lightbulb, Landmark } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card } from '@/components/ui/card'
@@ -122,9 +123,12 @@ export default function Debts() {
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary/60">
             <CreditCard className="h-6 w-6 text-muted-foreground" />
           </div>
-          <h2 className="text-base font-semibold tracking-tight">{t('No debts yet')}</h2>
-          <p className="max-w-sm text-sm text-muted-foreground">{t('Add your first debt to start tracking your payoff plan.')}</p>
-          <Button className="mt-2" onClick={() => setEditIdx(-1)}><Plus />{t('Add debt')}</Button>
+          <h2 className="text-base font-semibold tracking-tight">{t('Start by connecting your accounts')}</h2>
+          <p className="max-w-sm text-sm text-muted-foreground">{t('Connect a bank and your credit cards and loans appear here automatically — balance, APR, minimum payment, and due date included.')}</p>
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+            <Link href="/accounts"><Button><Landmark className="h-4 w-4" />{t('Connect accounts')}</Button></Link>
+            <Button variant="outline" onClick={() => setEditIdx(-1)}><Plus />{t('Add debt manually')}</Button>
+          </div>
         </Card>
         {editIdx !== undefined && <DebtDialog idx={editIdx} onClose={() => setEditIdx(undefined)} />}
       </div>
