@@ -1,4 +1,4 @@
-import { auth } from '@clerk/nextjs/server'
+import { createSupabaseServerClient } from '@/lib/supabase-clients'
 import { plaidClient, plaidConfigured, supabaseAdmin, ownerIdsFor } from '@/lib/plaid-server'
 
 // Lists this user's connected banks. Access tokens are never selected here,
@@ -15,8 +15,10 @@ import { plaidClient, plaidConfigured, supabaseAdmin, ownerIdsFor } from '@/lib/
 // check would make it disappear from the very account that moved it.
 export async function GET() {
   try {
-    const { userId } = await auth()
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const supabase = await createSupabaseServerClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const userId = user.id
     if (!plaidConfigured || !supabaseAdmin) return Response.json({ items: [] })
 
     const ownerIds = await ownerIdsFor(userId)
@@ -46,7 +48,7 @@ export async function GET() {
 // into a shared space can still be removed from there; the delete itself
 // targets the row's own primary key rather than repeating the user_id
 // match, since that row's user_id may legitimately be a space id, not this
-// caller's own Clerk id.
+// caller's own id.
 //
 // Also accepts `workspace_id` instead of `item_id` — bulk-disconnects every
 // bank connection owned by that shared space in one call, for Settings'
@@ -59,8 +61,10 @@ export async function GET() {
 // not assumed from the caller having a valid session.
 export async function DELETE(req) {
   try {
-    const { userId } = await auth()
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const supabase = await createSupabaseServerClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const userId = user.id
     if (!plaidConfigured || !supabaseAdmin) return Response.json({ error: 'Plaid is not configured yet' }, { status: 503 })
 
     const { item_id, workspace_id } = await req.json()
@@ -115,8 +119,10 @@ export async function DELETE(req) {
 // connection's status can still be fixed from the account that moved it.
 export async function PATCH(req) {
   try {
-    const { userId } = await auth()
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const supabase = await createSupabaseServerClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const userId = user.id
     if (!plaidConfigured || !supabaseAdmin) return Response.json({ error: 'Plaid is not configured yet' }, { status: 503 })
 
     const { item_id, status } = await req.json()

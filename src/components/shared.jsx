@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import Link from 'next/link'
-import { useUser } from '@clerk/nextjs'
+import { useAuthUser } from '@/components/auth-provider'
 import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List, Link2, Pencil, Loader2, Plus, X, RotateCcw } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -261,7 +261,7 @@ function TagSuggestChip({ label, onClick }) {
 // unchanged for manual accounts, manual debts, and Plaid accounts.
 export function AccountTagsEditor({ accountKey, className = '' }) {
   const { state, update } = useApp()
-  const { user } = useUser()
+  const { user } = useAuthUser()
   const t = useT()
   const [adding, setAdding] = useState(false)
   const [text, setText] = useState('')

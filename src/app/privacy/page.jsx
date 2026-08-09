@@ -21,7 +21,7 @@ const SECTIONS = [
     '2. Information we collect',
     <>
       <ul className="list-disc space-y-1.5 pl-5">
-        <li><strong>Account information</strong> — your name and email address, managed through our authentication provider, Clerk.</li>
+        <li><strong>Account information</strong> — your name and email address, managed through our authentication provider, Supabase.</li>
         <li><strong>Financial data from connected accounts</strong> — if you link a bank through Plaid, we receive account balances, transactions, and liabilities (like loans and credit cards) for the accounts you choose to connect.</li>
         <li><strong>Data you enter manually</strong> — budgets, debts, goals, and any other information you add yourself.</li>
         <li><strong>Basic usage and log data</strong> — things like device and browser type, and general activity in the app, used to keep it running reliably.</li>
@@ -75,8 +75,7 @@ const SECTIONS = [
     <>
       <p>We rely on a small set of trusted providers, each of which processes data only to deliver their specific service to us:</p>
       <ul className="mt-2 list-disc space-y-1.5 pl-5">
-        <li><strong>Clerk</strong> — authentication and account management.</li>
-        <li><strong>Supabase</strong> — database storage.</li>
+        <li><strong>Supabase</strong> — database storage, authentication, and account management.</li>
         <li><strong>Vercel</strong> — application hosting.</li>
         <li><strong>Plaid</strong> — bank connectivity and financial data.</li>
       </ul>

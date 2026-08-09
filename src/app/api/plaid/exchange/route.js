@@ -1,4 +1,4 @@
-import { auth } from '@clerk/nextjs/server'
+import { createSupabaseServerClient } from '@/lib/supabase-clients'
 import { plaidClient, plaidConfigured, supabaseAdmin } from '@/lib/plaid-server'
 import { syncDebtsFromPlaid } from '@/lib/plaid-debts'
 
@@ -6,8 +6,10 @@ import { syncDebtsFromPlaid } from '@/lib/plaid-debts'
 // stores the connection. The access token never leaves this route.
 export async function POST(req) {
   try {
-    const { userId } = await auth()
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const supabase = await createSupabaseServerClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const userId = user.id
     if (!plaidConfigured || !supabaseAdmin) return Response.json({ error: 'Plaid is not configured yet' }, { status: 503 })
 
     const { public_token, institution } = await req.json()

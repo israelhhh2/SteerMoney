@@ -1,4 +1,4 @@
-import { auth } from '@clerk/nextjs/server'
+import { createSupabaseServerClient } from '@/lib/supabase-clients'
 import { plaidConfigured, supabaseAdmin, ownerIdsFor } from '@/lib/plaid-server'
 import { syncPlaidItem } from '@/lib/plaid-sync'
 
@@ -13,8 +13,10 @@ import { syncPlaidItem } from '@/lib/plaid-sync'
 // shared with the webhook route's SYNC_UPDATES_AVAILABLE handler.
 export async function POST() {
   try {
-    const { userId } = await auth()
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const supabase = await createSupabaseServerClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const userId = user.id
     if (!plaidConfigured || !supabaseAdmin) return Response.json({ error: 'Plaid is not configured yet' }, { status: 503 })
 
     const ownerIds = await ownerIdsFor(userId)

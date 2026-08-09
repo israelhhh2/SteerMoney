@@ -2,8 +2,8 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { UserButton } from '@clerk/nextjs'
-import { Eye, LayoutDashboard, Wallet, CreditCard, Repeat, Target, Flag, BarChart3, FlaskConical, Receipt, CloudOff, Loader2, ShieldCheck, Link2, Menu, Settings } from 'lucide-react'
+import { useAuthUser, useSignOut } from '@/components/auth-provider'
+import { Eye, LayoutDashboard, Wallet, CreditCard, Repeat, Target, Flag, BarChart3, FlaskConical, Receipt, CloudOff, Loader2, ShieldCheck, Link2, Menu, Settings, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Select } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
@@ -117,6 +117,65 @@ function BottomNav({ isAdmin }) {
         </div>
       ) : null}
     </>
+  )
+}
+
+// Small avatar dropdown — replaces Clerk's <UserButton>, which had no direct
+// Supabase Auth equivalent. Shows the user's photo (imageUrl) or first-name
+// initial in a circle, matching the existing header buttons' sizing; opens a
+// tiny menu with a link into Settings (where profile/account live now) and
+// a "Sign out" action wired to useSignOut(). Closes on outside click or Esc.
+function AvatarMenu() {
+  const { user } = useAuthUser()
+  const signOut = useSignOut()
+  const router = useRouter()
+  const t = useT()
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('click', close)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('click', close); document.removeEventListener('keydown', onKey) }
+  }, [open])
+
+  const initial = (user?.firstName || user?.email || '?').slice(0, 1).toUpperCase()
+
+  const handleSignOut = async () => {
+    await signOut()
+    router.push('/sign-in')
+  }
+
+  return (
+    <div className="relative" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border/60 bg-secondary text-xs font-bold text-foreground/90 transition hover:opacity-90"
+      >
+        {user?.imageUrl ? <img src={user.imageUrl} alt="" className="h-full w-full object-cover" /> : initial}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-10 z-50 w-44 overflow-hidden rounded-xl border border-border/60 bg-card py-1 shadow-2xl">
+          <Link
+            href="/settings"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 px-3 py-2 text-[0.8125rem] font-medium text-foreground/90 transition hover:bg-secondary/60"
+          >
+            <Settings className="h-3.5 w-3.5" />{t('Settings')}
+          </Link>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-[0.8125rem] font-medium text-red-400 transition hover:bg-red-400/10"
+          >
+            <LogOut className="h-3.5 w-3.5" />{t('Sign out')}
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -284,7 +343,7 @@ function Frame({ children, modal }) {
               </Button>
             ) : null}
             {state ? <RemindersBell /> : null}
-            <UserButton afterSignOutUrl="/sign-in" />
+            <AvatarMenu />
           </div>
         </header>
 

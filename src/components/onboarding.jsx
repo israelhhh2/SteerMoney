@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useUser } from '@clerk/nextjs'
+import { useAuthUser } from '@/components/auth-provider'
 import { Bell, CreditCard, Receipt, Repeat, Target } from 'lucide-react'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -81,7 +81,7 @@ const T = {
 // Shows once per account (persisted via settings.sim.onboarded).
 export function Onboarding() {
   const { state, update, viewingAs, space } = useApp()
-  const { user } = useUser()
+  const { user } = useAuthUser()
   const router = useRouter()
   const [step, setStep] = useState(0)
   const [lang, setLang] = useState(user?.unsafeMetadata?.lang === 'es' ? 'es' : 'en')
@@ -105,7 +105,7 @@ export function Onboarding() {
         unsafeMetadata: { ...user.unsafeMetadata, lang, dob: f.dob || null, occupation: f.occupation || null },
       })
     } catch {
-      // name updates can be restricted by Clerk settings; keep the metadata at least
+      // name updates can fail independently of metadata updates; keep the metadata at least
       try { await user.update({ unsafeMetadata: { ...user.unsafeMetadata, lang, dob: f.dob || null, occupation: f.occupation || null } }) } catch {}
     }
     setSaving(false)

@@ -1,4 +1,4 @@
-import { auth, clerkClient } from '@clerk/nextjs/server'
+import { createSupabaseServerClient } from '@/lib/supabase-clients'
 import { supabaseAdmin } from '@/lib/plaid-server'
 
 // Backend for the floating feedback/bug widget (components/feedback-widget.jsx,
@@ -15,25 +15,17 @@ import { supabaseAdmin } from '@/lib/plaid-server'
 // fail.
 export async function POST(req) {
   try {
-    const { userId } = await auth()
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const supabase = await createSupabaseServerClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const userId = user.id
+    const email = user.email || null
 
     const body = await req.json().catch(() => ({}))
     const { type, message, page, userAgent } = body || {}
     const trimmed = typeof message === 'string' ? message.trim().slice(0, 5000) : ''
     if (!trimmed) return Response.json({ error: 'Message is required' }, { status: 400 })
     const feedbackType = type === 'bug' ? 'bug' : 'feedback'
-
-    // Fetch the user's email from Clerk server-side rather than trusting the
-    // client payload — the widget only sends {type, message, page, userAgent}.
-    let email = null
-    try {
-      const client = await clerkClient()
-      const u = await client.users.getUser(userId)
-      email = u?.primaryEmailAddress?.emailAddress || u?.emailAddresses?.[0]?.emailAddress || null
-    } catch (e) {
-      console.error('[feedback] Clerk user lookup failed:', e?.message || e)
-    }
 
     let dbOk = false
     if (supabaseAdmin) {

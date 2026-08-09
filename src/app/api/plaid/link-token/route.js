@@ -1,4 +1,4 @@
-import { auth } from '@clerk/nextjs/server'
+import { createSupabaseServerClient } from '@/lib/supabase-clients'
 import { plaidClient, plaidConfigured, supabaseAdmin, getAppUrl, ownerIdsFor } from '@/lib/plaid-server'
 
 // Creates a Plaid Link token for the signed-in user so the client can open
@@ -9,11 +9,13 @@ import { plaidClient, plaidConfigured, supabaseAdmin, getAppUrl, ownerIdsFor } f
 //  - Update mode / re-auth (roadmap item 5): pass { item_id } in the JSON
 //    body to instead create the link token with that item's access_token,
 //    which puts Plaid Link into update mode for a broken/expired connection.
-//    Ownership is verified against the signed-in Clerk user before use.
+//    Ownership is verified against the signed-in user before use.
 export async function POST(req) {
   try {
-    const { userId } = await auth()
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const supabase = await createSupabaseServerClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const userId = user.id
     if (!plaidConfigured) return Response.json({ error: 'Plaid is not configured yet' }, { status: 503 })
 
     let body = {}
@@ -49,7 +51,7 @@ export async function POST(req) {
         .maybeSingle()
       if (error) throw error
       // Ownership check widened to ownerIdsFor (own id + any shared space
-      // this Clerk user belongs to) — a connection moved into a space via
+      // this user belongs to) — a connection moved into a space via
       // "Move my data into this space" (app/api/plaid/transfer) has
       // plaid_items.user_id set to the space id, not this user's own id.
       const ownerIds = await ownerIdsFor(userId)

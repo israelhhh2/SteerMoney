@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { useUser, useClerk } from '@clerk/nextjs'
+import { useRouter } from 'next/navigation'
+import { useAuthUser, useSignOut } from '@/components/auth-provider'
 import { Eye, Pencil, Plus, Link2, Users, ChevronRight, Loader2, UserMinus, Landmark, RefreshCw, AlertTriangle, Trash2, ArrowRightLeft } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -44,7 +45,7 @@ export default function Settings() {
 }
 
 function ProfileSection() {
-  const { user } = useUser()
+  const { user } = useAuthUser()
   const toast = useToast()
   const t = useT()
   const [lang, setLang] = useState(user?.unsafeMetadata?.lang === 'es' ? 'es' : 'en')
@@ -65,7 +66,7 @@ function ProfileSection() {
       await user.update({ firstName: f.firstName.trim(), lastName: f.lastName.trim(), unsafeMetadata: metadata })
       toast(t('Profile saved'))
     } catch {
-      // name updates can be restricted by Clerk settings; keep the metadata at least
+      // name updates can fail independently of metadata updates; keep the metadata at least
       try {
         await user.update({ unsafeMetadata: metadata })
         toast(t('Profile saved'))
@@ -104,10 +105,22 @@ function ProfileSection() {
   )
 }
 
+// NOTE (Supabase Auth migration): Clerk's "Manage account" opened a
+// Clerk-hosted profile modal (email/password/2FA management) with no
+// Supabase Auth equivalent — Supabase Auth has no hosted account-management
+// UI to link to. That button is dropped; name/language/etc. are already
+// editable in ProfileSection above, on this same page. Email/password
+// changes would need dedicated UI (out of scope for this sweep).
 function AccountSection() {
-  const { user } = useUser()
-  const { signOut, openUserProfile } = useClerk()
+  const { user } = useAuthUser()
+  const signOut = useSignOut()
+  const router = useRouter()
   const t = useT()
+
+  const handleSignOut = async () => {
+    await signOut()
+    router.push('/sign-in')
+  }
 
   return (
     <div className="space-y-2.5">
@@ -115,11 +128,10 @@ function AccountSection() {
       <Card className="space-y-3 p-5">
         <div>
           <div className="text-[0.6875rem] font-bold uppercase tracking-wider text-muted-foreground">{t('Signed in as')}</div>
-          <div className="text-[0.84375rem] font-semibold">{user?.primaryEmailAddress?.emailAddress}</div>
+          <div className="text-[0.84375rem] font-semibold">{user?.email}</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => openUserProfile()}>{t('Manage account')}</Button>
-          <Button variant="destructive" onClick={() => signOut({ redirectUrl: '/sign-in' })}>{t('Sign out')}</Button>
+          <Button variant="destructive" onClick={handleSignOut}>{t('Sign out')}</Button>
         </div>
       </Card>
     </div>
@@ -365,7 +377,7 @@ function RemoveBankDialog({ institution, onConfirm, onClose }) {
 }
 
 function SharedSpacesSection() {
-  const { user } = useUser()
+  const { user } = useAuthUser()
   const { state, space, spaces, createSpace, createInvite, renameSpace, fetchMembers, removeMember, deleteSpace, transferPersonalDataToSpace } = useApp()
   const toast = useToast()
   const centerToast = useCenterToast()

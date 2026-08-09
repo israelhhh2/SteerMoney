@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { useUser } from '@clerk/nextjs'
+import { useAuthUser } from '@/components/auth-provider'
 import { TrendingUp, TrendingDown, CreditCard, CalendarDays, X, Lightbulb, Target } from 'lucide-react'
 import { BarChart, Bar as RBar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
 import { Card } from '@/components/ui/card'
@@ -60,7 +60,7 @@ function cfBounds(range, t) {
 
 export default function Dashboard() {
   const { state, catInfo, viewingAs } = useApp()
-  const { user } = useUser()
+  const { user } = useAuthUser()
   const isMobile = useIsMobile()
   const t = useT()
   const firstName = viewingAs ? viewingAs.name.split(' ')[0] : user?.firstName

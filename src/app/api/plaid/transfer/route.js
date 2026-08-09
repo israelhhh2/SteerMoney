@@ -1,4 +1,4 @@
-import { auth } from '@clerk/nextjs/server'
+import { createSupabaseServerClient } from '@/lib/supabase-clients'
 import { plaidConfigured, supabaseAdmin } from '@/lib/plaid-server'
 
 // "Move my data into this space" (Settings → Shared spaces →
@@ -9,10 +9,10 @@ import { plaidConfigured, supabaseAdmin } from '@/lib/plaid-server'
 // moves itself via store.jsx's normal Supabase calls) a connected bank can
 // only be reassigned from a server route holding the service-role key.
 //
-// Reassigns every plaid_items row currently owned by the signed-in Clerk
-// user to the target space id. Two checks gate it: the caller must
+// Reassigns every plaid_items row currently owned by the signed-in user
+// to the target space id. Two checks gate it: the caller must
 // actually be a member of that workspace (workspace_members), and only
-// rows whose user_id is literally this Clerk user's own id are touched —
+// rows whose user_id is literally this user's own id are touched —
 // never another member's connections, even inside the same target space.
 // After this, app/api/plaid/items (GET/DELETE/PATCH) and app/api/plaid/sync
 // find the row again via ownerIdsFor(userId) (lib/plaid-server.js), and
@@ -21,8 +21,10 @@ import { plaidConfigured, supabaseAdmin } from '@/lib/plaid-server'
 // transferred connection to keep working.
 export async function POST(req) {
   try {
-    const { userId } = await auth()
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const supabase = await createSupabaseServerClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const userId = user.id
     // Nothing to move if Plaid isn't set up at all — not an error, just a no-op.
     if (!plaidConfigured || !supabaseAdmin) return Response.json({ moved: 0 })
 

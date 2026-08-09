@@ -1,7 +1,7 @@
 'use client'
 // Lightweight, dependency-free app-wide i18n.
 //
-// No next-intl, no route restructuring — just a Clerk-metadata language flag
+// No next-intl, no route restructuring — just a user-metadata language flag
 // (unsafeMetadata.lang, set by the toggle in Settings > Profile) and a single
 // flat dictionary keyed by the English string itself. Untranslated/missing
 // keys silently render the English text back, so this can never blow up into
@@ -13,7 +13,7 @@
 //   <h2>{t('Welcome')}, {firstName}</h2>
 //   <p>{t('Synced {n} transactions', { n: data.added })}</p>
 import { useEffect } from 'react'
-import { useUser } from '@clerk/nextjs'
+import { useAuthUser } from '@/components/auth-provider'
 import { useApp } from '@/store'
 import { setCurrentLang } from '@/lib/utils'
 
@@ -22,7 +22,7 @@ import { setCurrentLang } from '@/lib/utils'
 // an admin looking at someone else's numbers shouldn't have the UI flip to
 // Spanish based on the admin's own profile setting.
 export function useLang() {
-  const { user } = useUser()
+  const { user } = useAuthUser()
   const app = useApp() // null outside <AppProvider> (e.g. marketing pages) — guarded below
   const viewingAs = app?.viewingAs
   const lang = !viewingAs && user?.unsafeMetadata?.lang === 'es' ? 'es' : 'en'

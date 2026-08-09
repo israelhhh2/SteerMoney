@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { useUser } from '@clerk/nextjs'
+import { useAuthUser } from '@/components/auth-provider'
 import { MessageCircle, X, Loader2, Mail } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -21,9 +21,9 @@ export function FeedbackWidget() {
   const t = useT()
   const TYPES = [['feedback', t('Feedback')], ['bug', t('Bug')]]
   const pathname = usePathname()
-  const { user } = useUser()
+  const { user } = useAuthUser()
   const centerToast = useCenterToast()
-  const email = user?.primaryEmailAddress?.emailAddress || null
+  const email = user?.email || null
 
   const [open, setOpen] = useState(false)
   const [type, setType] = useState('feedback')

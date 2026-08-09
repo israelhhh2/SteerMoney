@@ -1,12 +1,12 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useSession, useUser } from '@clerk/nextjs'
+import { useAuthUser } from '@/components/auth-provider'
 import { ChevronRight, CreditCard, Eye, Loader2, MessageCircle, Receipt, ShieldCheck, TrendingUp, Users } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Kpi } from '@/components/shared'
-import { createClerkSupabaseClient } from '@/lib/supabase'
+import { createAuthedSupabaseClient } from '@/lib/supabase'
 import { useIsAdmin } from '@/lib/useIsAdmin'
 import { useApp } from '@/store'
 import { fmt, fmt0, prettyDate } from '@/lib/utils'
@@ -20,8 +20,7 @@ function avgIncome(tx) {
 }
 
 export default function Admin() {
-  const { session } = useSession()
-  const { user } = useUser()
+  const { user } = useAuthUser()
   const router = useRouter()
   const isAdmin = useIsAdmin()
   const { setViewAs } = useApp()
@@ -37,11 +36,11 @@ export default function Admin() {
   }
 
   useEffect(() => {
-    if (!session || !isAdmin) return
+    if (!user || !isAdmin) return
     let on = true
     ;(async () => {
       try {
-        const sb = createClerkSupabaseClient(session)
+        const sb = createAuthedSupabaseClient()
         const [de, bu, re, tx, dir, ws] = await Promise.all([
           sb.from('debts').select('user_id,name,balance,min_payment,credit_limit'),
           sb.from('budgets').select('user_id,name,monthly_limit'),
@@ -56,7 +55,7 @@ export default function Admin() {
       } catch (e) { if (on) setErr(String(e?.message || e)) }
     })()
     return () => { on = false }
-  }, [session?.id, isAdmin])
+  }, [user?.id, isAdmin])
 
   // Read-only feedback/bug inbox — separate fetch since it's server-gated
   // (public.feedback has RLS with no policies at all, so only the

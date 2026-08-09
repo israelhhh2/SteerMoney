@@ -1,7 +1,7 @@
 'use client'
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { useSession, useUser } from '@clerk/nextjs'
-import { createClerkSupabaseClient } from '@/lib/supabase'
+import { useAuthUser } from '@/components/auth-provider'
+import { createAuthedSupabaseClient } from '@/lib/supabase'
 import { uid } from './lib/utils'
 
 // ---------------- row <-> state mapping ----------------
@@ -204,9 +204,8 @@ const Ctx = createContext(null)
 const VIEW_AS_KEY = 'fin-view-as'
 
 export function AppProvider({ children }) {
-  const { session } = useSession()
-  const { user } = useUser()
-  const supabase = useMemo(() => (session ? createClerkSupabaseClient(session) : null), [session?.id])
+  const { user } = useAuthUser()
+  const supabase = useMemo(() => (user ? createAuthedSupabaseClient() : null), [user?.id])
 
   // Admin "view as customer" mode — loads someone else's rows, read-only.
   // The stored value is bound to the admin who started it (`by`) — if a
@@ -246,7 +245,7 @@ export function AppProvider({ children }) {
         // backfill name/email on this user's own membership rows, fire and forget
         // (covers rows created before this feature existed, and keeps them fresh)
         const fullName = user.fullName || [user.firstName, user.lastName].filter(Boolean).join(' ') || null
-        const email = user.primaryEmailAddress?.emailAddress || null
+        const email = user.email || null
         supabase.from('workspace_members').update({ name: fullName, email }).eq('user_id', user.id)
       })
     return () => { on = false }
@@ -427,7 +426,7 @@ export function AppProvider({ children }) {
     const { error } = await supabase.from('workspaces').insert({ id, name, owner_id: user.id })
     if (error) return { error: error.message }
     const fullName = user.fullName || [user.firstName, user.lastName].filter(Boolean).join(' ') || null
-    const email = user.primaryEmailAddress?.emailAddress || null
+    const email = user.email || null
     const { error: e2 } = await supabase.from('workspace_members').insert({ workspace_id: id, user_id: user.id, name: fullName, email })
     if (e2) return { error: e2.message }
     const info = { id, name }
@@ -469,7 +468,7 @@ export function AppProvider({ children }) {
 
   const joinSpace = async (token) => {
     const fullName = user.fullName || [user.firstName, user.lastName].filter(Boolean).join(' ') || null
-    const email = user.primaryEmailAddress?.emailAddress || null
+    const email = user.email || null
     let { data, error } = await supabase.rpc('join_workspace', { invite_token: token, p_name: fullName, p_email: email })
     // members.sql not applied yet: only the old 1-arg function exists, so retry without the profile args
     if (error && /function|parameter|schema cache/i.test(error.message)) {

@@ -3,9 +3,9 @@ import { plaidClient, plaidConfigured, supabaseAdmin } from '@/lib/plaid-server'
 import { syncPlaidItem, setItemStatus } from '@/lib/plaid-sync'
 
 // Plaid calls this route server-to-server (not through a browser session), so
-// it must be reachable without Clerk auth — it's added to the public matcher
-// in middleware.js. Instead of a session, Plaid signs each request with a JWT
-// in the `plaid-verification` header; see verifyWebhook below.
+// it must be reachable without an authenticated session — it's added to the
+// public matcher in middleware.js. Instead of a session, Plaid signs each
+// request with a JWT in the `plaid-verification` header; see verifyWebhook below.
 //
 // Register this route's URL (`${APP_URL}/api/plaid/webhook`) is passed
 // automatically via `webhook` in linkTokenCreate (see app/api/plaid/link-token)
