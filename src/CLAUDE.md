@@ -119,6 +119,80 @@ before flipping the switch.
 
 ## Session log (newest first)
 
+### 2026-08-08 (24)
+- **FormSubmit moved server→browser (fix for live 403) + admin feedback
+  viewer** (Sonnet worker). (23) wired FormSubmit into
+  `app/api/feedback/route.js` server-side; live Vercel logs showed every
+  attempt failing `403: null` — FormSubmit blocks non-browser/data-center
+  requests by design, it's meant to be POSTed to directly from a page.
+  - **`components/feedback-widget.jsx`**: `send()` now fires two requests in
+    parallel via `Promise.allSettled` — the existing `POST /api/feedback`
+    (DB row, unchanged contract) and a new direct
+    `fetch('https://formsubmit.co/ajax/info@wagewatchcompliance.com', ...)`
+    from the browser itself, using the signed-in Clerk email (`useUser()`,
+    already imported) for `from`/`_replyto`. Subject line format (Israel's
+    explicit ask, so it's recognizable in an inbox):
+    `` `SteerMoney — new ${type}${email ? ` from ${email}` : ''}` `` — e.g.
+    "SteerMoney — new bug from israel@jmheandc.com" or "SteerMoney — new
+    feedback". Body: `_template: 'table'`, `_captcha: 'false'`, `type`,
+    `from`, `page`, `message`, `_replyto` only when the "email me back"
+    checkbox (`wantsReply`) is checked and an email exists. Success = either
+    channel fulfilling; a FormSubmit failure is `console.error`'d but
+    doesn't surface an error toast if the DB row saved (and vice versa) —
+    only shown to the user if *both* reject.
+  - **`app/api/feedback/route.js`**: dropped the entire FormSubmit block —
+    the route is DB-only now (`supabaseAdmin.from('feedback').insert(...)`,
+    same Clerk-email-lookup-not-client-payload pattern as before). Response
+    simplified to `{ok, dbOk}` on success, `{error, ok:false, dbOk:false}`
+    (500) if the insert failed — the widget's `dbPromise` branch throws on
+    `!res.ok`, which `Promise.allSettled` catches as `dbResult.status ===
+    'rejected'` without blocking the parallel email attempt.
+  - **New `app/api/feedback/list/route.js`** (`GET`) — admin-only read of
+    `public.feedback`, newest first, capped 200. Access check is a literal
+    copy of `app/api/admin/users/route.js`'s pattern: verifies the caller's
+    own Clerk session token against a REST call to
+    `.../rest/v1/admins?user_id=eq.<userId>` (RLS on `admins` is the single
+    source of truth, not a hardcoded id check) before doing anything, 403 if
+    no row. Row read itself goes through `supabaseAdmin` (service role) —
+    `feedback` has RLS enabled with **no** policies at all (same as
+    `plaid_items`), so even an admin's own Supabase client token can't read
+    it directly; only this server-side route, gated by the `admins`-table
+    check above, can.
+  - **`views/Admin.jsx`**: new read-only "Feedback & bug reports" `Card`
+    (own `useEffect`/`fetch('/api/feedback/list')`, independent of the
+    existing `sb.from(...)` Promise.all — that client-side Supabase call
+    could never read `feedback` anyway, per the RLS-no-policies note above),
+    placed between the existing Customers card and the closing
+    admin-access-note paragraph. Each row: date + time, a Feedback/Bug
+    `Badge` (`variant="success"`/`"destructive"`, `components/ui/badge.jsx`
+    already supports both), the message (`whitespace-pre-wrap break-words`,
+    no truncation — per "wrap long text, simple and readable"), and a
+    muted `email · page` line underneath. No actions — explicitly a
+    read-only inbox, not a management UI.
+  - **Files changed**: `components/feedback-widget.jsx` (parallel
+    DB+FormSubmit send), `app/api/feedback/route.js` (FormSubmit block
+    removed, DB-only), `app/api/feedback/list/route.js` (new),
+    `views/Admin.jsx` (Feedback & bug reports card).
+  - **Left off / not verified**: no dev server, no npm installs (standing
+    instruction) — all four changed/new files parse clean via `npx esbuild
+    <file> --bundle=false --outfile=/tmp/out.js`. Not exercised against the
+    live FormSubmit endpoint or a real signed-in admin session. Next session
+    with real access should: (a) submit one real piece of feedback from the
+    browser and confirm the FormSubmit request now succeeds (200, not 403)
+    and an email actually lands at info@wagewatchcompliance.com with the
+    subject starting "SteerMoney — new …"; (b) confirm the FormSubmit
+    activation-link caveat from (23) still applies if this is the first-ever
+    submission since the browser-side switch (FormSubmit's per-endpoint
+    activation is tied to the target email, not the caller, so it should
+    already be activated if (23) ever got one real submission through — but
+    worth confirming, since all of (23)'s server-side attempts 403'd before
+    ever reaching FormSubmit, meaning the activation email may never have
+    been sent at all); (c) confirm a DB-only success (e.g. block formsubmit
+    via an ad-blocker) still shows the success toast, not an error; (d) load
+    `/admin` as an actual admin and confirm the new Feedback card lists
+    real rows, newest first, and a non-admin still gets 403 from
+    `/api/feedback/list` if hit directly.
+
 ### 2026-08-08 (23)
 - **Feedback email switched from Resend to FormSubmit** (Fable), per Israel's
   request — Resend needed an API key + account he didn't want to set up.

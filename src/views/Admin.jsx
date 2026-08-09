@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useSession, useUser } from '@clerk/nextjs'
-import { ChevronRight, CreditCard, Eye, Loader2, Receipt, ShieldCheck, TrendingUp, Users } from 'lucide-react'
+import { ChevronRight, CreditCard, Eye, Loader2, MessageCircle, Receipt, ShieldCheck, TrendingUp, Users } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Kpi } from '@/components/shared'
@@ -28,6 +28,8 @@ export default function Admin() {
   const [data, setData] = useState(null)
   const [err, setErr] = useState(null)
   const [open, setOpen] = useState(null)
+  const [feedback, setFeedback] = useState(null)
+  const [feedbackErr, setFeedbackErr] = useState(null)
 
   const viewAsCustomer = (c) => {
     setViewAs({ id: c.id, name: c.info?.name || c.info?.email || c.id.slice(0, 12) })
@@ -55,6 +57,24 @@ export default function Admin() {
     })()
     return () => { on = false }
   }, [session?.id, isAdmin])
+
+  // Read-only feedback/bug inbox — separate fetch since it's server-gated
+  // (public.feedback has RLS with no policies at all, so only the
+  // service-role-backed /api/feedback/list route can read it, not the
+  // client Supabase call above).
+  useEffect(() => {
+    if (!isAdmin) return
+    let on = true
+    ;(async () => {
+      try {
+        const res = await fetch('/api/feedback/list')
+        const d = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(d?.error || 'Failed to load feedback')
+        if (on) setFeedback(d.feedback || [])
+      } catch (e) { if (on) setFeedbackErr(String(e?.message || e)) }
+    })()
+    return () => { on = false }
+  }, [isAdmin])
 
   const customers = useMemo(() => {
     if (!data) return []
@@ -191,6 +211,44 @@ export default function Admin() {
           ))}
         </div>
       </Card>
+
+      <Card className="overflow-hidden">
+        <div className="flex items-center gap-1.5 border-b bg-secondary/40 px-4 py-2.5 text-[0.65625rem] font-semibold uppercase tracking-wider text-muted-foreground">
+          <MessageCircle className="h-3 w-3" /> Feedback &amp; bug reports · newest first
+        </div>
+        {feedbackErr ? (
+          <p className="p-4 text-[0.75rem] text-red-400">Couldn't load feedback: {feedbackErr}</p>
+        ) : !feedback ? (
+          <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading feedback…
+          </div>
+        ) : feedback.length === 0 ? (
+          <p className="p-4 text-[0.75rem] text-muted-foreground">Nothing submitted yet.</p>
+        ) : (
+          <div className="divide-y divide-border/60">
+            {feedback.map((f) => (
+              <div key={f.id} className="flex flex-wrap items-start gap-x-3 gap-y-1 px-4 py-3 text-[0.8125rem]">
+                <span className="w-20 shrink-0 text-[0.6875rem] text-muted-foreground">
+                  {new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  <span className="block text-[0.625rem] text-muted-foreground/70">
+                    {new Date(f.created_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                  </span>
+                </span>
+                <Badge variant={f.type === 'bug' ? 'destructive' : 'success'}>
+                  {f.type === 'bug' ? 'Bug' : 'Feedback'}
+                </Badge>
+                <span className="min-w-0 flex-1 basis-full sm:basis-0">
+                  <span className="whitespace-pre-wrap break-words text-foreground/90">{f.message}</span>
+                  <span className="mt-0.5 block truncate text-[0.6875rem] text-muted-foreground">
+                    {f.email || 'no email'}{f.page ? ` · ${f.page}` : ''}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
       <p className="text-[0.6875rem] text-muted-foreground/70">
         Read-only view across all accounts. Admin access is controlled by the <code>admins</code> table in Supabase. Add a row to grant, delete to revoke.
       </p>

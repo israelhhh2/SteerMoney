@@ -2,31 +2,30 @@ import { auth, clerkClient } from '@clerk/nextjs/server'
 import { supabaseAdmin } from '@/lib/plaid-server'
 
 // Backend for the floating feedback/bug widget (components/feedback-widget.jsx,
-// mounted in app/(app)/layout.jsx). Two independent, best-effort channels so a
-// user's note is never silently lost:
-//   1. Insert into public.feedback via the service-role client (RLS enabled,
-//      no policies — same pattern as plaid_items, see CLAUDE.md). Defensive:
-//      if the table isn't migrated yet, log loudly and fall through to the
-//      email channel instead of failing the request.
-//   2. Email info@wagewatchcompliance.com via FormSubmit (formsubmit.co) —
-//      free relay, no API key/account. First-ever submission requires a
-//      one-time activation click in a confirmation email sent to the inbox.
-// The user only needs to know "did my note get through", not which pipe
-// carried it — this only returns an error if BOTH channels failed.
+// mounted in app/(app)/layout.jsx). DB-only: inserts into public.feedback via
+// the service-role client (RLS enabled, no policies — same pattern as
+// plaid_items, see CLAUDE.md). Defensive: if the table isn't migrated yet,
+// logs loudly and reports dbOk:false rather than throwing.
+//
+// The email channel (FormSubmit, formsubmit.co) moved to the BROWSER
+// (components/feedback-widget.jsx) — FormSubmit blocks server-side/data-center
+// requests (403), it's designed to be POSTed to directly from a page. This
+// route no longer touches FormSubmit at all; the widget fires both this route
+// and the FormSubmit request independently and only shows an error if both
+// fail.
 export async function POST(req) {
   try {
     const { userId } = await auth()
     if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 })
 
     const body = await req.json().catch(() => ({}))
-    const { type, message, page, userAgent, wantsReply } = body || {}
+    const { type, message, page, userAgent } = body || {}
     const trimmed = typeof message === 'string' ? message.trim().slice(0, 5000) : ''
     if (!trimmed) return Response.json({ error: 'Message is required' }, { status: 400 })
     const feedbackType = type === 'bug' ? 'bug' : 'feedback'
 
     // Fetch the user's email from Clerk server-side rather than trusting the
-    // client payload — the widget only sends {type, message, page, userAgent,
-    // wantsReply}, no email field.
+    // client payload — the widget only sends {type, message, page, userAgent}.
     let email = null
     try {
       const client = await clerkClient()
@@ -53,49 +52,14 @@ export async function POST(req) {
         console.error('[feedback] DB insert failed — has the `feedback` table migration from CLAUDE.md been run? ', e?.message || e)
       }
     } else {
-      console.error('[feedback] supabaseAdmin not configured (missing SUPABASE_SERVICE_ROLE_KEY) — skipping DB insert, relying on email only')
+      console.error('[feedback] supabaseAdmin not configured (missing SUPABASE_SERVICE_ROLE_KEY) — skipping DB insert')
     }
 
-    // Email via FormSubmit (formsubmit.co) — free form-to-email relay, no API
-    // key or account needed. One-time setup: the FIRST submission triggers a
-    // confirmation email to info@wagewatchcompliance.com with an activation
-    // link that must be clicked once; every submission after that is
-    // delivered normally. Using the AJAX endpoint so we get a JSON response
-    // instead of a redirect.
-    let emailOk = false
-    const emailSkipped = false
-    try {
-      const res = await fetch('https://formsubmit.co/ajax/info@wagewatchcompliance.com', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          _subject: `[SteerMoney ${feedbackType}] from ${email || 'unknown user'}`,
-          _template: 'table',
-          _captcha: 'false',
-          type: feedbackType,
-          from: `${email || 'unknown'} (user_id: ${userId})`,
-          wants_reply: wantsReply === false ? 'no' : 'yes',
-          page: page || 'unknown',
-          user_agent: userAgent || 'unknown',
-          message: trimmed,
-          ...(email && wantsReply !== false ? { _replyto: email } : {}),
-        }),
-      })
-      const out = await res.json().catch(() => null)
-      if (!res.ok || !out || out.success === 'false' || out.success === false) {
-        throw new Error(`FormSubmit responded ${res.status}: ${JSON.stringify(out).slice(0, 300)}`)
-      }
-      emailOk = true
-    } catch (e) {
-      console.error('[feedback] FormSubmit email send failed:', e?.message || e)
+    if (!dbOk) {
+      return Response.json({ error: "Couldn't save your feedback — please try again in a moment", ok: false, dbOk: false }, { status: 500 })
     }
 
-    // Only fail the user if neither channel captured their note at all.
-    if (!dbOk && !emailOk) {
-      return Response.json({ error: "Couldn't save your feedback — please try again in a moment" }, { status: 500 })
-    }
-
-    return Response.json({ ok: true, dbOk, emailOk, emailSkipped })
+    return Response.json({ ok: true, dbOk })
   } catch (e) {
     return Response.json({ error: e?.message || 'Failed to send feedback' }, { status: 500 })
   }

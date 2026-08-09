@@ -49,28 +49,64 @@ export function FeedbackWidget() {
     if (!trimmed || sending) return
     setSending(true)
     setError('')
-    try {
-      const res = await fetch('/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type,
-          message: trimmed,
-          page: pathname,
-          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-          wantsReply,
-        }),
-      })
+
+    // Two independent, best-effort channels — fired in parallel, from the
+    // browser. FormSubmit specifically must run client-side: it 403s
+    // server-to-server/data-center requests (verified in Vercel logs when
+    // this lived in app/api/feedback/route.js), it's designed to be POSTed
+    // to directly from a page. The DB row (via /api/feedback) is the
+    // durable record; FormSubmit is just the email notification. Success =
+    // either one landing — only show an error if both fail.
+    const dbPromise = fetch('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type,
+        message: trimmed,
+        page: pathname,
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      }),
+    }).then(async (res) => {
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data?.error || "Couldn't send that — try again")
+      return data
+    })
+
+    const emailPromise = fetch('https://formsubmit.co/ajax/info@wagewatchcompliance.com', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        _subject: `SteerMoney — new ${type}${email ? ` from ${email}` : ''}`,
+        _template: 'table',
+        _captcha: 'false',
+        type,
+        from: email || 'unknown',
+        page: pathname,
+        message: trimmed,
+        ...(email && wantsReply ? { _replyto: email } : {}),
+      }),
+    }).then(async (res) => {
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data || data.success === 'false' || data.success === false) {
+        throw new Error(`FormSubmit responded ${res.status}: ${JSON.stringify(data).slice(0, 300)}`)
+      }
+      return data
+    })
+
+    const [dbResult, emailResult] = await Promise.allSettled([dbPromise, emailPromise])
+    const dbOk = dbResult.status === 'fulfilled'
+    const emailOk = emailResult.status === 'fulfilled'
+    if (!emailOk) console.error('[feedback] FormSubmit send failed:', emailResult.reason)
+    if (!dbOk) console.error('[feedback] DB save failed:', dbResult.reason)
+
+    if (dbOk || emailOk) {
       setMessage('')
       setOpen(false)
       centerToast('Thanks — we read every one!')
-    } catch (e) {
-      setError(e?.message || "Couldn't send that — try again")
-    } finally {
-      setSending(false)
+    } else {
+      setError(dbResult.reason?.message || "Couldn't send that — try again")
     }
+    setSending(false)
   }
 
   return (
