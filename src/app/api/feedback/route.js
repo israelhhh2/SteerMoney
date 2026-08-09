@@ -8,9 +8,9 @@ import { supabaseAdmin } from '@/lib/plaid-server'
 //      no policies — same pattern as plaid_items, see CLAUDE.md). Defensive:
 //      if the table isn't migrated yet, log loudly and fall through to the
 //      email channel instead of failing the request.
-//   2. Email info@wagewatchcompliance.com via Resend's plain REST API — no
-//      SDK, just global fetch, per CLAUDE.md's no-npm-install-required note.
-//      Skipped gracefully (logged loudly) if RESEND_API_KEY isn't set.
+//   2. Email info@wagewatchcompliance.com via FormSubmit (formsubmit.co) —
+//      free relay, no API key/account. First-ever submission requires a
+//      one-time activation click in a confirmation email sent to the inbox.
 // The user only needs to know "did my note get through", not which pipe
 // carried it — this only returns an error if BOTH channels failed.
 export async function POST(req) {
@@ -56,48 +56,38 @@ export async function POST(req) {
       console.error('[feedback] supabaseAdmin not configured (missing SUPABASE_SERVICE_ROLE_KEY) — skipping DB insert, relying on email only')
     }
 
+    // Email via FormSubmit (formsubmit.co) — free form-to-email relay, no API
+    // key or account needed. One-time setup: the FIRST submission triggers a
+    // confirmation email to info@wagewatchcompliance.com with an activation
+    // link that must be clicked once; every submission after that is
+    // delivered normally. Using the AJAX endpoint so we get a JSON response
+    // instead of a redirect.
     let emailOk = false
-    let emailSkipped = false
-    if (process.env.RESEND_API_KEY) {
-      try {
-        const subject = `[SteerMoney ${feedbackType}] from ${email || 'unknown user'}`
-        const text = [
-          `Type: ${feedbackType}`,
-          `From: ${email || 'unknown'} (user_id: ${userId})`,
-          `Wants a reply: ${wantsReply === false ? 'no' : 'yes'}`,
-          `Page: ${page || 'unknown'}`,
-          `User agent: ${userAgent || 'unknown'}`,
-          '',
-          trimmed,
-        ].join('\n')
-
-        const payload = {
-          from: 'SteerMoney Feedback <onboarding@resend.dev>',
-          to: ['info@wagewatchcompliance.com'],
-          subject,
-          text,
-        }
-        if (email && wantsReply !== false) payload.reply_to = email
-
-        const res = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        })
-        if (!res.ok) {
-          const errBody = await res.text().catch(() => '')
-          throw new Error(`Resend responded ${res.status}: ${errBody}`)
-        }
-        emailOk = true
-      } catch (e) {
-        console.error('[feedback] Resend email send failed:', e?.message || e)
+    const emailSkipped = false
+    try {
+      const res = await fetch('https://formsubmit.co/ajax/info@wagewatchcompliance.com', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          _subject: `[SteerMoney ${feedbackType}] from ${email || 'unknown user'}`,
+          _template: 'table',
+          _captcha: 'false',
+          type: feedbackType,
+          from: `${email || 'unknown'} (user_id: ${userId})`,
+          wants_reply: wantsReply === false ? 'no' : 'yes',
+          page: page || 'unknown',
+          user_agent: userAgent || 'unknown',
+          message: trimmed,
+          ...(email && wantsReply !== false ? { _replyto: email } : {}),
+        }),
+      })
+      const out = await res.json().catch(() => null)
+      if (!res.ok || !out || out.success === 'false' || out.success === false) {
+        throw new Error(`FormSubmit responded ${res.status}: ${JSON.stringify(out).slice(0, 300)}`)
       }
-    } else {
-      emailSkipped = true
-      console.error('[feedback] RESEND_API_KEY not set — skipping email entirely. Add it in Vercel to enable feedback emails to info@wagewatchcompliance.com (see CLAUDE.md).')
+      emailOk = true
+    } catch (e) {
+      console.error('[feedback] FormSubmit email send failed:', e?.message || e)
     }
 
     // Only fail the user if neither channel captured their note at all.

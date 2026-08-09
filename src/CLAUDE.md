@@ -119,6 +119,19 @@ before flipping the switch.
 
 ## Session log (newest first)
 
+### 2026-08-08 (23)
+- **Feedback email switched from Resend to FormSubmit** (Fable), per Israel's
+  request — Resend needed an API key + account he didn't want to set up.
+  `app/api/feedback/route.js`'s email channel now POSTs to
+  `https://formsubmit.co/ajax/info@wagewatchcompliance.com` (JSON, `_subject`,
+  `_template: 'table'`, `_captcha: 'false'`, `_replyto` when the user wants a
+  reply). No API key, no env var — `RESEND_API_KEY` is no longer read
+  anywhere. **One-time activation**: the FIRST submission makes FormSubmit
+  send a confirmation email to info@wagewatchcompliance.com with an
+  activation link that must be clicked once; until then submissions aren't
+  delivered (DB channel still captures them). Verified the route parses via
+  esbuild; not exercised against the live FormSubmit endpoint this session.
+
 ### 2026-08-08 (22)
 - **"Add a chart where it shows the income in a year on Charts, and clicking
   'avg monthly income'/'avg monthly spending' on Dashboard should take me to
