@@ -321,7 +321,7 @@ function Frame({ children, modal }) {
               {!viewingAs ? spaceSelect('!h-8 max-w-[7.5rem] rounded-full border-none bg-secondary/60 px-2.5 text-xs font-bold') : <span />}
             </div>
             <div className="flex items-center justify-end gap-2">
-              {syncError ? <CloudOff className="h-4 w-4 text-red-400" title={syncError} /> : null}
+              {syncError ? <button type="button" onClick={() => window.alert(syncError)} title={syncError}><CloudOff className="h-4 w-4 text-red-400" /></button> : null}
               {state ? <RemindersBell /> : null}
             </div>
           </div>
@@ -332,9 +332,9 @@ function Frame({ children, modal }) {
           <div className="mx-auto flex w-full max-w-6xl items-center gap-3">
             <h1 className="mr-auto text-[0.9375rem] font-extrabold tracking-tight">{t(TITLES[pathname] || 'Finances')}</h1>
             {syncError ? (
-              <span className="flex items-center gap-1.5 rounded-md border border-red-400/25 bg-red-400/10 px-2 py-1 text-[0.6875rem] font-medium text-red-400" title={syncError}>
+              <button type="button" onClick={() => window.alert(syncError)} className="flex cursor-pointer items-center gap-1.5 rounded-md border border-red-400/25 bg-red-400/10 px-2 py-1 text-[0.6875rem] font-medium text-red-400 transition hover:bg-red-400/20" title={syncError}>
                 <CloudOff className="h-3.5 w-3.5" /> {t('Sync failed')}
-              </span>
+              </button>
             ) : null}
             {!viewingAs && spaceSelect('!h-8 max-w-32 text-xs sm:max-w-44')}
             {space && !viewingAs ? (
