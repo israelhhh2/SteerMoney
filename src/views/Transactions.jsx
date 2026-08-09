@@ -11,8 +11,10 @@ import { CatIcon, CatChip, ConfirmDialog, TransactionsSkeleton } from '@/compone
 import { useApp, monthTx } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
 import { fmt, fmt0, today, ymLabel, prettyDate, uid } from '@/lib/utils'
+import { cleanDisplayName } from '@/lib/tx-display'
 import { parseWescomCSV, guessCat } from '@/lib/wescom'
 import { usePlaidItems } from '@/lib/accounts'
+import { useIsMobile } from '@/lib/useMediaQuery'
 
 export default function Transactions({ accountFilter, setAccountFilter, catFilter, setCatFilter }) {
   const { state, update, catInfo } = useApp()
@@ -31,7 +33,13 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
   const [importRows, setImportRows] = useState(null) // null closed · [] -> preview dialog
   const [confirmDelId, setConfirmDelId] = useState(null) // transaction id pending delete confirmation
   const [deleting, setDeleting] = useState(false)
+  const [sheetTxId, setSheetTxId] = useState(null) // mobile row tap -> detail bottom sheet, holds a transaction id
   const { plaidItems } = usePlaidItems()
+  // Matches Tailwind's `sm` breakpoint — below it, rows are single-line/tappable
+  // and open the detail sheet; at sm+ the row tap does nothing (desktop keeps
+  // its existing hover pencil/X icons instead), so this gate keeps that click
+  // handler from firing on desktop.
+  const isMobile = useIsMobile()
 
   // One flat lookup, keyed by Plaid account_id, shared by the account
   // dropdown's options and each row's small "which account" label — both
@@ -118,6 +126,13 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
   const byDate = {}
   list.forEach((t) => { (byDate[t.date] = byDate[t.date] || []).push(t) })
   const dates = Object.keys(byDate).sort().reverse()
+  // Mobile rows drop the per-row institution subline entirely when every
+  // visible transaction is on the same account (the common case — it's pure
+  // repeated noise then) and fall back to a compact "••mask" line only when
+  // the currently-filtered list actually spans more than one account.
+  const visibleAccountIds = new Set(list.map((t) => t.accountId).filter(Boolean))
+  const multiAccount = visibleAccountIds.size > 1
+  const sheetTx = sheetTxId ? state.transactions.find((t) => t.id === sheetTxId) : null
 
   return (
     <div className="fade-in space-y-5">
@@ -178,25 +193,39 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
             {byDate[dt].map((t) => {
               const acct = t.accountId ? accountsById[t.accountId] : null
               const acctLabel = acct ? `${acct.institution || 'Bank'}${acct.mask ? ` ••${acct.mask}` : acct.name ? ` — ${acct.name}` : ''}` : null
+              const displayName = cleanDisplayName(t.desc)
               return (
-              <div key={t.id} className="group flex items-center gap-2 px-4 py-2 transition-colors hover:bg-secondary/30 sm:gap-3">
+              <div
+                key={t.id}
+                className="group flex min-h-[2.75rem] items-center gap-2 px-4 py-1.5 transition-colors hover:bg-secondary/30 sm:min-h-0 sm:gap-3 sm:py-2"
+                onClick={() => { if (isMobile) setSheetTxId(t.id) }}
+              >
                 <span className="flex w-5 shrink-0 justify-center sm:w-6"><CatIcon cat={t.cat} /></span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[0.8125rem] text-foreground/90" title={t.desc}>{t.desc}</span>
+                  {/* Mobile: single-line cleaned-up name, plus a compact
+                      "••mask" line only when this filtered view spans more
+                      than one account — otherwise the row stays one line.
+                      Desktop (sm:) is untouched: raw desc + full institution
+                      subline, exactly as before. */}
+                  <span className="block truncate text-[0.8125rem] text-foreground/90 sm:hidden" title={t.desc}>{displayName}</span>
+                  <span className="hidden truncate text-[0.8125rem] text-foreground/90 sm:block" title={t.desc}>{t.desc}</span>
+                  {multiAccount && acct?.mask && (
+                    <span className="block truncate text-[0.625rem] text-muted-foreground/80 sm:hidden">••{acct.mask}</span>
+                  )}
                   {acctLabel && (
-                    <span className="flex items-center gap-1 truncate text-[0.625rem] text-muted-foreground" title={acctLabel}>
+                    <span className="hidden items-center gap-1 truncate text-[0.625rem] text-muted-foreground sm:flex" title={acctLabel}>
                       <Landmark className="h-2.5 w-2.5 shrink-0" />
                       <span className="truncate">{acctLabel}</span>
                     </span>
                   )}
                 </span>
                 <span className="hidden sm:inline-flex"><CatChip cat={t.cat} /></span>
-                <span className={`w-16 shrink-0 text-right text-[0.8125rem] font-semibold sm:w-24 ${t.type === 'income' ? 'text-emerald-400' : t.cat === 'transfer' ? 'text-muted-foreground' : ''}`}>
+                <span className={`shrink-0 whitespace-nowrap text-right text-[0.8125rem] font-semibold tabular-nums sm:w-24 ${t.type === 'income' ? 'text-emerald-400' : t.cat === 'transfer' ? 'text-muted-foreground' : ''}`}>
                   {t.type === 'income' ? '+' : '−'}{fmt(t.amount)}
                 </span>
-                <span className="flex w-10 shrink-0 justify-end gap-1 sm:w-12 sm:gap-1.5">
-                  <button className="text-muted-foreground transition hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100" title="Edit" onClick={() => setEditing(t.id)}><Pencil className="h-3 w-3 sm:h-3.5 sm:w-3.5" /></button>
-                  <button className="text-muted-foreground transition hover:text-red-400 sm:opacity-0 sm:group-hover:opacity-100" title="Delete" onClick={() => setConfirmDelId(t.id)}><X className="h-3 w-3 sm:h-3.5 sm:w-3.5" /></button>
+                <span className="hidden shrink-0 justify-end gap-1 sm:flex sm:w-12 sm:gap-1.5">
+                  <button className="text-muted-foreground transition hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100" title="Edit" onClick={(e) => { e.stopPropagation(); setEditing(t.id) }}><Pencil className="h-3 w-3 sm:h-3.5 sm:w-3.5" /></button>
+                  <button className="text-muted-foreground transition hover:text-red-400 sm:opacity-0 sm:group-hover:opacity-100" title="Delete" onClick={(e) => { e.stopPropagation(); setConfirmDelId(t.id) }}><X className="h-3 w-3 sm:h-3.5 sm:w-3.5" /></button>
                 </span>
               </div>
               )
@@ -207,6 +236,12 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
             No transactions in {ymLabel(ym)}{(q || cat !== 'all' || accountFilter) && <> matching your filters — <button className="text-primary hover:underline" onClick={() => { setQ(''); setCat('all'); if (accountFilter) setAccountFilter(null) }}>clear filters</button></>}.
           </div>
         )}
+        {/* Mobile-only clearance so the last row scrolls fully clear of the
+            feedback FAB (fixed bottom-[4.75rem+safe-area], see
+            components/feedback-widget.jsx) instead of just relying on
+            <main>'s page-level pb-32 — that padding gets eaten into by the
+            "Use Import…" helper text below this card. */}
+        {dates.length > 0 && <div className="h-14 sm:hidden" aria-hidden="true" />}
       </Card>
       <p className="text-[0.6875rem] text-muted-foreground/70">Use Import with a Wescom History CSV. Rows are auto-categorized and duplicates you already have are skipped. Debt payments made on the Debt page also land here.</p>
 
@@ -221,7 +256,74 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
           onClose={() => setConfirmDelId(null)}
         />
       )}
+      {sheetTx && (
+        <TxSheet
+          t={sheetTx}
+          acct={sheetTx.accountId ? accountsById[sheetTx.accountId] : null}
+          onClose={() => setSheetTxId(null)}
+          onEdit={() => { setSheetTxId(null); setEditing(sheetTx.id) }}
+          onDelete={() => { setSheetTxId(null); setConfirmDelId(sheetTx.id) }}
+        />
+      )}
     </div>
+  )
+}
+
+// Mobile transaction-detail bottom sheet — opened by tapping a row below sm:
+// (see the row's onClick above). Shows the full untruncated info a row no
+// longer has room for, then hands off to the exact same edit/delete flows
+// the row's desktop pencil/X icons already use (TxDialog via setEditing,
+// ConfirmDialog via setConfirmDelId in the parent) — nothing about those
+// flows is reimplemented here.
+function TxSheet({ t, acct, onClose, onEdit, onDelete }) {
+  const displayName = cleanDisplayName(t.desc)
+  const showRaw = displayName !== t.desc
+  const acctLabel = acct
+    ? `${acct.institution || 'Bank'}${acct.name ? ` — ${acct.name}` : ''}${acct.mask ? ` ••${acct.mask}` : ''}`
+    : null
+  const isIncome = t.type === 'income'
+  const amountTone = isIncome ? 'text-emerald-400' : t.cat === 'transfer' ? 'text-muted-foreground' : 'text-foreground'
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent variant="sheet" className="sm:hidden">
+        <DialogTitle className="sr-only">{displayName} transaction details</DialogTitle>
+        <div className="flex items-start gap-3 pr-6">
+          <span className="mt-0.5 flex w-8 shrink-0 justify-center"><CatIcon cat={t.cat} className="h-5 w-5" /></span>
+          <div className="min-w-0 flex-1">
+            <h3 className="break-words text-base font-bold leading-snug text-foreground">{displayName}</h3>
+            {showRaw && <p className="mt-0.5 break-words text-[0.6875rem] text-muted-foreground">{t.desc}</p>}
+          </div>
+        </div>
+
+        <div className={`text-3xl font-extrabold tabular-nums tracking-tight ${amountTone}`}>
+          {isIncome ? '+' : '−'}{fmt(t.amount)}
+        </div>
+
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2.5 rounded-xl border bg-secondary/30 p-3.5 text-[0.8125rem]">
+          <div>
+            <div className="text-[0.625rem] font-bold uppercase tracking-wider text-muted-foreground">Date</div>
+            <div className="mt-0.5 font-semibold">{prettyDate(t.date)}</div>
+          </div>
+          <div>
+            <div className="text-[0.625rem] font-bold uppercase tracking-wider text-muted-foreground">Category</div>
+            <div className="mt-0.5"><CatChip cat={t.cat} /></div>
+          </div>
+          <div className="col-span-2">
+            <div className="text-[0.625rem] font-bold uppercase tracking-wider text-muted-foreground">Account</div>
+            <div className="mt-0.5 flex items-center gap-1.5 font-semibold">
+              <Landmark className="h-3 w-3 shrink-0 text-muted-foreground" />
+              <span className="truncate">{acctLabel || 'Manual entry'}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 pt-1">
+          <Button variant="outline" onClick={onEdit}><Pencil />Edit</Button>
+          <Button variant="destructive" onClick={onDelete}><X />Delete</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 

@@ -19,17 +19,30 @@ const DialogClose = DialogPrimitive.Close
 // data-state=open/opacity:1 in the DOM, but the modal's backdrop painted
 // over it, so the page looked frozen (clicks still hit the invisible
 // button). See CLAUDE.md session log for the full z-index ladder.
-const DialogContent = forwardRef(({ className, children, ...props }, ref) => (
+// `variant="sheet"` (additive, 2026-08-08) turns this same Content into a
+// mobile bottom sheet — anchored to the bottom edge, full width, rounded top
+// corners, a drag-handle affordance, slides up on open, and pads for
+// env(safe-area-inset-bottom) instead of centering like every other dialog
+// in the app. Every existing caller is untouched (variant defaults to the
+// original centered-modal look). Radix's Dialog.Content already body-scroll
+// locks and handles Escape/backdrop-click/focus-trap for both variants, so
+// none of that is reimplemented here. Used by views/Transactions.jsx's
+// mobile transaction detail sheet.
+const DialogContent = forwardRef(({ className, children, variant = 'center', ...props }, ref) => (
   <DialogPrimitive.Portal>
     <DialogPrimitive.Overlay className="fixed inset-0 z-[65] bg-black/70 backdrop-blur-[2px] data-[state=open]:fade-in" />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-1/2 top-1/2 z-[70] grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border bg-card p-6 shadow-2xl rounded-xl max-h-[85vh] overflow-y-auto fade-in',
+        variant === 'sheet'
+          ? 'fixed inset-x-0 bottom-0 z-[70] grid w-full gap-3 border-t bg-card p-5 pt-2.5 shadow-2xl rounded-t-2xl max-h-[85vh] overflow-y-auto sheet-in'
+          : 'fixed left-1/2 top-1/2 z-[70] grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border bg-card p-6 shadow-2xl rounded-xl max-h-[85vh] overflow-y-auto fade-in',
         className
       )}
+      style={variant === 'sheet' ? { paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' } : undefined}
       {...props}
     >
+      {variant === 'sheet' && <div aria-hidden="true" className="mx-auto -mt-1 mb-0.5 h-1.5 w-10 shrink-0 rounded-full bg-border" />}
       {children}
       <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus:outline-none">
         <X className="h-4 w-4" />

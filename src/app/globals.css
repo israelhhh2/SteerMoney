@@ -50,8 +50,19 @@
 @layer utilities {
   .fade-in { animation: fadeIn 0.25s ease; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+  /* Mobile transaction-detail bottom sheet (ui/dialog.jsx variant="sheet") slide-up-in. */
+  .sheet-in { animation: sheetIn 0.28s cubic-bezier(0.32, 0.72, 0, 1); }
+  @keyframes sheetIn { from { transform: translateY(100%); } to { transform: translateY(0); } }
   .track { @apply h-[0.45rem] rounded-full bg-secondary overflow-hidden; }
   .track > div { @apply h-full rounded-full transition-all; }
   .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
 }
+
+/* Themed thin scrollbars — the default OS scrollbar renders as a chunky
+   white bar over the dark card content (e.g. Dashboard's Budgets list). */
+* { scrollbar-width: thin; scrollbar-color: hsl(240 5% 26%) transparent; }
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: hsl(240 5% 26%); border-radius: 9999px; }
+*::-webkit-scrollbar-thumb:hover { background: hsl(240 5% 34%); }

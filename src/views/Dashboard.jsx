@@ -357,7 +357,7 @@ export default function Dashboard() {
           <div className="mt-4 h-56">
             <ResponsiveContainer>
               <BarChart data={flowData} margin={{ top: 4, right: 4, left: -12, bottom: 0 }}>
-                <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} interval={isMobile ? 'preserveStartEnd' : 0} minTickGap={isMobile ? 24 : 5} />
+                <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={isMobile ? 24 : 32} />
                 <YAxis tick={{ fill: '#52525b', fontSize: 10 }} tickFormatter={(v) => '$' + (v >= 1000 ? v / 1000 + 'k' : v)} axisLine={false} tickLine={false} width={isMobile ? 34 : 44} />
                 <Tooltip {...TIP} cursor={{ fill: '#ffffff08' }} formatter={(v) => fmt0(v)} />
                 <Legend wrapperStyle={{ fontSize: 11 }} formatter={(v) => <span style={{ color: '#a1a1aa' }}>{v}</span>} />
