@@ -79,8 +79,12 @@ export async function syncDebtsFromPlaid({ userId, itemId, institution, accessTo
 
   for (const a of creditAccounts) {
     const liability = creditLiabilities.get(a.account_id)
-    const purchaseApr = liability?.aprs?.find((x) => x.apr_type === 'purchase_apr')
-    const apr = purchaseApr?.apr_percentage != null ? `${purchaseApr.apr_percentage}%` : null
+    // Prefer the purchase APR, but fall back to ANY reported APR entry —
+    // some institutions label theirs differently (balance_transfer_apr,
+    // cash_apr, etc.) and reporting one of those beats reporting nothing.
+    const aprEntry = liability?.aprs?.find((x) => x.apr_type === 'purchase_apr' && x.apr_percentage != null)
+      || liability?.aprs?.find((x) => x.apr_percentage != null)
+    const apr = aprEntry?.apr_percentage != null ? `${aprEntry.apr_percentage}%` : null
     const minPayment = liability?.minimum_payment_amount ?? null
     // "YYYY-MM-DD" -> day-of-month int. Plaid's own credit liability object
     // has no credit-limit field (confirmed against the SDK's CreditCardLiability
