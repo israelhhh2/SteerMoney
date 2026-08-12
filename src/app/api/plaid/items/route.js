@@ -3,10 +3,22 @@ import { plaidClient, plaidConfigured, supabaseAdmin, ownerIdsFor } from '@/lib/
 
 // Lists this user's connected banks. Access tokens are never selected here,
 // let alone returned to the client. Includes `status` (roadmap item 5:
-// 'ok' | 'reauth_required' | 'revoked') so Settings can surface a "Fix
-// connection" action — defensive if the column isn't migrated yet (see
-// CLAUDE.md: `ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS status text
-// DEFAULT 'ok';`), in which case every item is treated as 'ok'.
+// 'ok' | 'reauth_required' | 'revoked') and `last_balance_at` (the
+// balance-only-refresh feature — see lib/plaid-balance.js, CLAUDE.md session
+// log) — both defensive if the column isn't migrated yet, in which case
+// `status` defaults to 'ok' and `last_balance_at` defaults to null (the
+// account modal's "Updated <time>" line then falls back to `last_synced`).
+//
+// Tries progressively narrower column sets on a "column does not exist"
+// error instead of one hardcoded fallback, so this degrades correctly
+// whether last_balance_at, status, both, or neither have been migrated yet —
+// same defensive intent as the single-column check this replaced, just able
+// to shed more than one newer column.
+const COLUMN_TIERS = [
+  'id, item_id, institution, accounts, last_synced, created_at, status, last_balance_at',
+  'id, item_id, institution, accounts, last_synced, created_at, status',
+  'id, item_id, institution, accounts, last_synced, created_at',
+]
 //
 // Filters by ownerIdsFor(userId) (the caller's own id + every shared space
 // they belong to), not a flat `.eq('user_id', userId)` — a connection moved
@@ -22,22 +34,18 @@ export async function GET() {
     if (!plaidConfigured || !supabaseAdmin) return Response.json({ items: [] })
 
     const ownerIds = await ownerIdsFor(userId)
-    let { data, error } = await supabaseAdmin
-      .from('plaid_items')
-      .select('id, item_id, institution, accounts, last_synced, created_at, status')
-      .in('user_id', ownerIds)
-      .order('created_at', { ascending: false })
-
-    if (error && /status/i.test(error.message || '')) {
+    let data, error
+    for (const cols of COLUMN_TIERS) {
       ;({ data, error } = await supabaseAdmin
         .from('plaid_items')
-        .select('id, item_id, institution, accounts, last_synced, created_at')
+        .select(cols)
         .in('user_id', ownerIds)
         .order('created_at', { ascending: false }))
+      if (!error || !/column .* does not exist/i.test(error.message || '')) break
     }
     if (error) throw error
 
-    return Response.json({ items: (data || []).map((it) => ({ ...it, status: it.status || 'ok' })) })
+    return Response.json({ items: (data || []).map((it) => ({ ...it, status: it.status || 'ok', last_balance_at: it.last_balance_at || null })) })
   } catch (e) {
     return Response.json({ error: e?.message || 'Failed to load connections' }, { status: 500 })
   }

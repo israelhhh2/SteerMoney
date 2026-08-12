@@ -4,7 +4,7 @@
 // detail view (views/AccountDetail.jsx, full page + Notion-style modal) all
 // build the exact same merged list (manual debts/accounts + connected Plaid
 // accounts) and agree on one stable, URL-safe id per account.
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { today, isoDate, prettyDate, uid } from '@/lib/utils'
 import { matchesBankAccount } from '@/lib/finance'
 
@@ -197,6 +197,13 @@ export function buildAccountInventory(state, plaidItems) {
       // that's matched to a freshly-connected Plaid account too, not just
       // unmatchedPlaid rows.
       item_id: item?.item_id || null, status: item?.status || null,
+      // Balance-only-refresh feature (see lib/plaid-balance.js): threaded
+      // through here for the same reason status/item_id are — a manual debt
+      // matched to a Plaid credit card should show an accurate "Updated
+      // <relTime>" line even though its own manual Refresh *button* is
+      // deliberately gated on `source === 'plaid'` only (see
+      // views/AccountDetail.jsx) and never shown here.
+      last_balance_at: item?.last_balance_at || null,
       source: 'debt', debtId: d.id, history: null,
     }
   })
@@ -220,6 +227,11 @@ export function buildAccountInventory(state, plaidItems) {
       // 'syncing' while the item's historical backfill is still in flight
       // (see lib/plaid-sync.js) — drives the "please wait" placeholders.
       status: it.status || null,
+      // When Plaid's Balance product (lib/plaid-balance.js) last force-
+      // refreshed this item — drives AccountDetail's "Updated <relTime>"
+      // line (preferred over last_synced, which only reflects the
+      // Transactions-product sync) and its Refresh-button availability.
+      last_balance_at: it.last_balance_at || null,
       source: 'plaid', history: null,
     })))
 
@@ -319,6 +331,19 @@ export function usePlaidItems() {
   const [plaidItems, setPlaidItems] = useState([])
   const [plaidChecked, setPlaidChecked] = useState(false)
 
+  // Exposed as `refetchPlaidItems` below — additive, existing callers that
+  // only destructure {plaidItems, plaidChecked} are unaffected. Needed by
+  // the balance-only-refresh feature (views/AccountDetail.jsx's "Refresh"
+  // button): after POSTing /api/plaid/balance, the modal wants the just-
+  // updated balance without a full page reload, unlike every other
+  // connect/disconnect flow in this app which reloads instead.
+  const fetchItems = useCallback(() => {
+    return fetch('/api/plaid/items')
+      .then((r) => r.json())
+      .then((d) => { setPlaidItems(d.items || []); setPlaidChecked(true); return d.items || [] })
+      .catch(() => { setPlaidChecked(true); return [] })
+  }, [])
+
   useEffect(() => {
     let on = true
     fetch('/api/plaid/items')
@@ -354,7 +379,7 @@ export function usePlaidItems() {
     // (since each tick calls setPlaidItems), defeating the MAX_ATTEMPTS cap.
   }, [hasSyncingItem])
 
-  return { plaidItems, plaidChecked }
+  return { plaidItems, plaidChecked, refetchPlaidItems: fetchItems }
 }
 
 // ---- account tags ("Mine"/"Julia's"/etc. — shared-space account labels) ----

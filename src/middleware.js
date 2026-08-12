@@ -12,6 +12,10 @@ import { NextResponse } from 'next/server'
 // /auth/callback (new in this migration) must also be public: it's the
 // OAuth redirect target (see app/auth/callback/route.js) and runs before a
 // session cookie exists yet.
+//
+// /api/cron/balances is Vercel's own cron invoker calling in (no browser
+// session either) — verified inside the route itself via CRON_SECRET, same
+// "public route, self-verifying" shape as the Plaid webhook above.
 const PUBLIC_PATTERNS = [
   /^\/home$/,
   /^\/privacy$/,
@@ -19,6 +23,7 @@ const PUBLIC_PATTERNS = [
   /^\/sign-up(\/.*)?$/,
   /^\/auth\/callback$/,
   /^\/api\/plaid\/webhook$/,
+  /^\/api\/cron\/balances$/,
 ]
 
 function isPublicRoute(pathname) {

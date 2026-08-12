@@ -1,8 +1,8 @@
 'use client'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Loader2, Trash2, Link2Off } from 'lucide-react'
+import { Loader2, Trash2, Link2Off, RotateCw } from 'lucide-react'
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Segmented } from '@/components/ui/segmented'
 import { Money, CardChip, CatIcon, CatChip, SourceBadge, ConfirmDialog, TransactionsSkeleton, ChartSkeleton, AccountTagsEditor, CardColorPicker } from '@/components/shared'
@@ -67,10 +67,15 @@ function ChangePill({ pct }) {
 export default function AccountDetail({ id }) {
   const t = useT()
   const { state, update } = useApp()
-  const { plaidItems, plaidChecked } = usePlaidItems()
+  const { plaidItems, plaidChecked, refetchPlaidItems } = usePlaidItems()
   const [range, setRange] = useState('1M')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // Balance-only-refresh feature (see lib/plaid-balance.js, CLAUDE.md
+  // session log) — "N left today" counter + in-flight state for the
+  // Refresh button rendered further down, Plaid-backed accounts only.
+  const [refreshingBalance, setRefreshingBalance] = useState(false)
+  const [refreshInfo, setRefreshInfo] = useState(null)
   const router = useRouter()
   const centerToast = useCenterToast()
 
@@ -78,6 +83,21 @@ export default function AccountDetail({ id }) {
     () => (state ? findAccountByUrlId(id, state, plaidItems) : null),
     [id, state, plaidItems]
   )
+
+  // Lazy "N left today" lookup — a plain GET, never touches Plaid or spends
+  // the daily quota. Declared before the early returns below (rules of
+  // hooks); the account?-guards make it a no-op until a real Plaid-backed
+  // account (source === 'plaid', matching the Refresh button's own gate) has
+  // resolved.
+  useEffect(() => {
+    if (!account || account.source !== 'plaid' || !account.item_id) return
+    let on = true
+    fetch('/api/plaid/balance')
+      .then((r) => r.json())
+      .then((d) => { if (on && !d.error) setRefreshInfo({ remaining: d.remaining, limit: d.limit, resetsAt: d.resetsAt }) })
+      .catch(() => {})
+    return () => { on = false }
+  }, [account?.key, account?.source, account?.item_id])
 
   if (!state || !plaidChecked) {
     return <div className="py-16 text-center text-[0.8125rem] text-muted-foreground">{t('Loading account…')}</div>
@@ -194,6 +214,38 @@ export default function AccountDetail({ id }) {
     }
   }
 
+  // Balance-only-refresh "Refresh" button — Plaid-backed accounts only
+  // (source === 'plaid'; never manual/debt rows, per the feature's own
+  // scope). Hits the rate-limited app/api/plaid/balance route (never
+  // transactionsSync/accountsGet — see lib/plaid-balance.js), then
+  // refetches /api/plaid/items so the new balance shows up in place, no
+  // page reload, matching this modal's existing no-reload feel.
+  const handleRefreshBalance = async () => {
+    if (!account.item_id || refreshingBalance) return
+    setRefreshingBalance(true)
+    try {
+      const res = await fetch('/api/plaid/balance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: account.item_id }),
+      })
+      const data = await res.json()
+      if (res.status === 429) {
+        setRefreshInfo({ remaining: data.remaining ?? 0, limit: data.limit, resetsAt: data.resetsAt })
+        centerToast(data.error || t("You've used today's balance refreshes — they reset at midnight."), 'error')
+        return
+      }
+      if (!res.ok) throw new Error(data.error || t('Refresh failed'))
+      setRefreshInfo({ remaining: data.remaining, limit: data.limit, resetsAt: data.resetsAt })
+      await refetchPlaidItems()
+      centerToast(t('Balance updated'))
+    } catch (e) {
+      centerToast(e?.message || t('Refresh failed'), 'error')
+    } finally {
+      setRefreshingBalance(false)
+    }
+  }
+
   const accountTx = account.account_id
     ? state.transactions.filter((t) => t.accountId === account.account_id).slice().sort((a, b) => b.date.localeCompare(a.date))
     : []
@@ -209,18 +261,29 @@ export default function AccountDetail({ id }) {
 
       <h1 className="max-w-full truncate text-center text-lg font-extrabold tracking-tight">{account.name}</h1>
 
-      <div className="grid w-full max-w-sm grid-cols-3 gap-1.5 text-center sm:gap-2">
+      {/* Current balance is the hero number (balance-only-refresh feature —
+          see lib/plaid-balance.js, CLAUDE.md session log): this is the
+          figure kept fresh twice daily + on demand, so it reads as the
+          headline rather than one of three equal-weight stats like before.
+          The other two stats (Limit/Utilized for credit, Available/Change
+          for depository — "Current" dropped since the hero above already
+          IS the current balance) are still shown, just visually
+          subordinate underneath. */}
+      <div className="flex flex-col items-center gap-0.5">
+        <StatLabel>{t('Balance')}</StatLabel>
+        <Money value={fmt0(account.balance)} className="text-3xl font-extrabold tracking-tight sm:text-4xl" />
+      </div>
+
+      <div className="grid w-full max-w-sm grid-cols-2 gap-1.5 text-center sm:gap-2">
         {isCredit ? (
           <>
-            <div><StatLabel>{t('Balance')}</StatLabel><Money value={fmt0(account.balance)} className="text-lg font-extrabold sm:text-xl" /></div>
-            <div><StatLabel>{t('Limit')}</StatLabel>{account.limit ? <Money value={fmt0(account.limit)} className="text-lg font-extrabold sm:text-xl" /> : <div className="text-lg font-extrabold text-muted-foreground sm:text-xl">–</div>}</div>
-            <div><StatLabel>{t('Utilized')}</StatLabel><div className="text-lg font-extrabold sm:text-xl">{util != null ? util + '%' : '–'}</div></div>
+            <div><StatLabel>{t('Limit')}</StatLabel>{account.limit ? <Money value={fmt0(account.limit)} className="text-base font-bold sm:text-lg" /> : <div className="text-base font-bold text-muted-foreground sm:text-lg">–</div>}</div>
+            <div><StatLabel>{t('Utilized')}</StatLabel><div className="text-base font-bold sm:text-lg">{util != null ? util + '%' : '–'}</div></div>
           </>
         ) : (
           <>
-            <div><StatLabel>{t('Available')}</StatLabel><Money value={fmt0(account.available ?? account.balance)} className="text-lg font-extrabold sm:text-xl" /></div>
-            <div><StatLabel>{t('Current')}</StatLabel><Money value={fmt0(account.balance)} className="text-lg font-extrabold sm:text-xl" /></div>
-            <div><StatLabel>{t('Change')}</StatLabel>{changePct == null ? <div className="text-lg font-extrabold text-muted-foreground sm:text-xl">–</div> : <ChangePill pct={changePct} />}</div>
+            <div><StatLabel>{t('Available')}</StatLabel><Money value={fmt0(account.available ?? account.balance)} className="text-base font-bold sm:text-lg" /></div>
+            <div><StatLabel>{t('Change')}</StatLabel>{changePct == null ? <div className="text-base font-bold text-muted-foreground sm:text-lg">–</div> : <ChangePill pct={changePct} />}</div>
           </>
         )}
       </div>
@@ -251,8 +314,35 @@ export default function AccountDetail({ id }) {
       <div className="flex flex-col items-center gap-1.5">
         <SourceBadge accountId={account.account_id} institution={account.institution} />
         <p className="text-center text-[0.71875rem] text-muted-foreground">
-          {account.last_synced ? t('Latest update received {time}', { time: relTime(account.last_synced) }) : t('Manual account')}
+          {account.last_balance_at || account.last_synced
+            ? t('Updated {time}', { time: relTime(account.last_balance_at || account.last_synced) })
+            : t('Manual account')}
         </p>
+        {/* Manual balance refresh — Plaid-backed accounts only (never
+            manual/debt rows, per the feature's scope), and only once the
+            "please wait, transactions are loading" placeholder has cleared
+            (a syncing item's balance is about to be superseded anyway by
+            its own full accountsGet-based refresh). Rate-limited server-side
+            (app/api/plaid/balance) to 5/day per signed-in human — this
+            button just reflects that limit, it never enforces it itself. */}
+        {isPlaid && !isSyncing && account.item_id && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRefreshBalance}
+              disabled={refreshingBalance || refreshInfo?.remaining === 0}
+              className="flex items-center gap-1.5 rounded-full border border-border bg-secondary/60 px-3 py-1 text-[0.6875rem] font-bold text-foreground/80 transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RotateCw className={`h-3 w-3 ${refreshingBalance ? 'animate-spin' : ''}`} />
+              {t('Refresh')}
+            </button>
+            {refreshInfo && (
+              <span className="text-[0.65rem] text-muted-foreground">
+                {refreshInfo.remaining > 0 ? t('{n} left today', { n: refreshInfo.remaining }) : t('0 left today')}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Card summary: APR/minimum payment/due day/credit-limit/balance/

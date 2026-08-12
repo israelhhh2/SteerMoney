@@ -106,6 +106,12 @@ Ordered; check off as done.
       pgsodium/pgcrypto or app-level AES with a KMS/env key).
 - [ ] **7. Background sync** — cron (Vercel cron or Supabase scheduled
       function) as fallback to webhooks; store per-item sync status/errors.
+      **Partially addressed 2026-08-11 (28)**: a twice-daily Vercel cron
+      (`app/api/cron/balances`) now refreshes every connected account's
+      balance via Plaid's cheap Balance product — but this only covers
+      *balances*, not a transactions-sync fallback to webhooks (still
+      genuinely open). Needs `vercel.json` + `CRON_SECRET` set — see that
+      session's log entry.
 - [ ] **8. Verify DB migration applied** — `supabase/plaid.sql` (repo root,
       outside src/) actually run against prod DB; RLS on `plaid_items` confirmed.
 - [ ] **9. Hardening** — rate limiting on plaid routes, error states in UI
@@ -119,6 +125,239 @@ Costs note: production Plaid is pay-per-item/product — check current pricing
 before flipping the switch.
 
 ## Session log (newest first)
+
+### 2026-08-11 (28)
+- **Cheap, rate-limited balance refresh — cost control** (Sonnet worker), per
+  Israel's brief: Plaid's **Transactions** product is billed per-item/month
+  (expensive); Plaid's **Balance** product is billed per-call (cheap). Goal:
+  the account modal shows a real, prominently-featured current balance that
+  refreshes automatically twice a day (server cron, no user action) and can
+  also be manually refreshed, but capped to a small number of times per day
+  so Plaid call volume stays predictable — without ever touching
+  `transactionsSync`/`accountsGet` (the expensive path) to do it. Read
+  `lib/plaid-server.js`, `lib/plaid-sync.js`, `app/api/plaid/sync/route.js`,
+  `app/api/plaid/items/route.js`, `app/api/plaid/webhook/route.js`,
+  `middleware.js`, `views/AccountDetail.jsx`, `lib/accounts.js` before
+  changing anything. Note: this codebase's auth is **Supabase Auth**
+  (`lib/supabase-clients.js`'s `createSupabaseServerClient()` /
+  `supabase.auth.getUser()`), not Clerk, despite this file's "Auth: Clerk"
+  line at the top — every route this session touches follows the actual
+  Supabase-auth pattern already used by every other `app/api/plaid/*` route,
+  not the stale doc line.
+  - **`lib/plaid-balance.js`** (new) — `refreshItemBalances(item)`: the
+    *only* place in the app that calls **`accountsBalanceGet`**
+    (`/accounts/balance/get`, Plaid's force-fresh, no-cache balance
+    endpoint) rather than `accountsGet` (which `lib/plaid-sync.js`'s
+    transactions-sync path already uses and can return a cached balance —
+    deliberately left alone, not reused here). Merges only
+    `balances.current/available/limit` into the existing per-account
+    objects already stored in `plaid_items.accounts` (JSONB) — every other
+    field (name, mask, type, subtype, account_id, official_name) survives
+    untouched; an account Plaid reports that wasn't already stored gets
+    appended best-effort. Stamps a new `plaid_items.last_balance_at`
+    (timestamptz) — defensive, same retry-without-the-column pattern as
+    `status`/`account_id` elsewhere in this codebase: on a missing-column
+    error, retries the update without it and logs a warning, so the actual
+    balance data still lands even before the migration below runs.
+  - **`app/api/cron/balances/route.js`** (new, `GET`) — the twice-daily
+    automatic refresh. System job: loops **every** `plaid_items` row for
+    **every** user via `supabaseAdmin` (no signed-in session exists on a
+    cron request), isolated per item (one broken connection can't abort the
+    run for everyone else's). Auth: if `CRON_SECRET` env var is set, the
+    incoming `Authorization: Bearer <value>` header must match exactly — no
+    exceptions, since this route is necessarily public (added to
+    `middleware.js`'s `PUBLIC_PATTERNS`, same shape as the Plaid webhook) and
+    would otherwise let anyone trigger unlimited Plaid Balance calls, which
+    defeats this feature's entire point. If `CRON_SECRET` is **not** set,
+    logs loudly and falls back to checking for Vercel's own
+    `vercel-cron/1.0` user-agent string — better than wide open, but
+    explicitly **not** real access control; documented as a real gap until
+    the env var is set.
+  - **Vercel Hobby-plan constraint — twice daily needs TWO cron entries, not
+    one.** Vercel's Hobby plan allows only 2 cron jobs total, each triggered
+    at most once per day (no sub-daily schedules). "Twice daily" is
+    therefore two separate `vercel.json` entries pointing at the *same*
+    path with different hours, not one cron expression. **Could not write
+    `vercel.json` this session** — the repo root lives outside this
+    project's mounted `src/` folder (confirmed by trying: `Read`/`Glob`
+    against the parent directory errored as outside the connected folder).
+    **Israel must add this file at the repo root himself** (create it if it
+    doesn't exist, merge if it does — no existing `vercel.json` was found by
+    a prior session's directory listing, but that listing is now stale):
+    ```json
+    {
+      "crons": [
+        { "path": "/api/cron/balances", "schedule": "0 12 * * *" },
+        { "path": "/api/cron/balances", "schedule": "0 0 * * *" }
+      ]
+    }
+    ```
+    This uses **both** of the Hobby plan's 2 available cron slots for this
+    one feature — there's no room left for a second, unrelated cron job on
+    Hobby without upgrading.
+  - **`app/api/plaid/balance/route.js`** (new) — the manual "Refresh"
+    button's route. `POST { item_id? }` (Clerk/Supabase-authed): refreshes
+    one item if `item_id` is given, else every item this user owns
+    (resolved via `ownerIdsFor` so an item already moved into a shared space
+    is still refreshable from the account that moved it — see 2026-08-08
+    (17)). **Rate limit: `MAX_MANUAL_REFRESHES_PER_DAY = 5`, keyed on the
+    caller's own auth user id** (not the broadened `ownerIdsFor` list —
+    deliberately: the limit is about the human clicking the button, not
+    whatever space they happen to be viewing, so it can't be reset by
+    switching spaces). One click = one unit of quota, regardless of how many
+    items/accounts that click touched. Tracked in a new table
+    `balance_refreshes(user_id, day, count)`, service-role only (no RLS
+    policies — same shape as `plaid_items`/`feedback`).
+    - **Response shape**: `{ok, refreshed, remaining, limit, resetsAt}` on
+      success. **At the limit: HTTP 429** with `{error: "You've used
+      today's 5 balance refreshes — they reset at midnight.", remaining: 0,
+      resetsAt}` — Plaid is **never** called once the counter says the cap
+      is hit; the check happens strictly before any per-item loop.
+    - **Fail-open/fail-closed decision, made deliberately, not by
+      default**: if `balance_refreshes` is missing/unreadable (migration
+      not run yet), this **fails OPEN on the daily counter** — logs loudly,
+      doesn't block the feature over an unrun migration — but is never
+      allowed to become "unlimited Plaid calls" because of a second,
+      unconditional guard: **`ITEM_COOLDOWN_MS = 60_000`** — any item whose
+      `last_balance_at` is under 60 seconds old is skipped (treated as
+      already-fresh, no Plaid call) regardless of the counter table's
+      health. This 60s guard is always active, not just a fallback — it
+      also cheapens an accidental double-click racing two requests through
+      before the first one's counter write lands.
+    - **`GET`** (same route) — a lazy, side-effect-free counter read for the
+      UI ("N left today") that never spends a Plaid call or the daily quota
+      itself; `{remaining, limit, resetsAt}`, plus `unknown: true` if the
+      table couldn't be read.
+    - The daily-counter increment is a plain read-then-`upsert`
+      (`onConflict: 'user_id,day'`), not an atomic RPC — accepted as a minor
+      race (worst case: a couple of extra Balance calls in the same second,
+      still capped by `ITEM_COOLDOWN_MS`) rather than adding a Postgres
+      function this feature doesn't otherwise need.
+  - **`app/api/plaid/items/route.js`'s `GET`**: now also selects
+    `last_balance_at`, defensively — replaced the old single-column
+    (`status`) fallback with a small `COLUMN_TIERS` loop that tries
+    progressively narrower `select()` lists on any "column does not exist"
+    error, so this degrades correctly whether `last_balance_at`, `status`,
+    both, or neither have been migrated yet (previously only handled
+    exactly one missing column). Response now always includes
+    `last_balance_at` (`null` if absent), alongside the existing
+    `status` (defaults `'ok'`).
+  - **`lib/accounts.js`**: `buildAccountInventory`'s `fromDebts()` and
+    `unmatchedPlaid` mappings both now thread `last_balance_at` onto every
+    row, mirroring how `status`/`item_id` already are — so a manual debt
+    fuzzy-matched to a Plaid credit card gets an accurate "Updated
+    &lt;relTime&gt;" line too, even though its Refresh **button** stays
+    gated to `source === 'plaid'` only (see below — a real, documented
+    limitation, not an oversight). `usePlaidItems()` gained
+    `refetchPlaidItems` (a stable `useCallback`-wrapped re-fetch of
+    `/api/plaid/items`) in its return object — purely additive, every
+    existing caller destructuring only `{plaidItems, plaidChecked}` is
+    unaffected — needed so the Refresh button can update the modal in place
+    without a page reload, unlike this app's usual connect/disconnect
+    "just reload the page" convention.
+  - **`views/AccountDetail.jsx`** (full page + `@modal` overlay, same
+    component, both surfaces get this for free):
+    - **Current balance is now the hero number** — previously one of three
+      equal-weight stat columns (Balance/Limit/Utilized, or
+      Available/Current/Change). Pulled out into its own centered block at
+      `text-3xl`/`sm:text-4xl` (up from `text-lg`/`text-xl`), with the
+      remaining stats demoted to a 2-column (not 3) subordinate row below
+      it at a smaller size: **Limit/Utilized** for credit accounts,
+      **Available/Change** for depository (the old third column, "Current",
+      was simply the same number as the new hero — dropped as redundant,
+      not moved anywhere).
+    - **"Updated &lt;relTime&gt;" line** (was "Latest update received
+      &lt;relTime&gt;") now prefers `last_balance_at` over `last_synced` —
+      `account.last_balance_at || account.last_synced`, so a Balance-only
+      refresh (cron or manual) correctly updates this line even between
+      full transaction syncs.
+    - **New Refresh control**, directly under that line, gated on `isPlaid
+      && !isSyncing && account.item_id` (never manual/debt rows, per the
+      brief; never shown while the "please wait, transactions are loading"
+      placeholder is up, since a syncing item's full `accountsGet`-based
+      refresh is about to supersede it anyway). `RotateCw` icon
+      (spins while `refreshingBalance`), disabled while in-flight or once
+      `refreshInfo.remaining === 0`. A small "N left today" note next to it,
+      populated from a lazy `GET /api/plaid/balance` on mount (declared
+      before this component's early returns, guarded on
+      `account?.source === 'plaid'`, per the rules-of-hooks constraint this
+      file already had to work around elsewhere) and refreshed again from
+      whatever the POST response says. On success: `refetchPlaidItems()`
+      (no page reload) + `centerToast('Balance updated')`. On 429:
+      `centerToast(<the friendly limit message>, 'error')` and the button
+      disables itself immediately (remaining set to 0 from the response).
+    - **Known, deliberate limitation**: a manual debt fuzzy-matched to a
+      Plaid credit card (`source === 'debt'`, not `'plaid'`, even though it
+      has a real `item_id`/`last_balance_at`) shows the updated "Updated
+      &lt;relTime&gt;" line correctly but gets **no** Refresh button — per
+      the brief's literal "never manual/debt rows." A future session could
+      loosen this (the item_id is right there) if that turns out to be a
+      papercut in practice; not done here since the brief was explicit.
+  - **Migrations required — nothing above persists/enforces anything against
+    Supabase until these run** (both degrade defensively per the patterns
+    above: balances still land locally in-memory during a request either
+    way, only the "Updated" line's accuracy and the daily-cap enforcement
+    are what's at stake):
+    ```sql
+    -- 1. Lets refreshItemBalances()/the "Updated <relTime>" line work.
+    ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS last_balance_at timestamptz;
+
+    -- 2. Backs the manual-refresh daily rate limit.
+    create table if not exists public.balance_refreshes (
+      user_id text not null,
+      day date not null,
+      count integer not null default 0,
+      primary key (user_id, day)
+    );
+    alter table public.balance_refreshes enable row level security;
+    -- No policies, deliberately — service-role only (app/api/plaid/balance,
+    -- via supabaseAdmin), same reasoning as plaid_items/feedback: there is
+    -- no client-side read/write path and none is planned.
+    ```
+  - **Env vars Israel must add (Vercel)**: `CRON_SECRET` — any long random
+    string; must match what's configured in `vercel.json`'s crons config
+    implicitly via Vercel's own signing (Vercel auto-sends `Authorization:
+    Bearer $CRON_SECRET` for cron-triggered requests once this env var
+    exists — no separate wiring needed beyond setting the var and having
+    the route check it, which `app/api/cron/balances` already does).
+  - **`vercel.json` Israel must add/merge at the repo root** — see above;
+    repeated here for visibility since it's the one piece of this feature
+    that had to be documented instead of written directly (outside this
+    session's mounted `src/` root).
+  - **Roadmap**: item 7 ("Background sync") noted as partially addressed —
+    see that bullet above.
+  - **Files changed**: `lib/plaid-balance.js` (new),
+    `app/api/cron/balances/route.js` (new), `app/api/plaid/balance/route.js`
+    (new), `app/api/plaid/items/route.js` (GET: `COLUMN_TIERS` +
+    `last_balance_at`), `middleware.js` (`/api/cron/balances` added to
+    `PUBLIC_PATTERNS`), `lib/accounts.js` (`last_balance_at` threaded
+    through `buildAccountInventory`, `usePlaidItems()`'s new
+    `refetchPlaidItems`), `views/AccountDetail.jsx` (hero balance, Updated
+    line, Refresh control, `handleRefreshBalance`).
+  - **Left off / not verified**: no npm installs, no dev server, nothing
+    clicked in a real browser (standing instruction) — all seven
+    changed/new files were checked with `npx esbuild <file> --bundle=false
+    --loader:.js=jsx --outfile=<tmp>` and parse cleanly; nothing here ran
+    against a real Plaid sandbox/production item, a real cron invocation, or
+    a real Supabase project. Next session with real access should: (a) run
+    both migrations above; (b) add `vercel.json` (repo root) and
+    `CRON_SECRET` (Vercel env), then confirm a real cron-triggered `GET
+    /api/cron/balances` returns 200 with `refreshed > 0` and actually bumps
+    `last_balance_at`/`accounts[].balance` on a real connected item, and
+    that hitting the same URL manually without the right `Authorization`
+    header gets 401; (c) open a real Plaid-linked account's detail
+    view/modal and confirm the balance renders as the new hero number, the
+    Refresh button works, "N left today" counts down correctly across 5
+    clicks, and the 6th click gets the friendly 429 toast and a disabled
+    button without ever reaching Plaid (check server logs — no
+    `accountsBalanceGet` call should fire); (d) confirm a debt-matched
+    Plaid credit card's "Updated" line reflects `last_balance_at` but
+    (correctly, per the documented limitation) shows no Refresh button;
+    (e) confirm the 60-second `ITEM_COOLDOWN_MS` guard actually prevents a
+    rapid double-click from double-calling Plaid; (f) sanity-check that
+    `balance_refreshes` being absent (pre-migration) doesn't throw anywhere
+    — it should log a warning and still let refreshes through, capped only
+    by the 60s per-item guard.
 
 ### 2026-08-08 (27)
 - **Mobile category tags on Transactions + much better recurring detection**
