@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { usePlaidLink } from 'react-plaid-link'
 import { Landmark, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/toast'
 import { exchangeAndSync, PLAID_LINK_TOKEN_KEY } from '@/lib/plaid-client'
 import { useApp } from '@/store'
@@ -45,6 +46,66 @@ export function PlaidLinkRunner({ token, receivedRedirectUri, onSuccess, onExit 
   return null
 }
 
+// Shown right after a successful link when the exchange route (see
+// app/api/plaid/exchange/route.js) flags the just-added item as a FULL
+// duplicate of one already connected — same institution+mask+type match as
+// lib/accounts.js's findDuplicateItems() (which covers duplicates that
+// predate this check, surfaced from Accounts.jsx's banner instead). Reused
+// as-is from both call sites (this component and app/(app)/plaid-oauth/
+// page.jsx, and Accounts.jsx's cleanup banner) so the copy and behavior
+// never drift between them.
+//
+// Removal always targets `itemId` — the caller is responsible for that
+// always being the newer/just-added connection, never the original the user
+// already relies on — and reuses the exact same DELETE /api/plaid/items
+// call Settings' "Remove" button uses, including its cleanup of any
+// Debt Tracker rows tied to that item (see that route). The "transactions
+// stay" reassurance mirrors Settings' own RemoveBankDialog copy verbatim
+// (views/Settings.jsx) since disconnecting behaves identically either way.
+export function DuplicateBankDialog({ institution, itemId, onRemoved, onClose }) {
+  const t = useT()
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+
+  const remove = async () => {
+    setBusy(true)
+    try {
+      const res = await fetch('/api/plaid/items', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: itemId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Couldn't remove that connection")
+      toast(t('Duplicate connection removed'))
+      await onRemoved()
+    } catch (e) {
+      toast(e.message, 'error')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>{t('Remove the duplicate connection?')}</DialogTitle></DialogHeader>
+        <p className="text-xs text-muted-foreground">
+          {t('It looks like {institution} is already connected — these accounts are the same. Remove the duplicate connection?', { institution: institution || t('this bank') })}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {t('SteerMoney stops pulling new transactions from this bank. Transactions already imported stay in your account.')}
+        </p>
+        <DialogFooter>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>{t('Keep both')}</Button>
+          <Button variant="destructive" disabled={busy} onClick={remove}>
+            {busy ? <Loader2 className="animate-spin" /> : null}{t('Remove duplicate')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // Reusable "Connect a bank" button: fetches a Plaid Link token, mounts a
 // <PlaidLinkRunner> only while that token exists, exchanges the resulting
 // public token, and kicks off a sync. Safe to render as many times as a
@@ -56,18 +117,30 @@ export function ConnectBankButton({ onDone, variant = 'default', size, children 
   const toast = useToast()
   const [linkToken, setLinkToken] = useState(null)
   const [connecting, setConnecting] = useState(false)
+  // Pending duplicate-connection confirm (see DuplicateBankDialog above) —
+  // holds the just-linked item off from finishing (onDone/reload) until the
+  // user picks "Remove duplicate" or "Keep both".
+  const [duplicate, setDuplicate] = useState(null)
 
   const stop = () => {
     setLinkToken(null)
     try { sessionStorage.removeItem(PLAID_LINK_TOKEN_KEY) } catch { /* sessionStorage unavailable, harmless */ }
   }
 
+  const finish = () => {
+    if (onDone) onDone()
+    else setTimeout(() => window.location.reload(), 1200)
+  }
+
   const handleSuccess = async (public_token, metadata) => {
     stop()
     try {
-      await exchangeAndSync(public_token, metadata?.institution?.name, toast)
-      if (onDone) onDone()
-      else setTimeout(() => window.location.reload(), 1200)
+      const data = await exchangeAndSync(public_token, metadata?.institution?.name, toast)
+      if (data?.duplicate) {
+        setDuplicate({ item_id: data.item_id, institution: data.duplicateOf?.institution || metadata?.institution?.name })
+        return // finish() runs once the dialog below resolves, either way
+      }
+      finish()
     } catch (e) {
       toast(e.message, 'error')
     }
@@ -103,6 +176,14 @@ export function ConnectBankButton({ onDone, variant = 'default', size, children 
         {children || t('Connect a bank')}
       </Button>
       {linkToken && <PlaidLinkRunner token={linkToken} onSuccess={handleSuccess} onExit={handleExit} />}
+      {duplicate && (
+        <DuplicateBankDialog
+          institution={duplicate.institution}
+          itemId={duplicate.item_id}
+          onRemoved={() => { setDuplicate(null); finish() }}
+          onClose={() => { setDuplicate(null); finish() }}
+        />
+      )}
     </>
   )
 }

@@ -12,6 +12,12 @@
 // doesn't survive).
 export const PLAID_LINK_TOKEN_KEY = 'plaid_link_token'
 
+// Returns the exchange route's own response body (institution, item_id, and
+// — when the just-linked item turns out to be a full duplicate of an
+// already-connected item, see app/api/plaid/exchange/route.js — `duplicate:
+// true` + `duplicateOf: { institution, item_id }`) so callers can offer
+// removing it. The bank is already linked and synced by the time this
+// returns either way; a duplicate is never treated as a failure here.
 export async function exchangeAndSync(public_token, institution, toast) {
   const res = await fetch('/api/plaid/exchange', {
     method: 'POST',
@@ -30,4 +36,6 @@ export async function exchangeAndSync(public_token, institution, toast) {
   } catch (e) {
     toast(e.message, 'error')
   }
+
+  return data
 }

@@ -101,7 +101,7 @@ export async function DELETE(req) {
     const ownerIds = await ownerIdsFor(userId)
     const { data: row, error: findErr } = await supabaseAdmin
       .from('plaid_items')
-      .select('id, access_token')
+      .select('id, user_id, access_token')
       .in('user_id', ownerIds)
       .eq('item_id', item_id)
       .maybeSingle()
@@ -112,6 +112,47 @@ export async function DELETE(req) {
 
     const { error: delErr } = await supabaseAdmin.from('plaid_items').delete().eq('id', row.id)
     if (delErr) throw delErr
+
+    // Debt Tracker rows tied to this connection (lib/plaid-debts.js's
+    // syncDebtsFromPlaid stamps every debt it touches with plaid_item_id —
+    // this Plaid item_id, not plaid_items.id). Disconnecting a bank never
+    // deletes transactions already imported (see Settings.jsx's own
+    // RemoveBankDialog copy — mirrored on the client-side duplicate dialogs
+    // that call this same route), but a left-behind debts row pointing at a
+    // now-gone connection would show a stale/broken "Synced from Plaid"
+    // badge forever, and matters even more here: removing a *duplicate*
+    // connection (see lib/accounts.js's findDuplicateItems /
+    // app/api/plaid/exchange's duplicate flag) is exactly the case that
+    // leaves one of these behind, since the duplicate item's own account_id
+    // never matched the original's debts row and so got auto-created a
+    // second one. A row with the deterministic `pl_<account_id>` id was
+    // auto-created purely from this connection's data, so it's safe to
+    // delete outright. A row without that id prefix started life as a
+    // manual entry that a later sync fuzzy-linked to this connection (see
+    // plaid-debts.js's manualMatch path) — deleting it would destroy the
+    // user's own hand-entered balance/APR/history, so it's only unlinked
+    // (plaid_account_id/plaid_item_id cleared) and falls back to being a
+    // plain manual debt again. Best-effort: never blocks the disconnect
+    // itself, and degrades quietly if debts.plaid_item_id isn't migrated yet
+    // (see plaid-debts.js's isMissingColumnError note on the same column).
+    try {
+      const { data: linkedDebts, error: linkedErr } = await supabaseAdmin
+        .from('debts')
+        .select('id')
+        .eq('user_id', row.user_id)
+        .eq('plaid_item_id', item_id)
+      if (linkedErr) throw linkedErr
+      const autoCreatedIds = (linkedDebts || []).filter((d) => d.id.startsWith('pl_')).map((d) => d.id)
+      const manualIds = (linkedDebts || []).filter((d) => !d.id.startsWith('pl_')).map((d) => d.id)
+      if (autoCreatedIds.length) {
+        await supabaseAdmin.from('debts').delete().eq('user_id', row.user_id).in('id', autoCreatedIds)
+      }
+      if (manualIds.length) {
+        await supabaseAdmin.from('debts').update({ plaid_account_id: null, plaid_item_id: null }).eq('user_id', row.user_id).in('id', manualIds)
+      }
+    } catch (e) {
+      console.error('[plaid] cleaning up debts for removed connection failed (non-fatal)', e?.message || e)
+    }
 
     return Response.json({ ok: true })
   } catch (e) {

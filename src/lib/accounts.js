@@ -624,6 +624,67 @@ export function setAccountColor(update, accountKey, color) {
 //      needs filling (an empty Map short-circuits before touching the
 //      store), so calling this on every render/effect tick is safe and
 //      doesn't create diff-sync churn once every matched debt has its limit.
+// ---- duplicate-connection detection ----
+// The same real-world account, linked through two different Plaid items,
+// gets a DIFFERENT Plaid account_id per item — so "is this actually the same
+// account" can't key on account_id at all. Institution + mask + type is the
+// closest stable proxy available. A null/missing mask never matches
+// anything (silently missing a true duplicate is far safer than merging two
+// unrelated accounts that both happen to lack one), and two different cards
+// at the same bank are correctly kept apart because their masks differ.
+// Exported + pure so app/api/plaid/exchange/route.js (server) and
+// Accounts.jsx (client) share the exact same rule instead of two
+// implementations drifting apart.
+export function accountsLookSame(instA, a, instB, b) {
+  if (!a || !b) return false
+  if (!a.mask || !b.mask || a.mask !== b.mask) return false
+  if ((a.type || null) !== (b.type || null)) return false
+  const nA = String(instA || '').trim().toLowerCase()
+  const nB = String(instB || '').trim().toLowerCase()
+  if (!nA || !nB || nA !== nB) return false
+  return true
+}
+
+// True only when EVERY account in `accounts` matches some account in
+// `otherAccounts` — i.e. this item brings nothing new. Partial overlap (some
+// but not all accounts match) deliberately returns false: re-linking the
+// same bank with additional accounts selected is a legitimate flow, not a
+// duplicate connection, and must never be flagged.
+export function isFullyDuplicateOf(institution, accounts, otherInstitution, otherAccounts) {
+  if (!accounts?.length || !otherAccounts?.length) return false
+  return accounts.every((a) => otherAccounts.some((b) => accountsLookSame(institution, a, otherInstitution, b)))
+}
+
+// Scans the already-loaded plaidItems (Accounts.jsx) for a connection that
+// fully duplicates another one — same matching rule the exchange route uses
+// at link time (app/api/plaid/exchange/route.js), run again here so a
+// duplicate that predates that check (like the user's existing double-Chase
+// connection) still gets surfaced. Returns [{ dupItem, originalItem }],
+// always flagging the NEWER item (by created_at) as the duplicate — removal
+// (Accounts.jsx's banner, connect-bank.jsx's post-link dialog) always
+// targets `dupItem`, never `originalItem`, so nothing the user already
+// relies on ever disappears. Each item is flagged at most once, as either a
+// dup or an original, so three-or-more-way duplicates don't produce
+// contradictory pairs.
+export function findDuplicateItems(plaidItems) {
+  const sorted = (plaidItems || []).slice().sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0))
+  const flagged = new Set() // .id of items already reported as a dup
+  const out = []
+  for (let i = 0; i < sorted.length; i++) {
+    const original = sorted[i]
+    if (flagged.has(original.id)) continue
+    for (let j = i + 1; j < sorted.length; j++) {
+      const candidate = sorted[j]
+      if (flagged.has(candidate.id)) continue
+      if (isFullyDuplicateOf(candidate.institution, candidate.accounts || [], original.institution, original.accounts || [])) {
+        out.push({ dupItem: candidate, originalItem: original })
+        flagged.add(candidate.id) // placed as a dup — never also reported as someone else's original
+      }
+    }
+  }
+  return out
+}
+
 export function reconcileDebtLimits(state, plaidItems, update) {
   if (!state?.debts?.length || !plaidItems?.length) return
   const plaidAccountsFlat = plaidItems.flatMap((it) => (it.accounts || []).map((a) => ({ ...a, institution: it.institution })))

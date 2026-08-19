@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Plus, Wallet, ChevronDown, ChevronRight, Link2, Pencil } from 'lucide-react'
+import { Plus, Wallet, ChevronDown, ChevronRight, Link2, Pencil, AlertTriangle, X } from 'lucide-react'
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,7 @@ import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Segmented } from '@/components/ui/segmented'
 import { Money, CardChip, SourceBadge, ConfirmDialog, SyncingPill, TagPill, tagTone } from '@/components/shared'
-import { ConnectBankButton, SyncAllButton } from '@/components/connect-bank'
+import { ConnectBankButton, SyncAllButton, DuplicateBankDialog } from '@/components/connect-bank'
 import { useApp } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
 import { useT } from '@/lib/i18n'
@@ -18,7 +18,7 @@ import { cn, fmt0, today, uid } from '@/lib/utils'
 import {
   RANGE_KEYS, daysFor, buildSeries, pctChange, pctChange30,
   buildAccountInventory, accountUrlId, usePlaidItems, deleteManualAccount, allAccountTags, colorForAccount,
-  relTime, lastUpdatedAt,
+  relTime, lastUpdatedAt, findDuplicateItems,
 } from '@/lib/accounts'
 
 const TIP = { contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 } }
@@ -29,10 +29,10 @@ const LABEL_COLOR = '#6f8bb8'
 
 export default function Accounts({ editParam, clearEditParam } = {}) {
   const t = useT()
-  const { state } = useApp()
+  const { state, refetch } = useApp()
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
   const [range, setRange] = useState('3M')
-  const { plaidItems, plaidChecked } = usePlaidItems()
+  const { plaidItems, plaidChecked, refetchPlaidItems } = usePlaidItems()
 
   // ?edit=<accountId> arrives from the account detail view's "Edit account"
   // action (manual accounts only) — open the dialog once, then clear the param.
@@ -44,6 +44,18 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
     () => buildAccountInventory(state, plaidItems),
     [state.debts, state.accounts, plaidItems]
   )
+
+  // Roadmap: the user connected the same bank twice (e.g. two Chase logins
+  // both surfacing the same card) — app/api/plaid/exchange/route.js catches
+  // this going forward at link time, but this re-runs the same check
+  // (lib/accounts.js's findDuplicateItems, same institution+mask+type rule)
+  // against whatever's already connected, so an existing duplicate like
+  // that still gets surfaced here. Dismissal is session-only (useState, not
+  // persisted) — this is a real problem worth fixing, so it should come
+  // back on reload as long as the duplicate is still sitting there.
+  const duplicatePairs = useMemo(() => findDuplicateItems(plaidItems), [plaidItems])
+  const [dismissedDupIds, setDismissedDupIds] = useState([])
+  const [removingDup, setRemovingDup] = useState(null) // { dupItem, originalItem } pending the confirm dialog
 
   // Tags: "Mine"/"Julia's"/etc. per-account labels (see lib/accounts.js's tag
   // helpers, CLAUDE.md 2026-08-08 (10)) — keyed by the same canonical
@@ -107,6 +119,31 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
           <Button size="sm" onClick={() => setEditing(null)}><Plus />{t('Add account')}</Button>
         </div>
       </div>
+
+      {duplicatePairs.filter((p) => !dismissedDupIds.includes(p.dupItem.id)).map(({ dupItem, originalItem }) => (
+        <div key={dupItem.id} className="flex flex-wrap items-center gap-2.5 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3.5 py-2.5 text-[0.8125rem] text-amber-200">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+          <p className="min-w-0 flex-1 text-amber-200/90">
+            {t('It looks like {institution} is connected twice — the same accounts appear on both.', { institution: dupItem.institution || originalItem.institution || t('this bank') })}
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="outline" size="xs"
+              className="border-amber-400/40 bg-amber-400/10 text-amber-400 hover:bg-amber-400/20"
+              onClick={() => setRemovingDup({ dupItem, originalItem })}
+            >
+              {t('Remove duplicate')}
+            </Button>
+            <button
+              onClick={() => setDismissedDupIds((ids) => [...ids, dupItem.id])}
+              className="text-amber-400/70 transition hover:text-amber-300"
+              title={t('Dismiss')}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      ))}
 
       <Card className="p-5">
         <div className="flex items-center justify-around gap-4">
@@ -191,6 +228,14 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
       </Section>
 
       {editing !== undefined && <AccountDialog id={editing} onClose={() => setEditing(undefined)} />}
+      {removingDup && (
+        <DuplicateBankDialog
+          institution={removingDup.dupItem.institution || removingDup.originalItem.institution}
+          itemId={removingDup.dupItem.item_id}
+          onRemoved={async () => { setRemovingDup(null); await refetchPlaidItems(); refetch() }}
+          onClose={() => setRemovingDup(null)}
+        />
+      )}
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import { createSupabaseServerClient } from '@/lib/supabase-clients'
-import { plaidClient, plaidConfigured, supabaseAdmin } from '@/lib/plaid-server'
+import { plaidClient, plaidConfigured, supabaseAdmin, ownerIdsFor } from '@/lib/plaid-server'
 import { syncDebtsFromPlaid } from '@/lib/plaid-debts'
+import { isFullyDuplicateOf } from '@/lib/accounts'
 
 // Exchanges a Plaid Link public_token for a permanent access_token and
 // stores the connection. The access token never leaves this route.
@@ -70,7 +71,40 @@ export async function POST(req) {
       console.error('[plaid] auto-creating debts for new connection failed', e?.message || e)
     }
 
-    return Response.json({ ok: true, institution: institution || null })
+    // Duplicate-connection detection (user connected the same bank twice,
+    // e.g. two Chase logins that both surface the same card): Plaid Link has
+    // already completed and the access token is already stored above, so
+    // this never strands anything mid-exchange even when it finds a
+    // duplicate — it just flags the situation and lets the client (see
+    // lib/plaid-client.js's exchangeAndSync, components/connect-bank.jsx,
+    // app/(app)/plaid-oauth/page.jsx) offer removing the just-added item.
+    // Same institution+mask+type rule as lib/accounts.js's
+    // findDuplicateItems() (used for connections that predate this check),
+    // and deliberately only flags a FULL duplicate — every account on this
+    // new item already exists on some other item — never a partial overlap,
+    // since re-linking with additional accounts selected is legitimate.
+    let duplicate = null
+    try {
+      const ownerIds = await ownerIdsFor(userId)
+      const { data: existingRows, error: existingErr } = await supabaseAdmin
+        .from('plaid_items')
+        .select('item_id, institution, accounts')
+        .in('user_id', ownerIds)
+        .neq('item_id', item_id)
+      if (existingErr) throw existingErr
+      const match = (existingRows || []).find((row) =>
+        isFullyDuplicateOf(institution || null, accounts, row.institution || null, row.accounts || []))
+      if (match) duplicate = { institution: match.institution || institution || null, item_id: match.item_id }
+    } catch (e) {
+      console.error('[plaid] duplicate-connection check failed', e?.message || e)
+    }
+
+    return Response.json({
+      ok: true,
+      institution: institution || null,
+      item_id,
+      ...(duplicate ? { duplicate: true, duplicateOf: duplicate } : {}),
+    })
   } catch (e) {
     return Response.json({ error: e?.response?.data?.error_message || e?.message || 'Failed to link bank' }, { status: 500 })
   }

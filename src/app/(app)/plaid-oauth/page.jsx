@@ -5,7 +5,7 @@ import { Loader2, Landmark } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/toast'
 import { exchangeAndSync, PLAID_LINK_TOKEN_KEY } from '@/lib/plaid-client'
-import { PlaidLinkRunner } from '@/components/connect-bank'
+import { PlaidLinkRunner, DuplicateBankDialog } from '@/components/connect-bank'
 
 // Landing point for Plaid's OAuth redirect (roadmap item 3). Some banks
 // (Chase, Bank of America, ...) force Plaid Link out to their own login page
@@ -26,6 +26,10 @@ export default function PlaidOAuthPage() {
   const toast = useToast()
   const [linkToken, setLinkToken] = useState(undefined) // undefined = checking sessionStorage, null = none found
   const [status, setStatus] = useState('connecting') // connecting | error
+  // Pending duplicate-connection confirm (see connect-bank.jsx's
+  // DuplicateBankDialog) — holds the navigation to /accounts off until the
+  // user picks "Remove duplicate" or "Keep both".
+  const [duplicate, setDuplicate] = useState(null)
 
   useEffect(() => {
     try {
@@ -38,7 +42,11 @@ export default function PlaidOAuthPage() {
   const handleSuccess = async (public_token, metadata) => {
     try { sessionStorage.removeItem(PLAID_LINK_TOKEN_KEY) } catch { /* harmless */ }
     try {
-      await exchangeAndSync(public_token, metadata?.institution?.name, toast)
+      const data = await exchangeAndSync(public_token, metadata?.institution?.name, toast)
+      if (data?.duplicate) {
+        setDuplicate({ item_id: data.item_id, institution: data.duplicateOf?.institution || metadata?.institution?.name })
+        return // the navigation below runs once the dialog resolves instead
+      }
       // Hard navigation, not router.push: the store (store.jsx) only loads
       // from Supabase once per userId (`freshFor` ref) and this page's own
       // mount already consumed that load, so a client-side route change
@@ -103,6 +111,14 @@ export default function PlaidOAuthPage() {
           receivedRedirectUri={typeof window !== 'undefined' ? window.location.href : undefined}
           onSuccess={handleSuccess}
           onExit={handleExit}
+        />
+      )}
+      {duplicate && (
+        <DuplicateBankDialog
+          institution={duplicate.institution}
+          itemId={duplicate.item_id}
+          onRemoved={() => window.location.assign('/accounts')}
+          onClose={() => window.location.assign('/accounts')}
         />
       )}
     </div>
