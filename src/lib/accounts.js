@@ -4,7 +4,7 @@
 // detail view (views/AccountDetail.jsx, full page + Notion-style modal) all
 // build the exact same merged list (manual debts/accounts + connected Plaid
 // accounts) and agree on one stable, URL-safe id per account.
-import { useCallback, useEffect, useState } from 'react'
+import { useSyncExternalStore } from 'react'
 import { today, isoDate, prettyDate, uid } from '@/lib/utils'
 import { matchesBankAccount } from '@/lib/finance'
 
@@ -108,6 +108,23 @@ export function relTime(iso) {
   if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`
   const months = Math.floor(days / 30)
   return `${months} month${months === 1 ? '' : 's'} ago`
+}
+
+// Most-recent successful sync across every connected item — feeds the
+// header's/Accounts page's "Updated <relTime>" indicator (see relTime
+// above and AccountDetail.jsx's own per-account version of this same line).
+// Prefers last_balance_at (the Balance-product refresh, more granular —
+// twice-daily cron + manual Refresh) but falls back to last_synced (the
+// Transactions-product sync) per item, then takes the max across all items.
+// null-safe: no items, or no timestamps on any of them, returns null.
+export function lastUpdatedAt(plaidItems) {
+  let latest = null
+  ;(plaidItems || []).forEach((it) => {
+    const iso = it.last_balance_at || it.last_synced
+    if (!iso) return
+    if (!latest || new Date(iso) > new Date(latest)) latest = iso
+  })
+  return latest
 }
 
 // Derive a balance-history series for the detail view's chart. Manual accounts
@@ -311,75 +328,190 @@ export function backToAccounts(router) {
   else router.push('/accounts')
 }
 
-// Fetches /api/plaid/items once, shared by Accounts.jsx, AccountDetail.jsx,
-// and Transactions.jsx (all three need the same connected-accounts list to
-// build the same inventory / resolve an account's sync status).
-//
-// Also self-polls while any item is still 'syncing' (a freshly-connected
-// bank whose 730-day historical backfill hasn't landed yet — see
-// lib/plaid-sync.js and the webhook route's HISTORICAL_UPDATE/
-// SYNC_UPDATES_AVAILABLE handling): every ~10s it nudges POST
-// /api/plaid/sync (in case the webhook was never registered or missed) then
-// re-fetches /api/plaid/items, so the "please wait, transactions are
-// loading" placeholders these three views show flip to real data on their
-// own, no manual refresh needed. Gives up after ~2 minutes of polling — the
-// server-side age fallback in app/api/plaid/sync (and the webhook route)
-// eventually clears a stuck flag on the next real "Sync now" or webhook
-// regardless. Self-cleaning: the effect tears down its own timer on unmount
-// or as soon as nothing is 'syncing' anymore.
+// ---- shared /api/plaid/items store (module-level, not per-component) ----
+// Every usePlaidItems() caller (layout.jsx's header, Accounts.jsx,
+// AccountDetail.jsx, Settings.jsx, Transactions.jsx) used to keep its own
+// useState + its own one-shot fetch — so refetchPlaidItems() called from one
+// component (Settings' "Sync now", AccountDetail's balance "Refresh") only
+// ever updated THAT component's copy; every other mounted instance (e.g. the
+// header's "Updated <relTime>" note) kept showing stale data until it
+// happened to remount. Hoisting the fetched items/checked flag, the
+// in-flight fetch, the 'syncing' self-poll, and the focus/visibility
+// staleness refetch to module scope — with every hook instance subscribing
+// via useSyncExternalStore — means one refetch (from any caller) is visible
+// to all of them immediately, and only one /api/plaid/items request (or one
+// poll loop) is ever in flight at a time no matter how many components are
+// mounted. The public API ({ plaidItems, plaidChecked, refetchPlaidItems })
+// is unchanged, so no caller needs to change.
+let _items = []
+let _checked = false
+let _lastFetchAt = 0 // Date.now() of the last fetch that landed (success OR failure) — drives the staleness refetch below
+let _inFlight = null // shared promise so concurrent mounts never fire parallel requests
+let _snapshot = { items: _items, checked: _checked } // stable reference for useSyncExternalStore; only replaced when data actually changes
+const _subscribers = new Set()
+
+function updateSnapshot() {
+  _snapshot = { items: _items, checked: _checked }
+}
+
+function notify() {
+  _subscribers.forEach((cb) => cb())
+}
+
+function setItems(items) {
+  _items = items || []
+  _checked = true
+  _lastFetchAt = Date.now()
+  updateSnapshot()
+  notify()
+  maybeStartPoll()
+}
+
+// Exposed as `refetchPlaidItems` from the hook below — additive, existing
+// callers that only destructure {plaidItems, plaidChecked} are unaffected.
+// Needed by the balance-only-refresh feature (views/AccountDetail.jsx's
+// "Refresh" button) and Settings' "Sync now": both want the just-updated
+// data without a full page reload, unlike every connect/disconnect flow in
+// this app which still reloads.
+function fetchItems() {
+  if (_inFlight) return _inFlight // dedupe: share the in-flight request instead of firing another
+  const promise = fetch('/api/plaid/items')
+    .then((r) => r.json())
+    .then((d) => { setItems(d.items || []); return _items })
+    .catch(() => {
+      // A failed fetch still flips `checked` (so "loading" placeholders
+      // clear) but deliberately leaves `_lastFetchAt` at its previous value —
+      // still stale, so the next focus/visibility check retries instead of
+      // treating a failed pull as "fresh."
+      _checked = true
+      updateSnapshot()
+      notify()
+      return []
+    })
+    .finally(() => { _inFlight = null })
+  _inFlight = promise
+  return promise
+}
+
+// ---- 'syncing' self-poll ----
+// While any item is still 'syncing' (a freshly-connected bank whose 730-day
+// historical backfill hasn't landed yet — see lib/plaid-sync.js and the
+// webhook route's HISTORICAL_UPDATE/SYNC_UPDATES_AVAILABLE handling), every
+// ~10s nudge POST /api/plaid/sync (in case the webhook was never registered
+// or missed) then re-fetch /api/plaid/items, so the "please wait,
+// transactions are loading" placeholders flip to real data on their own, no
+// manual refresh needed. Gives up after ~2 minutes — the server-side age
+// fallback in app/api/plaid/sync (and the webhook route) eventually clears a
+// stuck flag on the next real "Sync now" or webhook regardless. Module-level
+// (not per-hook-instance) so mounting this hook in five components at once
+// never starts five parallel poll loops; `_pollTimer` guards against a
+// second loop starting while one is already running.
+let _pollTimer = null
+let _pollAttempts = 0
+const POLL_INTERVAL_MS = 10000
+const MAX_POLL_ATTEMPTS = 12 // ~2 minutes at 10s intervals
+
+function hasSyncingItem() {
+  return _checked && _items.some((it) => it.status === 'syncing')
+}
+
+function maybeStartPoll() {
+  if (_pollTimer || !hasSyncingItem()) return
+  _pollAttempts = 0
+  schedulePoll()
+}
+
+function schedulePoll() {
+  _pollTimer = setTimeout(pollTick, POLL_INTERVAL_MS)
+}
+
+async function pollTick() {
+  _pollAttempts++
+  try { await fetch('/api/plaid/sync', { method: 'POST' }) } catch { /* best-effort nudge */ }
+  try {
+    const r = await fetch('/api/plaid/items')
+    const d = await r.json()
+    setItems(d.items || []) // also re-triggers maybeStartPoll, but the `_pollTimer` guard (cleared just below) keeps this a single ongoing loop
+  } catch { /* keep polling through a transient fetch failure */ }
+  _pollTimer = null
+  if (hasSyncingItem() && _pollAttempts < MAX_POLL_ATTEMPTS) schedulePoll()
+  else _pollAttempts = 0 // reset so a future newly-'syncing' item gets its own full ~2-minute budget
+}
+
+function stopPoll() {
+  if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null }
+}
+
+// ---- focus/visibility staleness refetch ----
+// Mirrors store.jsx's own focus/visibility refetch for the same reason: nothing
+// else here ever refetches once loaded, so a tab left open (or a second
+// device — phone syncs, desktop tab regains focus) would otherwise show
+// stale connected-account balances/timestamps indefinitely. One listener
+// registration for the whole app (attached when the first subscriber shows
+// up, removed when the last one goes away), not one per component.
+const STALE_MS = 60000
+let _focusListenerAttached = false
+
+function maybeRefetchOnFocus() {
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+  if (_inFlight) return
+  if (Date.now() - _lastFetchAt < STALE_MS) return
+  fetchItems()
+}
+
+function attachFocusListener() {
+  if (_focusListenerAttached || typeof window === 'undefined') return
+  document.addEventListener('visibilitychange', maybeRefetchOnFocus)
+  window.addEventListener('focus', maybeRefetchOnFocus)
+  _focusListenerAttached = true
+}
+
+function detachFocusListener() {
+  if (!_focusListenerAttached) return
+  document.removeEventListener('visibilitychange', maybeRefetchOnFocus)
+  window.removeEventListener('focus', maybeRefetchOnFocus)
+  _focusListenerAttached = false
+}
+
+// ---- subscription plumbing (useSyncExternalStore) ----
+// Every mounted usePlaidItems() instance subscribes here; the store itself
+// (not React state) is the single source of truth, so a refetch triggered by
+// any one of them is immediately visible to all the others.
+function subscribe(callback) {
+  _subscribers.add(callback)
+  attachFocusListener()
+  // Resume the 'syncing' poll if it was stopped (last subscriber gone) while
+  // an item was still mid-backfill and a new one just mounted.
+  maybeStartPoll()
+  // Fetch once, the first time this store ever gets a subscriber (or if a
+  // previous fetch never landed) — not once per mounted component.
+  if (!_inFlight && _lastFetchAt === 0) fetchItems()
+  return () => {
+    _subscribers.delete(callback)
+    if (_subscribers.size === 0) { detachFocusListener(); stopPoll() }
+  }
+}
+
+function getSnapshot() {
+  return _snapshot
+}
+
+// Module state itself never touches window/document — only the functions
+// above do, and only once actually called from the browser (subscribe() is
+// never invoked during SSR; React only ever calls getServerSnapshot there),
+// so this stays SSR-safe despite being module-level.
+function getServerSnapshot() {
+  return _snapshot
+}
+
+// Fetches /api/plaid/items, shared by Accounts.jsx, AccountDetail.jsx,
+// Settings.jsx, layout.jsx's header, and Transactions.jsx (all need the same
+// connected-accounts list to build the same inventory / resolve an account's
+// sync status / show the same "Updated <relTime>" timestamp) — see the
+// module-level store above for why this is shared rather than per-instance.
 export function usePlaidItems() {
-  const [plaidItems, setPlaidItems] = useState([])
-  const [plaidChecked, setPlaidChecked] = useState(false)
-
-  // Exposed as `refetchPlaidItems` below — additive, existing callers that
-  // only destructure {plaidItems, plaidChecked} are unaffected. Needed by
-  // the balance-only-refresh feature (views/AccountDetail.jsx's "Refresh"
-  // button): after POSTing /api/plaid/balance, the modal wants the just-
-  // updated balance without a full page reload, unlike every other
-  // connect/disconnect flow in this app which reloads instead.
-  const fetchItems = useCallback(() => {
-    return fetch('/api/plaid/items')
-      .then((r) => r.json())
-      .then((d) => { setPlaidItems(d.items || []); setPlaidChecked(true); return d.items || [] })
-      .catch(() => { setPlaidChecked(true); return [] })
-  }, [])
-
-  useEffect(() => {
-    let on = true
-    fetch('/api/plaid/items')
-      .then((r) => r.json())
-      .then((d) => { if (on) { setPlaidItems(d.items || []); setPlaidChecked(true) } })
-      .catch(() => { if (on) setPlaidChecked(true) })
-    return () => { on = false }
-  }, [])
-
-  const hasSyncingItem = plaidChecked && plaidItems.some((it) => it.status === 'syncing')
-
-  useEffect(() => {
-    if (!hasSyncingItem) return
-    let on = true
-    let attempts = 0
-    const MAX_ATTEMPTS = 12 // ~2 minutes at 10s intervals
-    let timer = null
-    const tick = async () => {
-      attempts++
-      try { await fetch('/api/plaid/sync', { method: 'POST' }) } catch { /* best-effort nudge */ }
-      try {
-        const r = await fetch('/api/plaid/items')
-        const d = await r.json()
-        if (!on) return
-        setPlaidItems(d.items || [])
-      } catch { /* keep polling through a transient fetch failure */ }
-      if (on && attempts < MAX_ATTEMPTS) timer = setTimeout(tick, 10000)
-    }
-    timer = setTimeout(tick, 10000)
-    return () => { on = false; clearTimeout(timer) }
-    // Deliberately depends on the derived boolean, not `plaidItems` itself —
-    // depending on the array would reset `attempts` to 0 on every poll tick
-    // (since each tick calls setPlaidItems), defeating the MAX_ATTEMPTS cap.
-  }, [hasSyncingItem])
-
-  return { plaidItems, plaidChecked, refetchPlaidItems: fetchItems }
+  const { items, checked } = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
+  return { plaidItems: items, plaidChecked: checked, refetchPlaidItems: fetchItems }
 }
 
 // ---- account tags ("Mine"/"Julia's"/etc. — shared-space account labels) ----

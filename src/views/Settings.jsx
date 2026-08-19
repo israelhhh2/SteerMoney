@@ -17,6 +17,7 @@ import { useToast, useCenterToast } from '@/components/toast'
 import { prettyDate } from '@/lib/utils'
 import { SpaceNameDialog, InviteLinkDialog, RemoveMemberDialog, ConvertToSharedSpaceDialog, DeleteSpaceDialog } from '@/components/space-name-dialog'
 import { ConnectBankButton, PlaidLinkRunner } from '@/components/connect-bank'
+import { usePlaidItems } from '@/lib/accounts'
 import { useT } from '@/lib/i18n'
 
 export default function Settings() {
@@ -141,6 +142,8 @@ function AccountSection() {
 function ConnectedBanksSection() {
   const toast = useToast()
   const t = useT()
+  const { refetch } = useApp()
+  const { refetchPlaidItems } = usePlaidItems()
   const [items, setItems] = useState(null) // null = loading
   const [syncing, setSyncing] = useState(false)
   const [removing, setRemoving] = useState(null)
@@ -176,9 +179,16 @@ function ConnectedBanksSection() {
       } else {
         toast(t('Synced: {n} new transactions', { n: data.added }))
       }
-      setTimeout(() => window.location.reload(), 1200)
+      // No page reload — refresh this section's own connection list, the
+      // shared usePlaidItems() consumers (header "Updated" note, Accounts,
+      // AccountDetail), and the store's debts/transactions/etc. so a synced
+      // balance/transaction shows up in place.
+      await loadItems()
+      await refetchPlaidItems()
+      refetch()
     } catch (e) {
       toast(e.message, 'error')
+    } finally {
       setSyncing(false)
     }
   }

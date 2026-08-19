@@ -260,6 +260,7 @@ export function AppProvider({ children }) {
   const dirty = useRef(false)   // user edited since the cache was hydrated
   const freshFor = useRef(null) // userId whose data was fetched from Supabase this session
   const loadingFor = useRef(null)
+  const lastLoadAt = useRef(0)  // Date.now() of the last successful initial-load pass — drives the focus/visibility refetch's staleness check below
 
   const CACHE = (id) => 'fin-cache-' + id
   const writeCache = (id, s) => { try { localStorage.setItem(CACHE(id), JSON.stringify(s)) } catch {} }
@@ -315,6 +316,7 @@ export function AppProvider({ children }) {
           // never write while impersonating — just show the customer's (empty) account
           s = { ...freshState(), budgets: [] }
           freshFor.current = userId
+          lastLoadAt.current = Date.now()
           if (!cancelled) { synced.current = s; setState(s) }
           return
         }
@@ -340,6 +342,7 @@ export function AppProvider({ children }) {
         }
       }
       freshFor.current = userId
+      lastLoadAt.current = Date.now()
       if (!viewAs) writeCache(userId, s)
       // don't clobber edits the user made on top of the cached copy while we fetched
       if (!cancelled && !dirty.current) { synced.current = s; setState(s) }
@@ -347,6 +350,56 @@ export function AppProvider({ children }) {
       .finally(() => { if (loadingFor.current === userId) loadingFor.current = null })
     return () => { cancelled = true }
   }, [supabase, userId, state])
+
+  // ---- manual refetch (Sync now / balance Refresh / focus-staleness below) ----
+  // Re-runs the initial-load effect above without clearing anything the user
+  // already sees — unlike setSpace()/setViewAs(), this deliberately leaves
+  // `state` and `synced.current` alone (no flash to a blank/loading screen)
+  // and, crucially, does NOT null out `synced.current`. Nulling it would make
+  // the debounced diff-sync effect below go quiet (its `!synced.current`
+  // guard bails out) until the fetch below resolves — and if the user has an
+  // unsynced edit in flight (dirty.current), that resolution deliberately
+  // skips overwriting `synced.current` (see the initial-load effect's own
+  // "don't clobber edits" guard), which would leave `synced.current` null
+  // forever and silently stop that edit (and everything after it) from ever
+  // reaching Supabase. Only resetting freshFor/loadingFor — and nudging
+  // `state` to a new (but content-identical) reference so the initial-load
+  // effect's dependency array actually re-fires — sidesteps that: the
+  // debounced diff-sync effect still runs off the *same* synced.current
+  // baseline it always did, so a genuine pending edit keeps syncing normally
+  // while a fresh pull replaces `state` once it lands (or is skipped
+  // entirely if `dirty.current` is true, exactly like a page-load race).
+  const refetch = () => {
+    if (!supabase || !userId) return
+    freshFor.current = null
+    loadingFor.current = null
+    setState((s) => (s ? { ...s } : s))
+  }
+
+  // ---- auto-refresh on tab focus/visibility ----
+  // Nothing else in this file ever refetches once loaded (no polling, no
+  // realtime) — a tab left open for hours shows hours-stale data. When the
+  // tab regains focus/visibility and the last successful load is stale
+  // (>60s), nudge a refetch. Throttled two ways: the staleness check itself
+  // (a tab that's been visible/focused the whole time won't re-trigger), and
+  // loadingFor.current (won't stack a second refetch on top of one already
+  // in flight).
+  useEffect(() => {
+    if (!userId) return
+    const STALE_MS = 60000
+    const maybeRefetch = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      if (loadingFor.current === userId) return
+      if (Date.now() - lastLoadAt.current < STALE_MS) return
+      refetch()
+    }
+    document.addEventListener('visibilitychange', maybeRefetch)
+    window.addEventListener('focus', maybeRefetch)
+    return () => {
+      document.removeEventListener('visibilitychange', maybeRefetch)
+      window.removeEventListener('focus', maybeRefetch)
+    }
+  }, [userId])
 
   // ---- debounced diff sync ----
   useEffect(() => {
@@ -396,6 +449,19 @@ export function AppProvider({ children }) {
           synced.current = next
           writeCache(userId, next)
           setSyncError(null)
+          // Clear the "unsynced edit" flag update() sets on every local
+          // mutation — but only if nothing changed further while this write
+          // was in flight (checked against the live state via the functional
+          // updater, not the `next` snapshot this closure captured, since a
+          // newer edit could have landed during the awaits above). Needed for
+          // refetch() (Sync now / balance Refresh / focus-staleness): its
+          // "don't clobber a pending edit" guard reuses this same
+          // dirty.current flag, which — before this reset — never went back
+          // to false once set, so any edit ever made this session would
+          // silently block every future refetch from ever applying fresh
+          // data. Left exactly as it was before if a newer edit did land
+          // (dirty.current stays true; that edit gets its own debounced pass).
+          setState((current) => { if (current === next) dirty.current = false; return current })
         } catch (e) {
           setSyncError(String(e?.message || e))
         }
@@ -762,6 +828,7 @@ export function AppProvider({ children }) {
     removeMember,
     deleteSpace, // owner-only permanent space delete — see definition above
     transferPersonalDataToSpace, // "Move my data into this space" — see definition above
+    refetch, // force a fresh pull from Supabase without a page reload — see definition above
     // update(fn): fn receives a deep clone, mutates freely, returns nothing
     // no-op while viewing another customer — support mode is strictly read-only
     update: viewAs

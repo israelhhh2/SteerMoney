@@ -270,6 +270,7 @@ export const DICTIONARY = {
   'Available': { es: 'Disponible' },
   'Current': { es: 'Actual' },
   'Change': { es: 'Cambio' },
+  'Updated {time}': { es: 'Actualizado {time}' },
   'Enter a balance': { es: 'Ingresa un saldo' },
   'Account updated': { es: 'Cuenta actualizada' },
   'Account added': { es: 'Cuenta agregada' },

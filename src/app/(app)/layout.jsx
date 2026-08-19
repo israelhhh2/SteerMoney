@@ -15,6 +15,7 @@ import { FeedbackWidget } from '@/components/feedback-widget'
 import { Logo, Wordmark } from '@/components/logo'
 import { useIsAdmin } from '@/lib/useIsAdmin'
 import { SpaceNameDialog, InviteLinkDialog } from '@/components/space-name-dialog'
+import { usePlaidItems, relTime, lastUpdatedAt } from '@/lib/accounts'
 import { useT } from '@/lib/i18n'
 
 const NAV = [
@@ -186,6 +187,12 @@ function Frame({ children, modal }) {
   const { state, syncError, viewingAs, exitViewAs, space, spaces, setSpace, createSpace, createInvite } = useApp()
   const t = useT()
   const isAdmin = useIsAdmin()
+  // "Updated <relTime>" header note (see lib/accounts.js's lastUpdatedAt) —
+  // usePlaidItems() is a shared module-level store (lib/accounts.js), so a
+  // refetchPlaidItems() called from Settings' "Sync now" or AccountDetail's
+  // balance "Refresh" updates this instance too, no page reload needed.
+  const { plaidItems } = usePlaidItems()
+  const updatedAt = lastUpdatedAt(plaidItems)
   const nav = isAdmin ? [...NAV, ['/admin', ShieldCheck, 'Admin']] : NAV
   const [showNewSpace, setShowNewSpace] = useState(false)
   const [inviteUrl, setInviteUrl] = useState(null)
@@ -321,6 +328,9 @@ function Frame({ children, modal }) {
               {!viewingAs ? spaceSelect('!h-8 max-w-[7.5rem] rounded-full border-none bg-secondary/60 px-2.5 text-xs font-bold') : <span />}
             </div>
             <div className="flex items-center justify-end gap-2">
+              {!syncError && updatedAt ? (
+                <span className="max-w-[5.5rem] truncate text-[0.625rem] font-medium text-muted-foreground">{t('Updated {time}', { time: relTime(updatedAt) })}</span>
+              ) : null}
               {syncError ? <button type="button" onClick={() => window.alert(syncError)} title={syncError}><CloudOff className="h-4 w-4 text-red-400" /></button> : null}
               {state ? <RemindersBell /> : null}
             </div>
@@ -331,6 +341,9 @@ function Frame({ children, modal }) {
         <header className="sticky top-0 z-30 hidden h-14 items-center border-b border-border/60 bg-background/85 px-4 backdrop-blur-md sm:px-8 md:flex">
           <div className="mx-auto flex w-full max-w-6xl items-center gap-3">
             <h1 className="mr-auto text-[0.9375rem] font-extrabold tracking-tight">{t(TITLES[pathname] || 'Finances')}</h1>
+            {!syncError && updatedAt ? (
+              <span className="whitespace-nowrap text-[0.6875rem] font-medium text-muted-foreground">{t('Updated {time}', { time: relTime(updatedAt) })}</span>
+            ) : null}
             {syncError ? (
               <button type="button" onClick={() => window.alert(syncError)} className="flex cursor-pointer items-center gap-1.5 rounded-md border border-red-400/25 bg-red-400/10 px-2 py-1 text-[0.6875rem] font-medium text-red-400 transition hover:bg-red-400/20" title={syncError}>
                 <CloudOff className="h-3.5 w-3.5" /> {t('Sync failed')}

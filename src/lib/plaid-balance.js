@@ -1,4 +1,5 @@
 import { plaidClient, supabaseAdmin } from '@/lib/plaid-server'
+import { updateDebtBalancesFromAccounts } from '@/lib/plaid-debts'
 
 // Cost-motivated split from lib/plaid-sync.js: Plaid's Transactions product
 // (transactionsSync, accountsGet) is billed per-item/month; the Balance
@@ -59,6 +60,18 @@ export async function refreshItemBalances(item) {
     ;({ error } = await supabaseAdmin.from('plaid_items').update({ accounts: merged }).eq('id', item.id))
   }
   if (error) throw error
+
+  // Debt Tracker rows linked to one of these accounts (plaid_account_id)
+  // display their balance straight from the debts row (see
+  // buildAccountInventory() in lib/accounts.js), not from plaid_items.accounts
+  // — without this, a credit card/loan's balance never actually changed here,
+  // even though this function just refreshed it above. Best-effort: a
+  // failure here never blocks the balance refresh that already landed.
+  try {
+    await updateDebtBalancesFromAccounts({ userId: item.user_id, accounts: merged })
+  } catch (e) {
+    console.error('[plaid balance] debt balance update failed for item', item.item_id, e?.message || e)
+  }
 
   return { ok: true, accounts: merged.length }
 }

@@ -18,6 +18,7 @@ import { cn, fmt0, today, uid } from '@/lib/utils'
 import {
   RANGE_KEYS, daysFor, buildSeries, pctChange, pctChange30,
   buildAccountInventory, accountUrlId, usePlaidItems, deleteManualAccount, allAccountTags, colorForAccount,
+  relTime, lastUpdatedAt,
 } from '@/lib/accounts'
 
 const TIP = { contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 } }
@@ -73,6 +74,7 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
   const debtsPct = useMemo(() => pctChange(series, 'debts'), [series])
 
   const isEmpty = !state.accounts.length && !state.debts.length && plaidChecked && !plaidItems.length
+  const updatedAt = lastUpdatedAt(plaidItems)
 
   if (isEmpty) {
     return (
@@ -95,9 +97,14 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
 
   return (
     <div className="fade-in space-y-6">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <ConnectBankButton variant="outline" size="sm" />
-        <Button size="sm" onClick={() => setEditing(null)}><Plus />{t('Add account')}</Button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {updatedAt ? (
+          <span className="text-[0.71875rem] text-muted-foreground">{t('Updated {time}', { time: relTime(updatedAt) })}</span>
+        ) : <span />}
+        <div className="flex flex-wrap items-center gap-2">
+          <ConnectBankButton variant="outline" size="sm" />
+          <Button size="sm" onClick={() => setEditing(null)}><Plus />{t('Add account')}</Button>
+        </div>
       </div>
 
       <Card className="p-5">

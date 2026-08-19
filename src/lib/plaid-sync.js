@@ -175,7 +175,11 @@ export async function syncPlaidItem(item, opts = {}) {
   const priorStatus = item.status || 'ok'
   const nextStatus = txSyncError ? priorStatus : (priorStatus === 'syncing' ? (opts.clearSyncing ? 'ok' : 'syncing') : 'ok')
 
-  const update = { cursor, last_synced: new Date().toISOString(), accounts, status: nextStatus }
+  // Honest timestamps: only stamp last_synced when transactionsSync actually
+  // succeeded above — a failed pull (txSyncError) leaves it unchanged rather
+  // than lying that this item is fresh (a stale last_synced still correctly
+  // reflects the last time data really landed).
+  const update = { cursor, accounts, status: nextStatus, ...(txSyncError ? {} : { last_synced: new Date().toISOString() }) }
   let { error: updErr } = await supabaseAdmin.from('plaid_items').update(update).eq('id', item.id)
   if (updErr && /status/i.test(updErr.message || '')) {
     const { status, ...rest } = update

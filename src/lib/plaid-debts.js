@@ -181,3 +181,43 @@ export async function syncDebtsFromPlaid({ userId, itemId, institution, accessTo
     else console.log('[plaid] auto-created Debt Tracker row for Plaid credit account', a.account_id, '->', id)
   }
 }
+
+// Cheaper sibling of syncDebtsFromPlaid() for the Balance-product paths
+// (lib/plaid-balance.js's refreshItemBalances — the twice-daily cron and the
+// rate-limited manual "Refresh" button): those deliberately never call
+// liabilitiesGet (see the cost note in plaid-balance.js), so this only
+// updates balance (and credit limit, when Plaid reports one) on debts rows
+// already linked to a Plaid account via plaid_account_id — the same id
+// buildAccountInventory() (lib/accounts.js) reads to display a debt-linked
+// account's balance. Never creates or fuzzy-matches new debts (that stays
+// syncDebtsFromPlaid()'s job, run from the Transactions-sync path); this is
+// balance-only bookkeeping for rows that are already linked.
+export async function updateDebtBalancesFromAccounts({ userId, accounts }) {
+  if (!supabaseAdmin || !userId || !accounts?.length) return
+  const byAccountId = new Map(accounts.filter((a) => a.account_id).map((a) => [a.account_id, a]))
+  if (!byAccountId.size) return
+
+  let linkedDebts
+  try {
+    const { data, error } = await supabaseAdmin.from('debts').select('id, plaid_account_id, balance, credit_limit').eq('user_id', userId).not('plaid_account_id', 'is', null)
+    if (error) throw error
+    linkedDebts = data || []
+  } catch (e) {
+    if (isMissingColumnError(e)) {
+      // supabase/debts-plaid.sql not run yet — nothing to link balances to.
+      console.warn('[plaid] debts.plaid_account_id column missing; skipping balance-only debt update. Run supabase/debts-plaid.sql.')
+      return
+    }
+    console.error('[plaid] could not read linked debts for balance-only update, skipping:', e?.message || e)
+    return
+  }
+  if (!linkedDebts.length) return
+
+  for (const d of linkedDebts) {
+    const a = byAccountId.get(d.plaid_account_id)
+    if (!a) continue
+    const patch = { balance: a.balance ?? d.balance, ...(a.limit != null ? { credit_limit: a.limit } : {}) }
+    const { error } = await supabaseAdmin.from('debts').update(patch).eq('user_id', userId).eq('id', d.id)
+    if (error) console.error('[plaid] failed balance-only update for debt', d.id, error.message)
+  }
+}

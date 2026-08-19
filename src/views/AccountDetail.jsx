@@ -66,7 +66,7 @@ function ChangePill({ pct }) {
 // inside the Notion-style modal overlay (app/(app)/@modal/(.)accounts/[id]).
 export default function AccountDetail({ id }) {
   const t = useT()
-  const { state, update } = useApp()
+  const { state, update, refetch } = useApp()
   const { plaidItems, plaidChecked, refetchPlaidItems } = usePlaidItems()
   const [range, setRange] = useState('1M')
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -87,10 +87,10 @@ export default function AccountDetail({ id }) {
   // Lazy "N left today" lookup — a plain GET, never touches Plaid or spends
   // the daily quota. Declared before the early returns below (rules of
   // hooks); the account?-guards make it a no-op until a real Plaid-backed
-  // account (source === 'plaid', matching the Refresh button's own gate) has
-  // resolved.
+  // account (item_id set, matching the Refresh button's hasPlaidItem gate)
+  // has resolved.
   useEffect(() => {
-    if (!account || account.source !== 'plaid' || !account.item_id) return
+    if (!account || !account.item_id) return
     let on = true
     fetch('/api/plaid/balance')
       .then((r) => r.json())
@@ -153,6 +153,13 @@ export default function AccountDetail({ id }) {
   // per-account delete in Plaid's API.
   const isPlaid = account.source === 'plaid'
   const isDebt = account.source === 'debt'
+  // Balance-only-refresh button gate: any account backed by a Plaid
+  // connection (item_id set — see lib/accounts.js's buildAccountInventory,
+  // which threads item_id onto debt-linked rows too), not just
+  // source === 'plaid'. A credit card/loan tracked in the Debt Tracker but
+  // matched to a connected Plaid account had no manual refresh at all before
+  // this — see lib/plaid-balance.js/lib/plaid-debts.js's debt balance update.
+  const hasPlaidItem = Boolean(account.item_id)
   const destructiveLabel = isPlaid ? t('Disconnect bank') : isDebt ? t('Delete debt') : t('Delete account')
   const confirmTitle = isPlaid ? t('Disconnect {bank}?', { bank: account.institution || t('this bank') }) : t('Delete {name}?', { name: account.name })
   const confirmDesc = isPlaid
@@ -214,12 +221,15 @@ export default function AccountDetail({ id }) {
     }
   }
 
-  // Balance-only-refresh "Refresh" button — Plaid-backed accounts only
-  // (source === 'plaid'; never manual/debt rows, per the feature's own
-  // scope). Hits the rate-limited app/api/plaid/balance route (never
-  // transactionsSync/accountsGet — see lib/plaid-balance.js), then
-  // refetches /api/plaid/items so the new balance shows up in place, no
-  // page reload, matching this modal's existing no-reload feel.
+  // Balance-only-refresh "Refresh" button — any account backed by a Plaid
+  // connection (hasPlaidItem, i.e. account.item_id is set), including a Debt
+  // Tracker row matched to a connected Plaid credit card/loan — never plain
+  // manual rows, which have no item_id at all. Hits the rate-limited
+  // app/api/plaid/balance route (never transactionsSync/accountsGet — see
+  // lib/plaid-balance.js), which also updates the matching debts row's
+  // balance server-side, then refetches /api/plaid/items and the store so
+  // the new balance shows up in place, no page reload, matching this
+  // modal's existing no-reload feel.
   const handleRefreshBalance = async () => {
     if (!account.item_id || refreshingBalance) return
     setRefreshingBalance(true)
@@ -238,6 +248,10 @@ export default function AccountDetail({ id }) {
       if (!res.ok) throw new Error(data.error || t('Refresh failed'))
       setRefreshInfo({ remaining: data.remaining, limit: data.limit, resetsAt: data.resetsAt })
       await refetchPlaidItems()
+      // The refreshed balance for a debt-linked account lives on the debts
+      // row, not plaid_items.accounts (see lib/plaid-balance.js) — pull it
+      // into the client too, so the displayed balance actually changes.
+      refetch()
       centerToast(t('Balance updated'))
     } catch (e) {
       centerToast(e?.message || t('Refresh failed'), 'error')
@@ -325,7 +339,7 @@ export default function AccountDetail({ id }) {
             its own full accountsGet-based refresh). Rate-limited server-side
             (app/api/plaid/balance) to 5/day per signed-in human — this
             button just reflects that limit, it never enforces it itself. */}
-        {isPlaid && !isSyncing && account.item_id && (
+        {hasPlaidItem && !isSyncing && (
           <div className="flex items-center gap-2">
             <button
               type="button"
