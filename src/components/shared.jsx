@@ -155,30 +155,44 @@ function cardGradient(hue) {
 // over the deterministic name/institution hash; omitted or null falls back
 // to the original auto-color behavior unchanged (0 is a valid override hue,
 // so this checks for null/undefined specifically, not falsiness).
+// The chip prints the institution on its own top line, so repeating it
+// inside the card name below just eats the room the distinctive part needs
+// ("Chase CREDIT CARD" under a "Chase" header truncated to "Chase CREDI…" —
+// exactly the user's "I see the company but not which card" complaint).
+// Strip a leading institution prefix (case-insensitive, plus any separator
+// punctuation) and show the rest; if the name IS just the institution, keep
+// it rather than rendering an empty card face.
+function chipDisplayName(institution, name) {
+  const inst = String(institution || '').trim()
+  let n = String(name || '').trim()
+  if (inst && n.toLowerCase().startsWith(inst.toLowerCase())) {
+    const rest = n.slice(inst.length).replace(/^[\s\-–—·,:]+/, '')
+    if (rest) n = rest
+  }
+  return n
+}
+
 export function CardChip({ institution, name, mask, size = 'row', colorOverride }) {
   const hue = colorOverride ?? cardHue(institution || name || '')
   const gradient = cardGradient(hue)
+  const displayName = chipDisplayName(institution, name)
 
   if (size === 'dash') {
     return (
       <div className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl px-1.5 shadow-sm" style={{ background: gradient }} title={name}>
-        <span className="truncate text-center text-[0.5625rem] font-bold leading-tight text-white/90">{name}</span>
+        <span className="line-clamp-2 break-words text-center text-[0.5625rem] font-bold leading-tight text-white/90">{displayName}</span>
       </div>
     )
   }
   const big = size === 'lg'
   // The chip stays a fixed size on purpose (it's a "physical card" visual,
-  // not a text block) — a long name still truncates to one line rather than
-  // wrapping and overflowing the fixed height/overflow-hidden box. On
-  // AccountDetail (size='lg') and Dashboard's mini list (size='dash') the
-  // full name is also shown as its own readable text right next to this
-  // chip, so this truncation there is cosmetic only. On Accounts.jsx's
-  // CardRow/LoanRow/DepositoryRow (default size='row'), though, this chip's
-  // name is the ONLY place the name renders at sm+ widths (the separate
-  // readable name div in those rows is sm:hidden) — `title` at least
-  // surfaces the untruncated name on hover there; a real fix would need to
-  // widen the chip or show a readable name at every breakpoint, which is a
-  // layout change out of scope for this pass.
+  // not a text block) — but the name now wraps across up to two lines
+  // (line-clamp-2) instead of truncating at one, and the redundant
+  // institution prefix is stripped (chipDisplayName above) since the
+  // institution already has its own line at the top of the chip. Between
+  // those two, the distinctive part of the card name ("Venture X", "CREDIT
+  // CARD") survives inside the fixed box; `title` still carries the full
+  // untruncated institution+name for hover.
   return (
     <div
       className={cn('flex shrink-0 flex-col justify-between overflow-hidden shadow-md', big ? 'h-32 w-56 rounded-2xl p-4' : 'h-20 w-32 rounded-xl p-2.5')}
@@ -187,7 +201,7 @@ export function CardChip({ institution, name, mask, size = 'row', colorOverride 
     >
       <div className={cn('truncate font-semibold text-white/80', big ? 'text-xs' : 'text-[0.5625rem]')}>{institution || 'Bank'}</div>
       <div className="flex items-end justify-between gap-1">
-        <span className={cn('truncate font-bold text-white', big ? 'text-sm' : 'text-[0.625rem]')}>{name}</span>
+        <span className={cn('line-clamp-2 break-words font-bold leading-tight text-white', big ? 'text-sm' : 'text-[0.625rem]')}>{displayName}</span>
         {mask ? <span className={cn('shrink-0 font-semibold text-white/70', big ? 'text-xs' : 'text-[0.5625rem]')}>••{mask}</span> : null}
       </div>
     </div>
