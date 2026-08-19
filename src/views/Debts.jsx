@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { CreditCard, CalendarDays, CheckCircle2, Target, ChevronRight, Pencil, X, Flame, Snowflake, Plus, DollarSign, Search, Lightbulb, Landmark } from 'lucide-react'
+import { CreditCard, CalendarDays, CheckCircle2, Target, ChevronRight, Pencil, X, Flame, Snowflake, Plus, DollarSign, Search, Lightbulb, Landmark, AlertTriangle } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -15,7 +15,7 @@ import { useApp } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
 import { fmt, fmt0, today, monthLabel, prettyDate, uid } from '@/lib/utils'
 import { simulatePlan, simCardPlan, parseAPR, payoffMonths, fmtMonths, matchesBankAccount } from '@/lib/finance'
-import { deleteDebt, reconcileDebtLimits } from '@/lib/accounts'
+import { deleteDebt, reconcileDebtLimits, findDuplicateDebts } from '@/lib/accounts'
 import { useT } from '@/lib/i18n'
 
 const TIP = {
@@ -28,6 +28,7 @@ export default function Debts() {
   const { state, update } = useApp()
   const t = useT()
   const toast = useToast()
+  const centerToast = useCenterToast()
   const [minsOpen, setMinsOpen] = useState(false)
   const [snowOpen, setSnowOpen] = useState(false)
   const [openDebt, setOpenDebt] = useState(null)
@@ -62,6 +63,18 @@ export default function Debts() {
   useEffect(() => {
     reconcileDebtLimits(state, plaidItems, update)
   }, [state.debts, plaidItems])
+
+  // Duplicate-debt-row cleanup (lib/accounts.js's findDuplicateDebts) — the
+  // same real card/loan showing up as two rows in the Debt Tracker (a
+  // Plaid-linked row + a leftover manual row, legacy rows both linked to the
+  // same account, or two unlinked rows with the same normalized name/mask).
+  // Session-only dismissal, same pattern as Accounts.jsx's duplicate-
+  // connection banner — this is a real problem worth fixing, so it comes
+  // back on reload as long as the duplicate is still sitting there.
+  const duplicateDebtPairs = useMemo(() => findDuplicateDebts(state, plaidItems), [state.debts, plaidItems])
+  const [dismissedDupDebtIds, setDismissedDupDebtIds] = useState([])
+  const [removingDupDebt, setRemovingDupDebt] = useState(null) // { keep, remove } pending the confirm dialog
+  const [removingDupDebtBusy, setRemovingDupDebtBusy] = useState(false)
 
   const total = state.debts.reduce((s, d) => s + d.balance, 0)
   const mins = state.debts.reduce((s, d) => s + d.min, 0)
@@ -135,8 +148,48 @@ export default function Debts() {
     )
   }
 
+  const handleRemoveDupDebt = async () => {
+    if (!removingDupDebt) return
+    setRemovingDupDebtBusy(true)
+    await new Promise((r) => setTimeout(r, 350))
+    try {
+      deleteDebt(update, removingDupDebt.remove.id)
+      centerToast(t('Duplicate debt removed'))
+      setRemovingDupDebtBusy(false)
+      setRemovingDupDebt(null)
+    } catch (e) {
+      centerToast(e?.message || t('Something went wrong'), 'error')
+      setRemovingDupDebtBusy(false)
+    }
+  }
+
   return (
     <div className="fade-in space-y-6">
+      {duplicateDebtPairs.filter((p) => !dismissedDupDebtIds.includes(p.remove.id)).map(({ keep, remove }) => (
+        <div key={remove.id} className="flex flex-wrap items-center gap-2.5 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3.5 py-2.5 text-[0.8125rem] text-amber-200">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+          <p className="min-w-0 flex-1 text-amber-200/90">
+            {t('It looks like {name} is in your Debt Tracker twice — delete the duplicate?', { name: keep.name })}
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="outline" size="xs"
+              className="border-amber-400/40 bg-amber-400/10 text-amber-400 hover:bg-amber-400/20"
+              onClick={() => setRemovingDupDebt({ keep, remove })}
+            >
+              {t('Remove duplicate')}
+            </Button>
+            <button
+              onClick={() => setDismissedDupDebtIds((ids) => [...ids, remove.id])}
+              className="text-amber-400/70 transition hover:text-amber-300"
+              title={t('Dismiss')}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      ))}
+
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Kpi label={t('Total Debt')} value={fmt(total)} tone="text-red-400" icon={CreditCard} />
         <button onClick={() => setMinsOpen(!minsOpen)} className="text-left" title={t('See how this adds up')}>
@@ -315,6 +368,16 @@ export default function Debts() {
       </div>
 
       {editIdx !== undefined && <DebtDialog idx={editIdx} onClose={() => setEditIdx(undefined)} />}
+      {removingDupDebt && (
+        <ConfirmDialog
+          title={t('Delete the duplicate "{name}"?', { name: removingDupDebt.remove.name })}
+          desc={t("This removes the duplicate entry and its payment history. The other copy stays. This can't be undone.")}
+          confirmLabel={t('Remove duplicate')}
+          busy={removingDupDebtBusy}
+          onConfirm={handleRemoveDupDebt}
+          onClose={() => setRemovingDupDebt(null)}
+        />
+      )}
     </div>
   )
 }

@@ -143,6 +143,13 @@ export const DICTIONARY = {
   'Remove duplicate': { es: 'Eliminar duplicado' },
   'Duplicate connection removed': { es: 'Conexión duplicada eliminada' },
   'It looks like {institution} is connected twice — the same accounts appear on both.': { es: 'Parece que {institution} está conectado dos veces — las mismas cuentas aparecen en ambos.' },
+  // ---- duplicate DEBTS row cleanup (lib/accounts.js's findDuplicateDebts —
+  // Debts.jsx + Accounts.jsx banners, distinct from the duplicate
+  // CONNECTION banner just above) ----
+  'It looks like {name} is in your Debt Tracker twice — delete the duplicate?': { es: 'Parece que {name} está dos veces en tu Rastreador de Deudas — ¿eliminar el duplicado?' },
+  'Delete the duplicate "{name}"?': { es: '¿Eliminar el duplicado "{name}"?' },
+  "This removes the duplicate entry and its payment history. The other copy stays. This can't be undone.": { es: 'Esto elimina la entrada duplicada y su historial de pagos. La otra copia permanece. Esto no se puede deshacer.' },
+  'Duplicate debt removed': { es: 'Deuda duplicada eliminada' },
   'Shared spaces': { es: 'Espacios compartidos' },
   '1. Create a shared space. 2. Copy the invite link and send it to your partner. 3. They open the link, create an account, and the space shows up for both of you. Use the switcher in the header to flip between Personal and the shared space. The person who created a space owns it and can remove members.': { es: '1. Crea un espacio compartido. 2. Copia el enlace de invitación y envíalo a tu pareja. 3. Ellos abren el enlace, crean una cuenta, y el espacio aparece para ambos. Usa el selector en el encabezado para cambiar entre Personal y el espacio compartido. La persona que creó un espacio es su propietaria y puede eliminar miembros.' },
   'Splitting finances with a partner? Turn your Personal space into a shared one — everything you already have moves with you.': { es: '¿Compartes finanzas con tu pareja? Convierte tu espacio Personal en uno compartido — todo lo que ya tienes se traslada contigo.' },

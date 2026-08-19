@@ -561,12 +561,27 @@ export function MoneyTile({ label, hint, value, tone, active, onClick }) {
       onClick={onClick}
       className={`min-w-0 rounded-xl border px-2 py-3 text-center transition sm:p-4 ${base} ${active ? activeCls : ''} ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
     >
-      {/* Fixed-height label + always-rendered hint zones keep the three
-          tiles' amounts and bottoms aligned even when one label wraps to
-          two lines or a tile has no hint. */}
-      <div className="mb-1 flex min-h-[1.75rem] items-end justify-center text-[0.625rem] font-bold uppercase leading-tight tracking-wider text-muted-foreground sm:min-h-[1rem] sm:text-[0.6875rem]">{label}</div>
+      {/* Label zone: a truly FIXED height (h-7 -- not min-h), not just a
+          floor, sized to fit TWO lines at every breakpoint this renders at
+          (mobile 0.625rem and sm+ 0.6875rem, leading-tight). The previous
+          version used `min-h-[1.75rem] sm:min-h-[1rem]` -- a *minimum* that a
+          two-line label's intrinsic height happily grows past, and which
+          shrank at sm+ to barely one line -- so "Money In" (one line) sat at
+          a different box height than "In The Negative" (two lines) the
+          instant either wrapped, and the amount below started at a
+          different y per tile (the reported misalignment). A fixed height +
+          overflow-hidden + items-end means every tile's label box is
+          identical regardless of line count, and the amount row always
+          starts at the exact same y. */}
+      <div className="mb-1 flex h-7 items-end justify-center overflow-hidden text-[0.625rem] font-bold uppercase leading-tight tracking-wider text-muted-foreground sm:text-[0.6875rem]">{label}</div>
       <div className={`text-base font-extrabold tracking-tight sm:text-xl md:text-2xl ${isNeg ? 'text-red-400' : 'text-emerald-400'}`}>{value}</div>
-      <div className={`mt-1 min-h-[0.875rem] text-[0.625rem] font-semibold ${active ? (isNeg ? 'text-red-300' : 'text-emerald-300') : 'text-muted-foreground'}`}>{hint || ' '}</div>
+      {/* Hint zone: also a fixed height, `whitespace-nowrap` so "where from?
+          ▾" / "where to? ▾" (different lengths) never wrap onto a second
+          line -- that's what made Money In's hint render as two rows while
+          Money Out's stayed one -- and always rendered (`hint || '\u00a0'`) so
+          the tile with no hint at all (In The Negative) still reserves the
+          same row instead of ending one row short. */}
+      <div className={`mt-1 h-[0.875rem] overflow-hidden whitespace-nowrap text-[0.625rem] font-semibold ${active ? (isNeg ? 'text-red-300' : 'text-emerald-300') : 'text-muted-foreground'}`}>{hint || ' '}</div>
     </button>
   )
 }

@@ -18,7 +18,7 @@ import { cn, fmt0, today, uid } from '@/lib/utils'
 import {
   RANGE_KEYS, daysFor, buildSeries, pctChange, pctChange30,
   buildAccountInventory, accountUrlId, usePlaidItems, deleteManualAccount, allAccountTags, colorForAccount,
-  relTime, lastUpdatedAt, findDuplicateItems,
+  relTime, lastUpdatedAt, findDuplicateItems, findDuplicateDebts, deleteDebt,
 } from '@/lib/accounts'
 
 const TIP = { contentStyle: { background: 'hsl(221 55% 10%)', border: '1px solid hsl(220 42% 18%)', borderRadius: 12, fontSize: 12 } }
@@ -29,7 +29,7 @@ const LABEL_COLOR = '#6f8bb8'
 
 export default function Accounts({ editParam, clearEditParam } = {}) {
   const t = useT()
-  const { state, refetch } = useApp()
+  const { state, update, refetch } = useApp()
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
   const [range, setRange] = useState('3M')
   const { plaidItems, plaidChecked, refetchPlaidItems } = usePlaidItems()
@@ -56,6 +56,32 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
   const duplicatePairs = useMemo(() => findDuplicateItems(plaidItems), [plaidItems])
   const [dismissedDupIds, setDismissedDupIds] = useState([])
   const [removingDup, setRemovingDup] = useState(null) // { dupItem, originalItem } pending the confirm dialog
+
+  // Duplicate DEBTS-row cleanup (lib/accounts.js's findDuplicateDebts) — a
+  // different failure mode than the connection-level banner above: the same
+  // real card rendered twice because two `debts` rows resolve to it (a
+  // Plaid-linked row + a leftover manual row, most commonly). Same
+  // session-only dismissal pattern.
+  const duplicateDebtPairs = useMemo(() => findDuplicateDebts(state, plaidItems), [state.debts, plaidItems])
+  const [dismissedDupDebtIds, setDismissedDupDebtIds] = useState([])
+  const [removingDupDebt, setRemovingDupDebt] = useState(null) // { keep, remove } pending the confirm dialog
+  const [removingDupDebtBusy, setRemovingDupDebtBusy] = useState(false)
+  const centerToast = useCenterToast()
+
+  const handleRemoveDupDebt = async () => {
+    if (!removingDupDebt) return
+    setRemovingDupDebtBusy(true)
+    await new Promise((r) => setTimeout(r, 350))
+    try {
+      deleteDebt(update, removingDupDebt.remove.id)
+      centerToast(t('Duplicate debt removed'))
+      setRemovingDupDebtBusy(false)
+      setRemovingDupDebt(null)
+    } catch (e) {
+      centerToast(e?.message || t('Something went wrong'), 'error')
+      setRemovingDupDebtBusy(false)
+    }
+  }
 
   // Tags: "Mine"/"Julia's"/etc. per-account labels (see lib/accounts.js's tag
   // helpers, CLAUDE.md 2026-08-08 (10)) — keyed by the same canonical
@@ -136,6 +162,31 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
             </Button>
             <button
               onClick={() => setDismissedDupIds((ids) => [...ids, dupItem.id])}
+              className="text-amber-400/70 transition hover:text-amber-300"
+              title={t('Dismiss')}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {duplicateDebtPairs.filter((p) => !dismissedDupDebtIds.includes(p.remove.id)).map(({ keep, remove }) => (
+        <div key={remove.id} className="flex flex-wrap items-center gap-2.5 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3.5 py-2.5 text-[0.8125rem] text-amber-200">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+          <p className="min-w-0 flex-1 text-amber-200/90">
+            {t('It looks like {name} is in your Debt Tracker twice — delete the duplicate?', { name: keep.name })}
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="outline" size="xs"
+              className="border-amber-400/40 bg-amber-400/10 text-amber-400 hover:bg-amber-400/20"
+              onClick={() => setRemovingDupDebt({ keep, remove })}
+            >
+              {t('Remove duplicate')}
+            </Button>
+            <button
+              onClick={() => setDismissedDupDebtIds((ids) => [...ids, remove.id])}
               className="text-amber-400/70 transition hover:text-amber-300"
               title={t('Dismiss')}
             >
@@ -234,6 +285,16 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
           itemId={removingDup.dupItem.item_id}
           onRemoved={async () => { setRemovingDup(null); await refetchPlaidItems(); refetch() }}
           onClose={() => setRemovingDup(null)}
+        />
+      )}
+      {removingDupDebt && (
+        <ConfirmDialog
+          title={t('Delete the duplicate "{name}"?', { name: removingDupDebt.remove.name })}
+          desc={t("This removes the duplicate entry and its payment history. The other copy stays. This can't be undone.")}
+          confirmLabel={t('Remove duplicate')}
+          busy={removingDupDebtBusy}
+          onConfirm={handleRemoveDupDebt}
+          onClose={() => setRemovingDupDebt(null)}
         />
       )}
     </div>

@@ -182,25 +182,56 @@ export function extractMask(name) {
 // ---- merged inventory (Copilot-style Credit cards / Loans / Depository) ----
 // Pure function — callers (Accounts.jsx, AccountDetail.jsx) memoize it
 // themselves against [state.debts, state.accounts, plaidItems].
+// Resolve the Plaid account a debt row is actually backed by. Prefers the
+// deterministic `plaidAccountId` link (debts.plaid_account_id, written by
+// lib/plaid-debts.js at connect/sync time — an exact account_id match) over
+// matchesBankAccount's fuzzy name/mask overlap. This matters a lot once
+// someone has several similarly-named cards at the same bank (e.g. Capital
+// One "Platinum", "Venture X", "Venture") — matchesBankAccount can match the
+// WRONG one of the three, or fail to match at all, purely on name-token
+// overlap. When that happens the real Plaid account for that debt never
+// gets added to `matchedAccountIds` below, so it survives into
+// `unmatchedPlaid` and renders as a SECOND card for the same real account —
+// one copy showing debts.balance (this row), one showing the live Plaid
+// balance (the unmatched copy) — which is exactly the "same card twice with
+// different balances" bug. Falls back to the fuzzy match for debts that were
+// never linked (pre-migration, or hand-entered and not yet synced).
+function linkedPlaidAccount(d, plaidAccountsFlat) {
+  if (d.plaidAccountId) {
+    const linked = plaidAccountsFlat.find((a) => a.account_id === d.plaidAccountId)
+    if (linked) return linked
+  }
+  return matchesBankAccount(d, plaidAccountsFlat)
+}
+
 export function buildAccountInventory(state, plaidItems) {
   const plaidAssetAccounts = plaidItems.flatMap((it) => (it.accounts || []).filter((a) => a.type === 'depository' || a.type === 'investment'))
   const plaidAccountsFlat = plaidItems.flatMap((it) => (it.accounts || []).map((a) => ({ ...a, institution: it.institution })))
 
   const matchedAccountIds = new Set()
   state.debts.forEach((d) => {
-    const m = matchesBankAccount(d, plaidAccountsFlat)
+    const m = linkedPlaidAccount(d, plaidAccountsFlat)
     if (m) matchedAccountIds.add(acctKey(m))
   })
 
   const findItemFor = (m) => m ? plaidItems.find((it) => (it.accounts || []).some((a) => acctKey(a) === acctKey(m))) : null
 
   const fromDebts = (limitTruthy) => state.debts.filter((d) => !!d.limit === limitTruthy).map((d) => {
-    const m = matchesBankAccount(d, plaidAccountsFlat)
+    const m = linkedPlaidAccount(d, plaidAccountsFlat)
     const item = findItemFor(m)
     return {
       key: 'debt:' + d.id, kind: limitTruthy ? 'credit' : 'loan', name: d.name,
       mask: m?.mask || extractMask(d.name), subtype: m?.subtype || null,
-      institution: m?.institution || null, balance: d.balance,
+      institution: m?.institution || null,
+      // Prefer the matched Plaid account's own live balance over d.balance
+      // when it's present: d.balance is only as fresh as the last
+      // syncDebtsFromPlaid/updateDebtBalancesFromAccounts write (lib/plaid-
+      // debts.js), while `m.balance` reflects whatever /api/plaid/items just
+      // returned (e.g. right after "Sync all"). Reading the live number here
+      // means the single rendered card can't visibly disagree with itself
+      // even if that background debts-table write is still in flight or
+      // failed (see the missing-migration note on plaidAccountId below).
+      balance: m?.balance != null ? m.balance : d.balance,
       // Prefer Plaid's real limit when the matched account has one; keep the
       // manually-entered d.limit as a fallback so a debt matched to a Plaid
       // account that doesn't report a limit (or isn't matched at all) is
@@ -682,6 +713,104 @@ export function findDuplicateItems(plaidItems) {
       }
     }
   }
+  return out
+}
+
+// ---- duplicate-debt detection ----
+// findDuplicateItems (above) catches the same real card connected twice
+// through two different BANK CONNECTIONS. This catches a different-but-
+// related mess: the same real card showing up as two different DEBTS ROWS
+// under one connection (or none at all) — which is what actually produces
+// "the same card twice with different balances" once buildAccountInventory
+// stops rendering an unmatched Plaid account a second time (see
+// linkedPlaidAccount above). Three ways two rows can be "the same real
+// card":
+//   1. Both linked to the same plaid_account_id — shouldn't happen going
+//      forward (lib/plaid-debts.js's byPlaidAccountId index prevents it) but
+//      legacy data (rows created before that dedupe existed) can still have
+//      it.
+//   2. One row linked (plaidAccountId set) + one unlinked row that
+//      fuzzy-matches (matchesBankAccount) that SAME Plaid account — the
+//      classic "had it manual, then connected the bank and it got
+//      auto-created as a second row instead of finding the manual one"
+//      case, or a manual row added after the Plaid-linked one already
+//      existed.
+//   3. Two unlinked rows (no live Plaid account matches either, e.g. the
+//      bank's disconnected, or genuinely never connected) whose names
+//      normalize to the exact same significant tokens/mask — deliberately
+//      an exact-normalized-name or exact-mask match, never the looser
+//      one-token-overlap matchesBankAccount uses, so two real cards from the
+//      same bank ("Capital One Platinum" / "Capital One Venture X") are
+//      never merged just because they share a brand token. A mask, when
+//      present on both sides, must always agree too — a same-institution
+//      coincidence is far more likely than a false negative here, and
+//      hiding two genuinely different cards is explicitly the failure mode
+//      to avoid.
+// Returns [{ keep, remove }] — `keep` is the Plaid-linked row when either
+// side is linked (it's what stays in sync going forward and carries
+// APR/min-payment/due-day), otherwise whichever row has more data filled
+// in. `remove` is always the other row. Deletion itself is the caller's
+// job (Debts.jsx / Accounts.jsx banners use lib/accounts.js's deleteDebt, a
+// plain client-side state.debts filter that auto-syncs to Supabase like any
+// other store mutation) — this function only ever reports pairs, never
+// mutates.
+function normalizeDebtName(name) {
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+// A debt's own "kind" (credit card vs loan) the same way buildAccountInventory
+// derives it — used so a mask match never merges a card and a loan that
+// happen to share trailing digits by coincidence.
+const debtKind = (d) => (d.limit ? 'credit' : 'loan')
+
+export function findDuplicateDebts(state, plaidItems) {
+  const debts = state?.debts || []
+  if (debts.length < 2) return []
+  const plaidAccountsFlat = (plaidItems || []).flatMap((it) => (it.accounts || []).map((a) => ({ ...a, institution: it.institution })))
+
+  // "How much do we actually know about this row" — used to pick which of
+  // two duplicate rows survives. A live plaidAccountId always wins (it's
+  // the one every future sync will keep fresh); ties beyond that favor
+  // whichever row has more of APR/min payment/limit/payment history filled
+  // in, so an old bare-bones manual row loses to a fuller one even when
+  // neither is Plaid-linked.
+  const richness = (d) => (d.plaidAccountId ? 1000 : 0)
+    + (d.apr && d.apr !== '—' ? 1 : 0) + (d.min ? 1 : 0) + (d.limit ? 1 : 0) + ((d.payments || []).length)
+
+  const groupKey = (d) => {
+    if (d.plaidAccountId) return 'acct:' + d.plaidAccountId
+    const m = matchesBankAccount(d, plaidAccountsFlat)
+    if (m?.account_id) return 'acct:' + m.account_id
+    const mask = extractMask(d.name)
+    if (mask) return 'mask:' + debtKind(d) + ':' + mask
+    return 'name:' + debtKind(d) + ':' + normalizeDebtName(d.name)
+  }
+
+  const groups = new Map()
+  debts.forEach((d) => {
+    const k = groupKey(d)
+    if (!groups.has(k)) groups.set(k, [])
+    groups.get(k).push(d)
+  })
+
+  const out = []
+  groups.forEach((rows) => {
+    if (rows.length < 2) return
+    const sorted = rows.slice().sort((a, b) => richness(b) - richness(a))
+    const keep = sorted[0]
+    sorted.slice(1).forEach((remove) => {
+      // Last-resort safety net: if both rows carry an explicit mask
+      // (typed by hand or pulled from Plaid) and they disagree, this is
+      // never a true duplicate — bail rather than risk hiding two
+      // genuinely different cards. Only reachable via the 'acct:'-keyed
+      // fuzzy-match path above, since the 'mask:' path already requires
+      // equal masks to group at all.
+      const keepMask = extractMask(keep.name)
+      const removeMask = extractMask(remove.name)
+      if (keepMask && removeMask && keepMask !== removeMask) return
+      out.push({ keep, remove })
+    })
+  })
   return out
 }
 
