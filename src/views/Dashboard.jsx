@@ -269,7 +269,13 @@ export default function Dashboard() {
       {/* KPIs — each tile is its own card, so each links straight to its detail page */}
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Kpi label={t('Avg Monthly Income')} value={<Money value={fmt0(avgIncome)} />} icon={TrendingUp} tone="text-emerald-400" sub={t('{month} so far: {amount}', { month: ymLabel(nowYm), amount: fmt0(incomeIn(state, nowYm)) })} href="/charts?focus=income" />
-        <Kpi label={t('Avg Monthly Spending')} value={<Money value={fmt0(avgExp)} />} icon={TrendingDown} sub={t('{month} so far: {amount}', { month: ymLabel(nowYm), amount: fmt0(expensesIn(state, nowYm)) })} href="/charts?focus=spending" />
+        {/* tone matches Avg Monthly Income's emerald-400 (and every other
+            income/spending pairing on this page — Money In/Out above, the
+            per-month rows' +green/−red columns) so the two sit as a
+            deliberate green/red pair instead of income being tinted and
+            spending defaulting to plain foreground/blue-icon — reported as
+            "dashboard [doesn't] align the spending and income". */}
+        <Kpi label={t('Avg Monthly Spending')} value={<Money value={fmt0(avgExp)} />} icon={TrendingDown} tone="text-red-400" sub={t('{month} so far: {amount}', { month: ymLabel(nowYm), amount: fmt0(expensesIn(state, nowYm)) })} href="/charts?focus=spending" />
         <Kpi label={t('Total Debt')} value={<Money value={fmt0(totalDebt)} />} icon={CreditCard} tone="text-red-400" sub={plan.done ? t('debt-free {month} on your plan', { month: monthLabel(plan.end) }) : ''} href="/debts" />
         <Kpi label={t('Fixed Monthly Payments')} value={<Money value={fmt0(mins + recTotal)} />} icon={CalendarDays} sub={t('{mins} debt + {rec} bills', { mins: fmt0(mins), rec: fmt0(recTotal) })} href="/recurring" />
       </div>
@@ -435,7 +441,7 @@ export default function Dashboard() {
                   <CardChip name={d.name} size="dash" colorOverride={colorForAccount(state, debtUrlId(d.id))} />
                   <div className="min-w-0 flex-1">
                     <div className="mb-0.5 flex min-w-0 items-baseline justify-between gap-2">
-                      <span className="min-w-0 flex-1 truncate text-[0.625rem] font-bold uppercase tracking-wider text-muted-foreground">{d.name}</span>
+                      <span className="min-w-0 flex-1 truncate text-[0.625rem] font-bold uppercase tracking-wider text-muted-foreground" title={d.name}>{d.name}</span>
                       <span className="shrink-0 whitespace-nowrap text-[0.6875rem] text-muted-foreground/80">/ {fmt0(d.limit)}</span>
                     </div>
                     <Money value={fmt0(d.balance)} className="text-base font-extrabold" />

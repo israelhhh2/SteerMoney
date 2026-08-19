@@ -77,6 +77,7 @@ export const DICTIONARY = {
   "(read-only, changes won't save)": { es: '(solo lectura, los cambios no se guardarán)' },
   'Exit': { es: 'Salir' },
   'Sync failed': { es: 'Error de sincronización' },
+  'Sync all': { es: 'Sincronizar todo' },
   'Invite': { es: 'Invitar' },
   'Loading your finances…': { es: 'Cargando tus finanzas…' },
   'Personal': { es: 'Personal' },
@@ -319,6 +320,7 @@ export const DICTIONARY = {
   'Min payment': { es: 'Pago mínimo' },
   'Due day': { es: 'Día de pago' },
   'Interest charged this month': { es: 'Interés cobrado este mes' },
+  'These details are shared with the Debt Tracker — editing them here or there updates the same record.': { es: 'Estos datos se comparten con el Rastreador de Deudas — editarlos aquí o allí actualiza el mismo registro.' },
   'APR, minimum payment, and due day come from the Debt Tracker —': { es: 'El APR, el pago mínimo y el día de pago vienen del Rastreador de Deudas —' },
   'sync your accounts or': { es: 'sincroniza tus cuentas o' },
   'add this card there': { es: 'agrega esta tarjeta ahí' },
@@ -400,6 +402,11 @@ export const DICTIONARY = {
   'Description': { es: 'Descripción' },
   'Amount ($)': { es: 'Monto ($)' },
   'Expense': { es: 'Gasto' },
+  'Reset filters': { es: 'Restablecer filtros' },
+  '+ Add category…': { es: '+ Agregar categoría…' },
+  'New category name': { es: 'Nombre de la nueva categoría' },
+  'Charges like this every month?': { es: '¿Se cobra esto cada mes?' },
+  'Make recurring': { es: 'Volver recurrente' },
 
   // ---- views/Goals.jsx + Charts.jsx + Simulator.jsx ----
   'Set your first goal': { es: 'Define tu primera meta' },

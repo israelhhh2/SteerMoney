@@ -127,6 +127,22 @@ const EXCLUDE_PATTERNS = [
   /\btransfer\b/i,
   /\bxfer\b/i,
   /\bfee\b/i,                    // late/overdraft/annual/maintenance/NSF/ATM fees
+  // Credit-card reward/cashback credits (rewards redemption, cash-back
+  // bonus payouts) are real, recurring-looking transactions for a
+  // cardholder who redeems on a regular schedule, but they're a payout FROM
+  // the bank, never a bill — added after these started showing up as
+  // suggested "recurring bills". mapPlaidCategory (lib/plaid-categories.js)
+  // discards Plaid's personal_finance_category once a transaction is
+  // stored (only the app's own coarse category id survives), so there's no
+  // clean category-based signal left to check here — name/desc matching is
+  // the only option. Whole-word boundaries so this only fires on an actual
+  // "reward"/"cash back" mention, not a substring of an unrelated word;
+  // the accepted collateral is a merchant whose real name happens to
+  // contain one of these words as its own whole word (e.g. a "Reward
+  // Fitness" gym), same tradeoff the other EXCLUDE_PATTERNS entries above
+  // already make.
+  /\brewards?\b/i,
+  /\bcash[\s-]*back\b/i,
 ]
 
 function isExcludedMerchant(desc) {

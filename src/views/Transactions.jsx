@@ -1,6 +1,6 @@
 'use client'
-import { useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Landmark, Pencil, Plus, Search, Upload, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, FilterX, Landmark, Pencil, Plus, Repeat, Search, Upload, X } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,12 +25,55 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
   const fileRef = useRef(null)
   const [ym, setYm] = useState(today().slice(0, 7))
   const [q, setQ] = useState('')
-  // `cat` mirrors the `?cat=` param exactly the way `accountFilter` mirrors
-  // `?account=` — no local-only state, so a deep link (Dashboard's "Where
-  // the money went" rows, Budgets' category rows, AccountDetail's account
-  // links) and the select itself always agree on what's selected.
-  const cat = catFilter || 'all'
-  const setCat = (id) => setCatFilter(id === 'all' ? null : id)
+  // ROOT CAUSE (user reports "filter never switches"/"won't let me choose
+  // anything else"): `cat`/`accountFilter` used to be read *directly* off
+  // the `catFilter`/`accountFilter` props every render — those props only
+  // change once `setCatFilter`/`setAccountFilter` (app/(app)/transactions/
+  // page.jsx's `setParam`) has round-tripped through `router.replace()`, a
+  // real client-side navigation. Picking a second account/category before
+  // the first navigation resolved (or just being on a slow connection) let
+  // the prop snap back to — or simply never leave — whatever the URL still
+  // said, so the dropdown looked permanently stuck on the first value. It
+  // also meant every filter tweak was a real navigation, competing with the
+  // browser's own Back (see item 2's fix note below).
+  //
+  // Fix: the account/category the UI actually renders now lives in local
+  // state (`account`/`cat`), which updates synchronously on click and can
+  // never be reverted by a slow/superseded navigation — the user's pick
+  // always wins immediately. `lastPushed*` remembers the value *we* last
+  // wrote out, so the guarded effects below only re-sync from the prop when
+  // it changes for some OTHER reason — a genuine new deep link landing
+  // while this page is already mounted (e.g. clicking a different Budgets
+  // category row without leaving Transactions first). That's what makes a
+  // deep link seed the filter once instead of locking it forever.
+  const lastPushedAccount = useRef(accountFilter)
+  const [account, setAccountState] = useState(accountFilter)
+  useEffect(() => {
+    if (accountFilter !== lastPushedAccount.current) {
+      lastPushedAccount.current = accountFilter
+      setAccountState(accountFilter)
+    }
+  }, [accountFilter])
+  const updateAccount = (id) => {
+    lastPushedAccount.current = id
+    setAccountState(id)
+    setAccountFilter(id)
+  }
+
+  const lastPushedCat = useRef(catFilter)
+  const [cat, setCatState] = useState(catFilter || 'all')
+  useEffect(() => {
+    if (catFilter !== lastPushedCat.current) {
+      lastPushedCat.current = catFilter
+      setCatState(catFilter || 'all')
+    }
+  }, [catFilter])
+  const setCat = (id) => {
+    const param = id === 'all' ? null : id
+    lastPushedCat.current = param
+    setCatState(id)
+    setCatFilter(param)
+  }
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
   const [importRows, setImportRows] = useState(null) // null closed · [] -> preview dialog
   const [confirmDelId, setConfirmDelId] = useState(null) // transaction id pending delete confirmation
@@ -73,12 +116,12 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
     return opts.sort((x, y) => x.institution.localeCompare(y.institution) || x.name.localeCompare(y.name))
   }, [plaidItems])
 
-  const filterAccount = accountFilter ? accountsById[accountFilter] || {} : null
+  const filterAccount = account ? accountsById[account] || {} : null
 
   // While the filtered account's bank connection is still pulling in its
   // historical backfill, show the same "please wait" placeholder used by
   // AccountDetail.jsx instead of a possibly-empty/partial transaction list.
-  const isSyncingAccount = !!accountFilter && filterAccount?.status === 'syncing'
+  const isSyncingAccount = !!account && filterAccount?.status === 'syncing'
 
   const importFile = (file) => {
     if (!file) return
@@ -101,6 +144,19 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
     setYm(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'))
   }
 
+  // "Reset filters" (toolbar) — only shown once something's actually
+  // filtering the list, and clears every filter this page has (search,
+  // category, account, and the month) back to its default in one tap,
+  // including the `?account=`/`?cat=` query params.
+  const currentYm = today().slice(0, 7)
+  const hasActiveFilters = Boolean(q || cat !== 'all' || account || ym !== currentYm)
+  const resetFilters = () => {
+    setQ('')
+    setCat('all')
+    if (account) updateAccount(null)
+    setYm(currentYm)
+  }
+
   // Deletion is a synchronous store mutation; the deliberate short delay +
   // busy spinner in ConfirmDialog matches the "it's working" feedback the
   // async Plaid-disconnect path gets elsewhere in the app.
@@ -120,7 +176,7 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
   }
 
   let list = monthTx(state, ym)
-  if (accountFilter) list = list.filter((tx) => tx.accountId === accountFilter)
+  if (account) list = list.filter((tx) => tx.accountId === account)
   if (cat !== 'all') list = list.filter((tx) => tx.cat === cat)
   if (q) list = list.filter((tx) => tx.desc.toLowerCase().includes(q.toLowerCase()))
   const inc = list.filter((tx) => tx.type === 'income' && tx.cat !== 'transfer').reduce((s, tx) => s + tx.amount, 0)
@@ -165,14 +221,17 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
           {accountOptions.length > 0 && (
             <Select
               className="w-full text-xs sm:w-auto sm:max-w-[9.5rem] md:max-w-[13rem]"
-              value={accountFilter || ''}
-              onChange={(e) => setAccountFilter(e.target.value || null)}
+              value={account || ''}
+              onChange={(e) => updateAccount(e.target.value || null)}
             >
               <option value="">{t('All accounts')}</option>
               {accountOptions.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
             </Select>
           )}
         </div>
+        {hasActiveFilters && (
+          <Button variant="ghost" size="xs" onClick={resetFilters}><FilterX />{t('Reset filters')}</Button>
+        )}
         <div className="flex flex-wrap items-center gap-2 text-xs sm:ml-auto">
           <Badge>{t('In')} <b className="text-emerald-400">{fmt0(inc)}</b></Badge>
           <Badge>{t('Out')} <b className="text-foreground">{fmt0(exp)}</b></Badge>
@@ -248,7 +307,7 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
           </div>
         )) : (
           <div className="p-10 text-center text-[0.8125rem] text-muted-foreground">
-            {t('No transactions in {month}', { month: ymLabel(ym) })}{(q || cat !== 'all' || accountFilter) && <> {t('matching your filters —')} <button className="text-primary hover:underline" onClick={() => { setQ(''); setCat('all'); if (accountFilter) setAccountFilter(null) }}>{t('clear filters')}</button></>}.
+            {t('No transactions in {month}', { month: ymLabel(ym) })}{(q || cat !== 'all' || account) && <> {t('matching your filters —')} <button className="text-primary hover:underline" onClick={() => { setQ(''); setCat('all'); if (account) updateAccount(null) }}>{t('clear filters')}</button></>}.
           </div>
         )}
         {/* Mobile-only clearance so the last row scrolls fully clear of the
@@ -393,6 +452,10 @@ function ImportDialog({ rows, setRows, onClose }) {
   )
 }
 
+// Sentinel <option> value for "+ Add category…" — never a real category id
+// (uid('b') ids never start with this), so it can't collide with a budget.
+const ADD_CATEGORY = '__add_category__'
+
 function TxDialog({ id, onClose }) {
   const { state, update } = useApp()
   const t = useT()
@@ -400,6 +463,31 @@ function TxDialog({ id, onClose }) {
   const tx = id ? state.transactions.find((x) => x.id === id) : { date: today(), desc: '', amount: '', type: 'expense', cat: 'other' }
   const [f, setF] = useState({ ...tx })
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
+  // Categories are just `state.budgets` rows (see store.jsx's DEFAULT_
+  // CATEGORIES — even 'other' is a plain budget with limit: 0) plus the
+  // three fixed non-budget ids below, so "add a category" is nothing more
+  // than pushing a new budget row the exact same way Budgets.jsx's own "Add
+  // budget" flow already does — no new table, no new sync plumbing. It
+  // persists through the existing `budgets` slice/table, so it shows up in
+  // every other category dropdown (Transactions' own filter, ImportDialog,
+  // Budgets, Charts) and gets a sane default look for free: CatIcon falls
+  // back to the generic Package icon and catColor falls back to a neutral
+  // gray (lib/utils.js) for any id it doesn't specifically know about.
+  const [addingCat, setAddingCat] = useState(false)
+  const [newCatName, setNewCatName] = useState('')
+  const selectCat = (e) => {
+    if (e.target.value === ADD_CATEGORY) { setAddingCat(true); return }
+    setF({ ...f, cat: e.target.value })
+  }
+  const commitNewCategory = () => {
+    const name = newCatName.trim()
+    if (!name) return
+    const newId = uid('b')
+    update((s) => { s.budgets.push({ id: newId, name, limit: 0, position: s.budgets.length }) })
+    setF({ ...f, cat: newId }) // selected on this transaction immediately
+    setNewCatName('')
+    setAddingCat(false)
+  }
   const save = () => {
     if (!String(f.desc).trim()) return toast(t('Enter a description'), 'error')
     const amount = parseFloat(f.amount)
@@ -411,6 +499,27 @@ function TxDialog({ id, onClose }) {
       s.transactions.sort((a, b) => b.date.localeCompare(a.date))
     })
     toast(id ? t('Transaction updated') : t('Transaction added'))
+    onClose()
+  }
+  // "Let me add a transaction to be recurring" — smallest coherent version:
+  // one-shot creation of a recurring row from this transaction, same shape
+  // Recurring.jsx's own creation paths use (RecurringDialog's manual "Add
+  // recurring" and addSuggestion() for an accepted Suggested Subscription) —
+  // id/desc/amount/dueDay/cat/active/every, plus accountId only when present.
+  // No cadence-detection UI: always monthly (every: 1) on this transaction's
+  // day-of-month, same "default to monthly, let them refine it on the
+  // Recurring page" behavior addSuggestion() already has. Uses the saved
+  // `tx` fields (not the in-progress `f` edit state) so this reflects the
+  // transaction as it actually is, not whatever's mid-edit and unsaved.
+  const makeRecurring = () => {
+    const dueDay = Math.min(31, Math.max(1, new Date(tx.date + 'T00:00:00').getDate()))
+    update((s) => {
+      s.recurring.push({
+        id: uid('r'), desc: tx.desc, amount: tx.amount, dueDay, cat: tx.cat, active: true, every: 1,
+        ...(tx.accountId ? { accountId: tx.accountId } : {}),
+      })
+    })
+    toast(t('{name} added to recurring', { name: tx.desc }))
     onClose()
   }
   return (
@@ -427,14 +536,45 @@ function TxDialog({ id, onClose }) {
               <option value="expense">{t('Expense')}</option><option value="income">{t('Income')}</option>
             </Select>
           </div>
-          <div>
+          <div className={addingCat ? 'sm:col-span-2' : ''}>
             <Label>{t('Category')}</Label>
-            <Select className="w-full" value={f.cat} onChange={set('cat')}>
-              {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              <option value="debt">{t('Debt Payment')}</option><option value="income">{t('Income')}</option><option value="transfer">{t('Transfer')}</option>
-            </Select>
+            {addingCat ? (
+              <div className="flex items-center gap-1.5">
+                <Input
+                  autoFocus
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  placeholder={t('New category name')}
+                  maxLength={30}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); commitNewCategory() }
+                    if (e.key === 'Escape') { setAddingCat(false); setNewCatName('') }
+                  }}
+                />
+                <Button type="button" size="xs" onClick={commitNewCategory}>{t('Add')}</Button>
+                <Button type="button" variant="ghost" size="xs" onClick={() => { setAddingCat(false); setNewCatName('') }}>{t('Cancel')}</Button>
+              </div>
+            ) : (
+              <Select className="w-full" value={f.cat} onChange={selectCat}>
+                {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                <option value="debt">{t('Debt Payment')}</option><option value="income">{t('Income')}</option><option value="transfer">{t('Transfer')}</option>
+                <option value={ADD_CATEGORY}>{t('+ Add category…')}</option>
+              </Select>
+            )}
           </div>
         </div>
+        {/* Only for an existing expense that isn't already tied to a
+            recurring bill (tx.rid is only set on transactions logRecurring()
+            generated — see Recurring.jsx) — a brand-new/unsaved transaction
+            has no meaningful "day of month" yet, and income has no recurring
+            representation in the store's schema (recurring rows are always
+            treated as bills, never earnings). */}
+        {id && tx.type === 'expense' && !tx.rid && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-dashed bg-secondary/20 px-3 py-2">
+            <span className="text-[0.75rem] text-muted-foreground">{t('Charges like this every month?')}</span>
+            <Button type="button" variant="outline" size="xs" onClick={makeRecurring}><Repeat className="h-3.5 w-3.5" />{t('Make recurring')}</Button>
+          </div>
+        )}
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>{t('Cancel')}</Button>
           <Button onClick={save}>{t('Save')}</Button>

@@ -41,9 +41,22 @@
   @media (max-width: 767px) {
     html { font-size: clamp(17px, 4.9vw, 21px); }
   }
-  /* iOS Safari zooms the page when a focused input's font-size is under 16px */
+  /* iOS Safari zooms the page when a focused input's font-size is under
+     16px, and doesn't reliably zoom back out afterward (reported from
+     /debts: "after I edit something the app zooms out completely"). This
+     rule already existed but did nothing in practice: every real input in
+     the app renders through the shared Input/Select components (or a raw
+     element styled with a Tailwind text-size utility like `text-sm` or
+     `text-[0.6875rem]`), and a class selector always beats a bare-element
+     selector on specificity regardless of source order — so `.text-sm`
+     was silently winning over this plain `input` selector every time.
+     `!important` makes the mobile-only 16px floor win unconditionally
+     instead of relying on out-specificity-ing every current and future
+     text-size class one by one; the input still visually renders at its
+     normal (smaller) size on tablet/desktop, this only forces 16px below
+     the `sm` breakpoint where iOS auto-zoom actually kicks in. */
   @media (max-width: 639px) {
-    input, select, textarea { font-size: 16px; }
+    input, select, textarea { font-size: 16px !important; }
   }
 }
 

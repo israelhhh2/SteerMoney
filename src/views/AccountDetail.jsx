@@ -2,10 +2,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Loader2, Trash2, Link2Off, RotateCw } from 'lucide-react'
+import { Loader2, Trash2, Link2Off, RotateCw, Pencil, Plus } from 'lucide-react'
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Segmented } from '@/components/ui/segmented'
-import { Money, CardChip, CatIcon, CatChip, SourceBadge, ConfirmDialog, TransactionsSkeleton, ChartSkeleton, AccountTagsEditor, CardColorPicker } from '@/components/shared'
+import { Select } from '@/components/ui/select'
+import { Money, CardChip, CatIcon, SourceBadge, ConfirmDialog, TransactionsSkeleton, ChartSkeleton, AccountTagsEditor, CardColorPicker } from '@/components/shared'
 import { useApp } from '@/store'
 import { useCenterToast } from '@/components/toast'
 import { useT } from '@/lib/i18n'
@@ -15,6 +16,12 @@ import {
   RANGE_KEYS, typeLabel, pctChange30, relTime, accountHistorySeries,
   usePlaidItems, findAccountByUrlId, deleteManualAccount, deleteDebt, backToAccounts, colorForAccount,
 } from '@/lib/accounts'
+// Reused, not rebuilt: the exact same APR/credit-limit/minimum-payment/due-day
+// edit dialog Debts.jsx's own "Edit" button opens. Importing it here (instead
+// of duplicating its fields/validation) is what makes an edit made from this
+// modal and one made on the Debt Tracker page land on the identical
+// state.debts row — see the "Card summary" section below.
+import { DebtDialog } from '@/views/Debts'
 
 // Same wording lib/recurring-detect.js's EXCLUDE_PATTERNS already treats as
 // "not a subscription, it's interest" — reused here (not imported, it's not
@@ -50,6 +57,36 @@ function StatLabel({ children }) {
   return <div className="whitespace-nowrap text-[0.625rem] font-bold uppercase tracking-wide sm:text-[0.65rem]" style={{ color: LABEL_COLOR }}>{children}</div>
 }
 
+// One "Card summary" cell for a field that lives on the linked Debt Tracker
+// row (APR/minimum payment/due day) — tappable when `editable` (opens the
+// DebtDialog imported above), rendering a muted dashed "+ Add" pill instead
+// of "–" when the value is missing so there's always something obvious to
+// tap. Non-editable (no linked debt) falls back to the same plain "–" the
+// rest of Card summary already uses.
+function CardField({ label, value, editable, onEdit }) {
+  const t = useT()
+  if (!editable) {
+    return <div><StatLabel>{label}</StatLabel><div className={`text-sm font-extrabold ${value ? '' : 'text-muted-foreground'}`}>{value || '–'}</div></div>
+  }
+  return (
+    <div>
+      <StatLabel>{label}</StatLabel>
+      <button type="button" onClick={onEdit} className="group -ml-0.5 flex items-center gap-1 rounded px-0.5 text-left transition hover:bg-secondary/60">
+        {value ? (
+          <>
+            <span className="text-sm font-extrabold">{value}</span>
+            <Pencil className="h-2.5 w-2.5 shrink-0 text-muted-foreground opacity-0 transition group-hover:opacity-100" />
+          </>
+        ) : (
+          <span className="flex items-center gap-0.5 rounded-full border border-dashed border-primary/40 px-1.5 py-0.5 text-[0.65625rem] font-bold text-primary/80">
+            <Plus className="h-2.5 w-2.5" />{t('Add')}
+          </span>
+        )}
+      </button>
+    </div>
+  )
+}
+
 function ChangePill({ pct }) {
   const good = pct >= 0
   return (
@@ -71,6 +108,10 @@ export default function AccountDetail({ id }) {
   const [range, setRange] = useState('1M')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // "Card summary" edit dialog (APR/credit limit/minimum payment/due day) —
+  // opens the same DebtDialog Debts.jsx uses. Declared here, above every
+  // early return below, per the rules-of-hooks note at the top of this file.
+  const [editingDebt, setEditingDebt] = useState(false)
   // Balance-only-refresh feature (see lib/plaid-balance.js, CLAUDE.md
   // session log) — "N left today" counter + in-flight state for the
   // Refresh button rendered further down, Plaid-backed accounts only.
@@ -131,6 +172,12 @@ export default function AccountDetail({ id }) {
   const cardApr = linkedDebt?.apr && linkedDebt.apr !== '—' ? linkedDebt.apr : null
   const cardMinPayment = linkedDebt?.min ? linkedDebt.min : null
   const cardDueDay = linkedDebt?.dueDay || null
+  // Index into state.debts for DebtDialog (it mutates s.debts[idx] directly,
+  // same contract Debts.jsx's own Edit button already relies on) — looked up
+  // fresh every render by id rather than cached, so it stays correct even if
+  // state.debts gets re-sorted (deleteDebt/DebtDialog's save() both re-sort
+  // by balance) while this modal is open.
+  const debtIdx = linkedDebt ? state.debts.findIndex((dd) => dd.id === linkedDebt.id) : -1
   // "Interest charged this month": only computable for a Plaid-linked
   // account (needs real transactions to scan) — a manual/unlinked debt has
   // no transaction feed to look at, so this stays null (hidden) for those.
@@ -260,6 +307,17 @@ export default function AccountDetail({ id }) {
     }
   }
 
+  // Category select in the transaction rows below — same store mutation
+  // Transactions.jsx's TxDialog performs on save (Object.assign(...tx, {
+  // cat })), just fired straight from the row's own Select instead of a
+  // dialog's Save button.
+  const handleCatChange = (txId, catId) => {
+    update((s) => {
+      const found = s.transactions.find((x) => x.id === txId)
+      if (found) found.cat = catId
+    })
+  }
+
   const accountTx = account.account_id
     ? state.transactions.filter((t) => t.accountId === account.account_id).slice().sort((a, b) => b.date.localeCompare(a.date))
     : []
@@ -273,7 +331,7 @@ export default function AccountDetail({ id }) {
 
       <CardChip institution={account.institution} name={account.name} mask={account.mask} size="lg" colorOverride={colorForAccount(state, id)} />
 
-      <h1 className="max-w-full truncate text-center text-lg font-extrabold tracking-tight">{account.name}</h1>
+      <h1 className="line-clamp-2 max-w-full text-center text-lg font-extrabold tracking-tight" title={account.name}>{account.name}</h1>
 
       {/* Current balance is the hero number (balance-only-refresh feature —
           see lib/plaid-balance.js, CLAUDE.md session log): this is the
@@ -372,17 +430,37 @@ export default function AccountDetail({ id }) {
           already use, in its own bordered box (like Tags/Card color below)
           rather than a plain grid, so it reads as one distinct "summary
           card" — kept 2-up (not 3) and full-width for the interest row so
-          nothing crowds at a 390px mobile width. */}
+          nothing crowds at a 390px mobile width.
+
+          When this card is backed by a Debt Tracker row (linkedDebt), APR/
+          minimum payment/due day become tap-to-edit fields that open the
+          exact same DebtDialog Debts.jsx's own Edit button uses (imported
+          above) against the same state.debts[debtIdx] row — so an edit made
+          here IS an edit made on the Debt Tracker, and vice versa, with
+          nothing duplicated to keep in sync. "Feedback: The accounts modal
+          should have all the info on credit cards. And if it's missing I
+          should edit it here on the accounts page." */}
       {isCreditCard && (
         <div className="w-full max-w-sm space-y-2.5">
-          <h3 className="px-0.5 text-[0.9375rem] font-semibold">{t('Card summary')}</h3>
+          <div className="flex items-center justify-between px-0.5">
+            <h3 className="text-[0.9375rem] font-semibold">{t('Card summary')}</h3>
+            {linkedDebt && debtIdx !== -1 && (
+              <button
+                type="button"
+                onClick={() => setEditingDebt(true)}
+                className="flex items-center gap-1 text-[0.71875rem] font-bold text-primary/90 transition hover:text-primary"
+              >
+                <Pencil className="h-3 w-3" />{t('Edit')}
+              </button>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border p-4">
             <div><StatLabel>{t('Balance')}</StatLabel><Money value={fmt0(account.balance)} className="text-sm font-extrabold" /></div>
             <div><StatLabel>{t('Credit limit')}</StatLabel>{account.limit ? <Money value={fmt0(account.limit)} className="text-sm font-extrabold" /> : <div className="text-sm font-extrabold text-muted-foreground">–</div>}</div>
             <div><StatLabel>{t('Utilized')}</StatLabel><div className="text-sm font-extrabold">{util != null ? util + '%' : '–'}</div></div>
-            <div><StatLabel>{t('APR')}</StatLabel><div className="text-sm font-extrabold">{cardApr || '–'}</div></div>
-            <div><StatLabel>{t('Min payment')}</StatLabel>{cardMinPayment ? <Money value={fmt0(cardMinPayment)} className="text-sm font-extrabold" /> : <div className="text-sm font-extrabold text-muted-foreground">–</div>}</div>
-            <div><StatLabel>{t('Due day')}</StatLabel><div className="text-sm font-extrabold">{cardDueDay || '–'}</div></div>
+            <CardField label={t('APR')} value={cardApr} editable={linkedDebt && debtIdx !== -1} onEdit={() => setEditingDebt(true)} />
+            <CardField label={t('Min payment')} value={cardMinPayment ? fmt0(cardMinPayment) : null} editable={linkedDebt && debtIdx !== -1} onEdit={() => setEditingDebt(true)} />
+            <CardField label={t('Due day')} value={cardDueDay} editable={linkedDebt && debtIdx !== -1} onEdit={() => setEditingDebt(true)} />
             {interestThisMonth != null && (
               <div className="col-span-2 border-t border-border/60 pt-3">
                 <StatLabel>{t('Interest charged this month')}</StatLabel>
@@ -390,7 +468,20 @@ export default function AccountDetail({ id }) {
               </div>
             )}
           </div>
-          {!linkedDebt && (
+          {/* Note — the last DebtDialog field, shown read-only here (edited
+              the same way as everything else above, via the Edit button/
+              pencil icons opening that same dialog) only when one's actually
+              set, matching Debts.jsx's own DebtCard note styling. */}
+          {linkedDebt?.note && (
+            <div className="rounded-lg border border-amber-400/15 bg-amber-400/[0.06] px-3 py-2 text-[0.71875rem] text-amber-200/80">
+              {linkedDebt.note}
+            </div>
+          )}
+          {linkedDebt ? (
+            <p className="px-0.5 text-[0.71875rem] text-muted-foreground">
+              {t('These details are shared with the Debt Tracker — editing them here or there updates the same record.')}
+            </p>
+          ) : (
             <p className="px-0.5 text-[0.71875rem] text-muted-foreground">
               {t('APR, minimum payment, and due day come from the Debt Tracker —')} {account.source === 'plaid' ? t('sync your accounts or') + ' ' : ''}
               <Link href="/debts" className="font-semibold text-primary hover:underline">{t('add this card there')}</Link> {t('to fill them in.')}
@@ -398,6 +489,8 @@ export default function AccountDetail({ id }) {
           )}
         </div>
       )}
+
+      {editingDebt && linkedDebt && debtIdx !== -1 && <DebtDialog idx={debtIdx} onClose={() => setEditingDebt(false)} />}
 
       {/* Tags: per-account labels ("Mine"/"Julia's"/"Business") — see
           lib/accounts.js's tag helpers and CLAUDE.md 2026-08-08 (10). Works
@@ -480,13 +573,33 @@ export default function AccountDetail({ id }) {
             {dates.map((dt) => (
               <div key={dt}>
                 <div className="border-b border-border/60 bg-secondary/40 px-4 py-1.5 text-[0.65625rem] font-semibold uppercase tracking-wider text-muted-foreground">{prettyDate(dt)}</div>
-                {byDate[dt].map((t) => (
-                  <div key={t.id} className="flex items-center gap-3 px-4 py-2">
-                    <span className="flex w-6 shrink-0 justify-center"><CatIcon cat={t.cat} /></span>
-                    <span className="min-w-0 flex-1 truncate text-[0.8125rem] text-foreground/90" title={t.desc}>{t.desc}</span>
-                    <span className="hidden sm:inline-flex"><CatChip cat={t.cat} /></span>
-                    <span className={`w-20 shrink-0 text-right text-[0.8125rem] font-semibold sm:w-24 ${t.type === 'income' ? 'text-emerald-400' : t.cat === 'transfer' ? 'text-muted-foreground' : ''}`}>
-                      {t.type === 'income' ? '+' : '−'}{fmt(t.amount)}
+                {/* Renamed the map var from `t` to `tx` here (it used to shadow
+                    useT()'s `t` — harmless while nothing in this scope called
+                    the translation function, but the category Select below
+                    needs it for its option labels). */}
+                {byDate[dt].map((tx) => (
+                  <div key={tx.id} className="flex items-center gap-2 px-4 py-2 sm:gap-3">
+                    <span className="flex w-6 shrink-0 justify-center"><CatIcon cat={tx.cat} /></span>
+                    <span className="min-w-0 flex-1 truncate text-[0.8125rem] text-foreground/90" title={tx.desc}>{tx.desc}</span>
+                    {/* "Can't categorize transactions inside of credit card
+                        modal" — a compact category Select right on the row,
+                        writing tx.cat via update() exactly like Transactions.jsx's
+                        TxDialog does, just without a whole dialog to get there.
+                        Categories are state.budgets rows plus the same three
+                        fixed non-budget ids (debt/income/transfer) Transactions.jsx
+                        already offers. */}
+                    <Select
+                      value={tx.cat}
+                      onChange={(e) => handleCatChange(tx.id, e.target.value)}
+                      className="!h-7 w-20 shrink-0 px-1.5 text-[0.625rem] sm:w-32 sm:px-2 sm:text-[0.6875rem]"
+                    >
+                      {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                      <option value="debt">{t('Debt Payment')}</option>
+                      <option value="income">{t('Income')}</option>
+                      <option value="transfer">{t('Transfer')}</option>
+                    </Select>
+                    <span className={`w-16 shrink-0 text-right text-[0.8125rem] font-semibold sm:w-24 ${tx.type === 'income' ? 'text-emerald-400' : tx.cat === 'transfer' ? 'text-muted-foreground' : ''}`}>
+                      {tx.type === 'income' ? '+' : '−'}{fmt(tx.amount)}
                     </span>
                   </div>
                 ))}

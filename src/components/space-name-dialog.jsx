@@ -27,9 +27,12 @@ export function SpaceNameDialog({ title, label, initial = '', placeholder, onSav
         <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
         <div>
           {label && <Label>{label}</Label>}
+          {/* No autoFocus — ui/dialog.jsx's DialogContent prevents Radix's
+              own open-auto-focus for the same reason; typing into this field
+              is the user's call, not something opening the dialog should
+              trigger on its own (mobile keyboard popping unprompted). */}
           <Input
             ref={inputRef}
-            autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={placeholder}
@@ -70,7 +73,6 @@ export function ConvertToSharedSpaceDialog({ initial = '', placeholder, desc, bu
         <div>
           <Label>{t('Space name')}</Label>
           <Input
-            autoFocus
             value={name}
             disabled={busy}
             onChange={(e) => setName(e.target.value)}
@@ -142,7 +144,6 @@ export function DeleteSpaceDialog({ space, busy = false, onConfirm, onClose }) {
         <div>
           <Label>{t('Type {name} to confirm', { name: space.name })}</Label>
           <Input
-            autoFocus
             value={text}
             disabled={busy}
             onChange={(e) => setText(e.target.value)}

@@ -161,16 +161,29 @@ export function CardChip({ institution, name, mask, size = 'row', colorOverride 
 
   if (size === 'dash') {
     return (
-      <div className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl px-1.5 shadow-sm" style={{ background: gradient }}>
+      <div className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl px-1.5 shadow-sm" style={{ background: gradient }} title={name}>
         <span className="truncate text-center text-[0.5625rem] font-bold leading-tight text-white/90">{name}</span>
       </div>
     )
   }
   const big = size === 'lg'
+  // The chip stays a fixed size on purpose (it's a "physical card" visual,
+  // not a text block) — a long name still truncates to one line rather than
+  // wrapping and overflowing the fixed height/overflow-hidden box. On
+  // AccountDetail (size='lg') and Dashboard's mini list (size='dash') the
+  // full name is also shown as its own readable text right next to this
+  // chip, so this truncation there is cosmetic only. On Accounts.jsx's
+  // CardRow/LoanRow/DepositoryRow (default size='row'), though, this chip's
+  // name is the ONLY place the name renders at sm+ widths (the separate
+  // readable name div in those rows is sm:hidden) — `title` at least
+  // surfaces the untruncated name on hover there; a real fix would need to
+  // widen the chip or show a readable name at every breakpoint, which is a
+  // layout change out of scope for this pass.
   return (
     <div
       className={cn('flex shrink-0 flex-col justify-between overflow-hidden shadow-md', big ? 'h-32 w-56 rounded-2xl p-4' : 'h-20 w-32 rounded-xl p-2.5')}
       style={{ background: gradient }}
+      title={[institution, name].filter(Boolean).join(' — ')}
     >
       <div className={cn('truncate font-semibold text-white/80', big ? 'text-xs' : 'text-[0.5625rem]')}>{institution || 'Bank'}</div>
       <div className="flex items-end justify-between gap-1">

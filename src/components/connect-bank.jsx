@@ -1,10 +1,12 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { usePlaidLink } from 'react-plaid-link'
-import { Landmark, Loader2 } from 'lucide-react'
+import { Landmark, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/toast'
 import { exchangeAndSync, PLAID_LINK_TOKEN_KEY } from '@/lib/plaid-client'
+import { useApp } from '@/store'
+import { usePlaidItems } from '@/lib/accounts'
 import { useT } from '@/lib/i18n'
 
 // The ONE place react-plaid-link's `usePlaidLink` hook gets called anywhere
@@ -102,5 +104,76 @@ export function ConnectBankButton({ onDone, variant = 'default', size, children 
       </Button>
       {linkToken && <PlaidLinkRunner token={linkToken} onSuccess={handleSuccess} onExit={handleExit} />}
     </>
+  )
+}
+
+// "Sync all" — pulls the latest transactions/balances for every connected
+// bank at once, so a user doesn't have to go into Settings > Connected
+// banks and click "Sync now" per row. Same POST /api/plaid/sync request and
+// toast handling as that per-row button (views/Settings.jsx) — just fired
+// once for every item instead of scoped to one — so the success/error
+// messaging matches exactly what's already shown there. Rendered in the
+// Accounts page toolbar and the app header (app/(app)/layout.jsx); hides
+// itself with nothing connected yet (nothing to sync). `iconOnly` swaps in a
+// plain icon button matching the header's existing RemindersBell/CloudOff
+// style, for the header's tighter space — title-attributed either way.
+export function SyncAllButton({ variant = 'outline', size = 'sm', iconOnly = false, className }) {
+  const t = useT()
+  const toast = useToast()
+  const { refetch } = useApp()
+  const { plaidItems, refetchPlaidItems } = usePlaidItems()
+  const [syncing, setSyncing] = useState(false)
+
+  if (!plaidItems.length) return null
+
+  const syncAll = async () => {
+    if (syncing) return // disabled state already blocks this, but a second guard costs nothing against a double-fire
+    setSyncing(true)
+    try {
+      const res = await fetch('/api/plaid/sync', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Sync failed')
+      // itemErrors: some connections synced fine, one or more others hit an
+      // error (reauth needed, Plaid outage, etc.) — same per-item isolation
+      // Settings' "Sync now" surfaces (see lib/plaid-sync.js).
+      if (data.itemErrors?.length) {
+        toast(t('Synced {n} new transactions, but {count} connection{plural} failed ({banks}) — try Fix connection below', {
+          n: data.added, count: data.itemErrors.length, plural: data.itemErrors.length > 1 ? 's' : '',
+          banks: data.itemErrors.map((e) => e.institution || t('a bank')).join(', '),
+        }), 'error')
+      } else {
+        toast(t('Synced: {n} new transactions', { n: data.added }))
+      }
+      // No page reload — refresh the shared usePlaidItems() consumers
+      // (header/Accounts/AccountDetail/Settings) and the store's own
+      // debts/transactions/etc., same as Settings' "Sync now".
+      await refetchPlaidItems()
+      refetch()
+    } catch (e) {
+      toast(e.message, 'error')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  if (iconOnly) {
+    return (
+      <button
+        type="button"
+        onClick={syncAll}
+        disabled={syncing}
+        title={t('Sync all')}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-secondary hover:text-foreground disabled:opacity-50"
+      >
+        {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+      </button>
+    )
+  }
+
+  return (
+    <Button variant={variant} size={size} className={className} disabled={syncing} onClick={syncAll}>
+      {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+      {t('Sync all')}
+    </Button>
   )
 }

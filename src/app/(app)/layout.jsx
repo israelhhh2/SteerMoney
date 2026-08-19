@@ -16,6 +16,7 @@ import { Logo, Wordmark } from '@/components/logo'
 import { useIsAdmin } from '@/lib/useIsAdmin'
 import { SpaceNameDialog, InviteLinkDialog } from '@/components/space-name-dialog'
 import { usePlaidItems, relTime, lastUpdatedAt } from '@/lib/accounts'
+import { SyncAllButton } from '@/components/connect-bank'
 import { useT } from '@/lib/i18n'
 
 const NAV = [
@@ -332,6 +333,7 @@ function Frame({ children, modal }) {
                 <span className="max-w-[5.5rem] truncate text-[0.625rem] font-medium text-muted-foreground">{t('Updated {time}', { time: relTime(updatedAt) })}</span>
               ) : null}
               {syncError ? <button type="button" onClick={() => window.alert(syncError)} title={syncError}><CloudOff className="h-4 w-4 text-red-400" /></button> : null}
+              {state ? <SyncAllButton iconOnly /> : null}
               {state ? <RemindersBell /> : null}
             </div>
           </div>
@@ -349,6 +351,7 @@ function Frame({ children, modal }) {
                 <CloudOff className="h-3.5 w-3.5" /> {t('Sync failed')}
               </button>
             ) : null}
+            {state ? <SyncAllButton iconOnly /> : null}
             {!viewingAs && spaceSelect('!h-8 max-w-32 text-xs sm:max-w-44')}
             {space && !viewingAs ? (
               <Button variant="outline" size="xs" onClick={invite} title={t('Copy an invite link for this shared space')}>

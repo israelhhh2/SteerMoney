@@ -10,7 +10,7 @@ import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Segmented } from '@/components/ui/segmented'
 import { Money, CardChip, SourceBadge, ConfirmDialog, SyncingPill, TagPill, tagTone } from '@/components/shared'
-import { ConnectBankButton } from '@/components/connect-bank'
+import { ConnectBankButton, SyncAllButton } from '@/components/connect-bank'
 import { useApp } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
 import { useT } from '@/lib/i18n'
@@ -102,6 +102,7 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
           <span className="text-[0.71875rem] text-muted-foreground">{t('Updated {time}', { time: relTime(updatedAt) })}</span>
         ) : <span />}
         <div className="flex flex-wrap items-center gap-2">
+          <SyncAllButton variant="outline" size="sm" />
           <ConnectBankButton variant="outline" size="sm" />
           <Button size="sm" onClick={() => setEditing(null)}><Plus />{t('Add account')}</Button>
         </div>
@@ -294,7 +295,7 @@ function CardRow({ account, tags = [], colorOverride }) {
       <div className="flex items-center gap-3 sm:contents">
         <CardChip institution={account.institution} name={account.name} mask={account.mask} colorOverride={colorOverride} />
         <div className="min-w-0 flex-1 sm:hidden">
-          <div className="truncate text-sm font-bold">{account.name}</div>
+          <div className="line-clamp-2 text-sm font-bold" title={account.name}>{account.name}</div>
           {account.mask ? <div className="truncate text-xs font-semibold text-muted-foreground">••{account.mask}</div> : null}
         </div>
       </div>
@@ -339,7 +340,7 @@ function LoanRow({ account, tags = [], colorOverride }) {
       <div className="flex items-center gap-3 sm:contents">
         <CardChip institution={account.institution} name={account.name} mask={account.mask} colorOverride={colorOverride} />
         <div className="min-w-0 flex-1 sm:hidden">
-          <div className="truncate text-sm font-bold">{account.name}</div>
+          <div className="line-clamp-2 text-sm font-bold" title={account.name}>{account.name}</div>
           {account.mask ? <div className="truncate text-xs font-semibold text-muted-foreground">••{account.mask}</div> : null}
         </div>
       </div>
@@ -366,7 +367,7 @@ function DepositoryRow({ account, tags = [], colorOverride }) {
       <div className="flex items-center gap-3 sm:contents">
         <CardChip institution={account.institution} name={account.name} mask={account.mask} colorOverride={colorOverride} />
         <div className="min-w-0 flex-1 sm:hidden">
-          <div className="truncate text-sm font-bold">{account.name}</div>
+          <div className="line-clamp-2 text-sm font-bold" title={account.name}>{account.name}</div>
           {account.mask ? <div className="truncate text-xs font-semibold text-muted-foreground">••{account.mask}</div> : null}
         </div>
       </div>

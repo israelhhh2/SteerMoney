@@ -15,11 +15,14 @@ function TxPage() {
   // dropdown/select always reflects a deep-linked selection and clearing it
   // (id=null) drops the param entirely rather than leaving `?account=`/`?cat=`
   // dangling with an empty value.
-  const setParam = (key, value) => (id) => {
+  const setParam = (key) => (id) => {
     const next = new URLSearchParams(params.toString())
     if (id) next.set(key, id); else next.delete(key)
     const qs = next.toString()
-    router.replace(qs ? `/transactions?${qs}` : '/transactions')
+    // scroll: false — this only ever fires from an already-mounted filter
+    // control (the Select in views/Transactions.jsx), so there's no reason
+    // for a same-page query update to also reset scroll position.
+    router.replace(qs ? `/transactions?${qs}` : '/transactions', { scroll: false })
   }
   return (
     <Transactions

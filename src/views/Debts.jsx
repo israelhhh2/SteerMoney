@@ -155,7 +155,7 @@ export default function Debts() {
           <div className="divide-y divide-border/60">
             {state.debts.slice().sort((a, b) => b.min - a.min).map((d) => (
               <div key={d.name} className="flex items-center gap-3 py-1.5 text-[0.8125rem]">
-                <span className="min-w-0 flex-1 truncate text-foreground/90">{d.name}</span>
+                <span className="min-w-0 flex-1 truncate text-foreground/90" title={d.name}>{d.name}</span>
                 {d.balance <= 0 && <Badge variant="success">{t('paid off')}</Badge>}
                 <span className="hidden shrink-0 text-[0.6875rem] text-muted-foreground sm:inline">{t('bal {amount}', { amount: fmt0(d.balance) })}</span>
                 <span className="w-20 shrink-0 text-right font-semibold">{fmt(d.min)}</span>
@@ -216,7 +216,7 @@ export default function Debts() {
               {payoffList.length ? payoffList.map(([n, d], idx) => (
                 <div key={n} className="flex items-center gap-2.5 py-1.5 text-[0.8125rem]">
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-secondary text-[0.65625rem] font-bold text-muted-foreground">{idx + 1}</span>
-                  <span className="min-w-0 flex-1 truncate text-foreground/90">{n}</span>
+                  <span className="min-w-0 flex-1 truncate text-foreground/90" title={n}>{n}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">{monthLabel(d)}</span>
                 </div>
               )) : <p className="text-[0.8125rem] text-muted-foreground">{t('Nothing pays off within 50 years at this payment.')}</p>}
@@ -262,7 +262,7 @@ export default function Debts() {
                 <div key={s.d.name} className="flex items-center gap-3 py-2.5 text-[0.8125rem]">
                   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-emerald-400/10 text-[0.6875rem] font-bold text-emerald-300">{ix + 1}</span>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium">{s.d.name}</div>
+                    <div className="line-clamp-2 font-medium" title={s.d.name}>{s.d.name}</div>
                     <div className="text-[0.6875rem] text-muted-foreground">{t('{balance} balance · min {min}', { balance: fmt0(s.d.balance), min: fmt0(s.d.min) })}</div>
                   </div>
                   <div className="hidden shrink-0 text-right sm:block">
@@ -365,11 +365,18 @@ function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, on
     <>
     <Card className={`${open ? 'md:col-span-2' : ''} transition-colors hover:border-accent`}>
       <div className="cursor-pointer p-5 pb-0" onClick={onToggle}>
-        <div className="mb-2 flex items-start justify-between">
+        {/* flex-wrap on both this row and the name+badge row below it: at
+            ~375px width a long card name next to a "Synced from Plaid"
+            badge and the balance figure could force the row past the
+            viewport (the "have to scroll right" complaint) since neither
+            the badge nor the balance shrinks. Wrapping instead of squeezing
+            keeps everything on-screen; there's plenty of room for it to
+            stay a single row on anything wider, so this is a no-op there. */}
+        <div className="mb-2 flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 text-[0.9375rem] font-semibold tracking-tight">
+            <div className="flex flex-wrap items-center gap-1.5 gap-y-1 text-[0.9375rem] font-semibold tracking-tight">
               <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
-              <span className="min-w-0 flex-1 truncate">{d.name}</span>
+              <span className="min-w-0 flex-1 line-clamp-2" title={d.name}>{d.name}</span>
               {d.plaidAccountId ? (
                 <Badge variant="success" className="shrink-0"><Landmark className="h-3 w-3" />{t('Synced from Plaid')}</Badge>
               ) : bankMatch ? (
@@ -654,7 +661,7 @@ function ConsolidationCard() {
                   <label key={d.name} className={`flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 text-[0.8125rem] transition ${on ? 'border-sky-400/40 bg-sky-400/[0.06]' : 'bg-secondary/30 hover:bg-secondary/60'}`}>
                     <input type="checkbox" className="h-4 w-4 accent-sky-400" checked={on} onChange={() => toggle(d.name)} />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate">{d.name}</div>
+                      <div className="line-clamp-2" title={d.name}>{d.name}</div>
                       <div className="text-[0.65625rem] text-muted-foreground">
                         {t('pays ${amount}/$1k', { amount: (d.min / d.balance * 1000).toFixed(2) })} ·{' '}
                         <span className={r > 0 ? 'text-emerald-400' : 'text-red-400'}>{r > 0 ? '+' : '−'}{fmt0(Math.abs(r * d.balance / 1000))}/mo</span>
@@ -748,7 +755,12 @@ function ConsolidationCard() {
   )
 }
 
-function DebtDialog({ idx, onClose }) {
+// Exported so views/AccountDetail.jsx's "Card summary" section can open the
+// exact same editing UI for a debt-linked credit card — same `idx` (an index
+// into state.debts) in, same `update()` mutation on save, so an edit made
+// from the account modal and one made from this page's own Edit button land
+// on the identical debts row. No separate component, no duplicated fields.
+export function DebtDialog({ idx, onClose }) {
   const { state, update } = useApp()
   const t = useT()
   const toast = useToast()
