@@ -811,6 +811,24 @@ export function AppProvider({ children }) {
     }
   }
 
+  // "Erase all data" (views/Settings.jsx's Danger zone) — ONE store write that
+  // puts every synced slice back to a brand-new account's shape, so the
+  // debounced diff-sync above issues a real `DELETE ... WHERE id IN (...)`
+  // for every row that was previously synced (an emptied array leaves no ids
+  // to keep) rather than only clearing things locally. Deliberately restores
+  // DEFAULT_CATEGORIES instead of an empty budgets array: those rows double
+  // as the app's category list (see catInfo below and Transactions.jsx's
+  // "+ Add category"), so wiping them would leave a "fresh" account with no
+  // categories at all — worse off than a real new signup. Also covers the
+  // slices the old inline version in Settings.jsx missed (accountTags,
+  // accountColors, sim, mSim). Bank connections live in plaid_items, not in
+  // `state`, so the caller disconnects those separately before calling this.
+  const resetAllData = () => {
+    if (viewAs) return // support mode is strictly read-only
+    dirty.current = true
+    setState(() => freshState())
+  }
+
   const api = useMemo(() => ({
     state,
     syncError,
@@ -829,6 +847,7 @@ export function AppProvider({ children }) {
     deleteSpace, // owner-only permanent space delete — see definition above
     transferPersonalDataToSpace, // "Move my data into this space" — see definition above
     refetch, // force a fresh pull from Supabase without a page reload — see definition above
+    resetAllData, // Danger zone "Erase all data" — see definition above
     // update(fn): fn receives a deep clone, mutates freely, returns nothing
     // no-op while viewing another customer — support mode is strictly read-only
     update: viewAs

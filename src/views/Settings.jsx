@@ -711,15 +711,22 @@ function SharedSpacesSection() {
   )
 }
 
-// Roadmap-adjacent, user-requested: a hard reset. Clears every user-data
-// slice through the single store `update(fn)` mutator (debts, budgets,
-// recurring, transactions, goals, accounts — payments aren't a separate
-// slice, they live inside each debt's `payments` array and get diffed away
-// automatically once `s.debts = []`) and disconnects any connected banks.
-// Deliberately does NOT touch `settings` (sim/mSim) or workspaces/spaces —
-// those are configuration, not the "data" this button promises to erase.
+// Roadmap-adjacent, user-requested: a hard reset — "delete everything, I want
+// to start from scratch", in one button rather than removing rows one by one.
+// Disconnects every connected bank (each DELETE /api/plaid/items call also
+// revokes the item with Plaid and cleans up the debts rows that connection
+// auto-created — see that route), then hands the local wipe to the store's
+// resetAllData(), which puts EVERY synced slice back to a brand-new account's
+// shape: debts (payments aren't a separate slice — they live inside each
+// debt's `payments` array and get diffed away with it), budgets (restored to
+// the default categories, since those rows are also the app's category list),
+// recurring, transactions, goals, accounts, accountTags, accountColors, and
+// the sim/mSim scratch values. Workspaces/spaces themselves are NOT touched —
+// this erases what's inside the current space, it doesn't delete the space
+// (Settings' own space section owns that, and deleting the space you're
+// standing in is a different, owner-only action).
 function DangerZoneSection() {
-  const { update } = useApp()
+  const { resetAllData } = useApp()
   const centerToast = useCenterToast()
   const t = useT()
   const [confirming, setConfirming] = useState(false)
@@ -750,20 +757,17 @@ function DangerZoneSection() {
     }
 
     try {
-      // The diff-sync in store.jsx (see the debounced effect there) diffs each
-      // slice's rows by id between the last-synced state and this one — an
-      // emptied array has no ids left, so every previously-synced row for
-      // debts/payments/budgets/recurring/transactions/goals/accounts gets a
-      // real `DELETE ... WHERE user_id = ? AND id IN (...)` against Supabase,
-      // not just a local/cache clear.
-      update((s) => {
-        s.debts = []
-        s.budgets = []
-        s.recurring = []
-        s.transactions = []
-        s.goals = []
-        s.accounts = []
-      })
+      // store.jsx's resetAllData() — one write that puts every synced slice
+      // back to a brand-new account's shape. The diff-sync there then diffs
+      // each slice's rows by id between the last-synced state and this one,
+      // so every previously-synced row for debts/payments/budgets/recurring/
+      // transactions/goals/accounts/tags/colors gets a real
+      // `DELETE ... WHERE user_id = ? AND id IN (...)` against Supabase, not
+      // just a local/cache clear. Lives in the store rather than inline here
+      // so it can't drift out of sync with freshState() the way this block
+      // did (it missed accountTags/accountColors, and emptied budgets — which
+      // are also the category list — leaving a "fresh" account with none).
+      resetAllData()
       centerToast(bankError ? t('Data erased — one bank connection needs manual removal') : t('All data erased'))
     } catch (e) {
       centerToast(e?.message || t("Couldn't erase your data"), 'error')
