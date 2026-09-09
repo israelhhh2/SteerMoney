@@ -402,6 +402,14 @@ export function AppProvider({ children }) {
   }, [userId])
 
   // ---- debounced diff sync ----
+  // Chunk size for delete id lists (see DELETE_CHUNK below) — this used to be
+  // one giant `.in('id', [...allIds])` per table. Fine for a handful of rows,
+  // but a real account's transactions table can run into the hundreds or
+  // thousands: that turns into a querystring PostgREST/the underlying fetch
+  // rejects outright, so the delete for that table fails every single pass.
+  // Chunking keeps every request's id list small and bounded regardless of
+  // how much history an account has.
+  const DELETE_CHUNK = 100
   useEffect(() => {
     if (viewAs) return // read-only while viewing another customer
     if (!state || !synced.current || state === synced.current || !supabase) return
@@ -410,6 +418,19 @@ export function AppProvider({ children }) {
       const next = state
       // chain syncs so they never interleave
       syncing.current = syncing.current.then(async () => {
+        // Tables that hit a real (non-optional) error THIS pass — collected,
+        // not thrown, so one table's failure (huge id list, transient
+        // network blip, RLS hiccup, whatever) can never abort every table
+        // queued after it. This is exactly what used to strand 'debts' rows
+        // in Supabase: 'transactions' failing used to `throw`, which skipped
+        // 'debts' entirely (it's near the end of the delete-order list) —
+        // the local state still went empty, so the owner saw a "successful"
+        // erase while the DB kept every row. See app/api/account/erase's
+        // comment for the full account of that bug and its real fix (a
+        // server-side wipe with no id lists at all); this hardening is the
+        // second line of defense so the same failure mode can't silently
+        // strand data through ordinary editing either.
+        const failedTables = []
         try {
           const prevRows = stateRows(prev, userId)
           const nextRows = stateRows(next, userId)
@@ -425,12 +446,24 @@ export function AppProvider({ children }) {
           for (const table of ['payments', 'transactions', 'budgets', 'recurring', 'goals', 'accounts', 'debts', 'account_tags', 'account_colors']) {
             const { deletes } = diffRows(prevRows[rowsKey(table)], nextRows[rowsKey(table)])
             if (!deletes.length) continue
-            const { error } = await supabase.from(table).delete().eq('user_id', userId).in('id', deletes)
-            if (error) {
-              // account_tags may not be migrated yet — don't let that abort every
-              // other table's sync this pass (see OPTIONAL_TABLES above).
-              if (OPTIONAL_TABLES.has(table)) { console.warn(`[store] ${table} delete skipped:`, error.message); continue }
-              throw error
+            // Chunked: an id list of any size becomes N bounded requests
+            // instead of one unbounded one. A chunk failure stops only THIS
+            // table's remaining chunks this pass (`break`) — synced.current
+            // won't advance below, so the next pass re-diffs from the same
+            // unchanged prev/next and retries the table's FULL delete list
+            // (already-deleted ids just no-op, harmless).
+            for (let i = 0; i < deletes.length; i += DELETE_CHUNK) {
+              const chunk = deletes.slice(i, i + DELETE_CHUNK)
+              const { error } = await supabase.from(table).delete().eq('user_id', userId).in('id', chunk)
+              if (error) {
+                // account_tags/account_colors may not be migrated yet — don't let
+                // that abort every other table's sync this pass (see
+                // OPTIONAL_TABLES above).
+                if (OPTIONAL_TABLES.has(table)) { console.warn(`[store] ${table} delete skipped:`, error.message); break }
+                console.warn(`[store] ${table} delete failed:`, error.message)
+                failedTables.push(table)
+                break
+              }
             }
           }
           for (const table of ['debts', 'payments', 'budgets', 'recurring', 'transactions', 'goals', 'accounts', 'account_tags', 'account_colors']) {
@@ -439,12 +472,24 @@ export function AppProvider({ children }) {
             const { error } = await supabase.from(table).upsert(upserts, { onConflict: 'user_id,id' })
             if (error) {
               if (OPTIONAL_TABLES.has(table)) { console.warn(`[store] ${table} upsert skipped:`, error.message); continue }
-              throw error
+              console.warn(`[store] ${table} upsert failed:`, error.message)
+              failedTables.push(table)
             }
           }
           if (JSON.stringify(prev.sim) !== JSON.stringify(next.sim) || JSON.stringify(prev.mSim) !== JSON.stringify(next.mSim)) {
             const { error } = await supabase.from('settings').upsert({ user_id: userId, sim: next.sim, m_sim: next.mSim })
-            if (error) throw error
+            if (error) { console.warn('[store] settings upsert failed:', error.message); failedTables.push('settings') }
+          }
+          if (failedTables.length) {
+            // Partial success: leave synced.current/the cache exactly as they
+            // were (do NOT advance) so the next debounced pass re-diffs from
+            // the SAME prev and retries every table — including this one —
+            // rather than quietly giving up on whatever didn't make it this
+            // time. Naming the table(s) in syncError instead of a generic
+            // message is what makes it possible to tell "still retrying X"
+            // apart from "totally stuck" at a glance.
+            setSyncError(`Couldn't sync ${[...new Set(failedTables)].join(', ')} — will retry`)
+            return
           }
           synced.current = next
           writeCache(userId, next)
@@ -463,6 +508,8 @@ export function AppProvider({ children }) {
           // (dirty.current stays true; that edit gets its own debounced pass).
           setState((current) => { if (current === next) dirty.current = false; return current })
         } catch (e) {
+          // Unexpected exception (not a `{error}` result) — same "don't
+          // advance synced.current" safety as the partial-failure path above.
           setSyncError(String(e?.message || e))
         }
       })
@@ -812,21 +859,66 @@ export function AppProvider({ children }) {
   }
 
   // "Erase all data" (views/Settings.jsx's Danger zone) — ONE store write that
-  // puts every synced slice back to a brand-new account's shape, so the
-  // debounced diff-sync above issues a real `DELETE ... WHERE id IN (...)`
-  // for every row that was previously synced (an emptied array leaves no ids
-  // to keep) rather than only clearing things locally. Deliberately restores
-  // DEFAULT_CATEGORIES instead of an empty budgets array: those rows double
-  // as the app's category list (see catInfo below and Transactions.jsx's
-  // "+ Add category"), so wiping them would leave a "fresh" account with no
-  // categories at all — worse off than a real new signup. Also covers the
-  // slices the old inline version in Settings.jsx missed (accountTags,
-  // accountColors, sim, mSim). Bank connections live in plaid_items, not in
-  // `state`, so the caller disconnects those separately before calling this.
+  // puts every synced slice back to a brand-new account's shape. Deliberately
+  // restores DEFAULT_CATEGORIES instead of an empty budgets array: those rows
+  // double as the app's category list (see catInfo below and
+  // Transactions.jsx's "+ Add category"), so wiping them would leave a
+  // "fresh" account with no categories at all — worse off than a real new
+  // signup. Also covers the slices the old inline version in Settings.jsx
+  // missed (accountTags, accountColors, sim, mSim). Bank connections live in
+  // plaid_items, not in `state`, so the caller disconnects those separately.
+  //
+  // Historically this was the ENTIRE erase: emptying every array here left
+  // the debounced diff-sync effect above to notice every previously-synced
+  // id was now missing and issue the real Supabase `DELETE`s. That's exactly
+  // what stranded rows in production (see app/api/account/erase's comment
+  // for the full postmortem: a huge `.in(id, [...])` list failing for one
+  // table `throw`s and aborts every table queued after it in the same pass —
+  // 'debts' sits near the end of that loop, so the owner's credit cards
+  // never actually got deleted, just hidden until the next reload pulled
+  // them back from Supabase). Erasing now goes through that server route
+  // FIRST as the authoritative wipe; this plain form is kept around for
+  // anything that still wants "just clear local state and let the normal
+  // diff-sync pick up the deletes" (nothing else calls it today, but no
+  // reason to force every future caller through the server round-trip too).
+  // The Danger zone flow itself uses resetAllDataAlreadySynced below instead.
   const resetAllData = () => {
     if (viewAs) return // support mode is strictly read-only
     dirty.current = true
     setState(() => freshState())
+  }
+
+  // Used by Settings' Danger zone AFTER app/api/account/erase has already
+  // wiped Supabase directly (no id-list diffing, so no size limit and no
+  // one-table-failure-aborts-everything problem — see that route's comment).
+  // Unlike resetAllData() above, this marks the fresh state as if it were
+  // already the last-synced snapshot: sets `synced.current` to it (not just
+  // local `state`), clears `dirty.current`, and overwrites the localStorage
+  // cache directly, instead of leaving that to the diff-sync effect's own
+  // `writeCache` call.
+  //
+  // Why that matters: resetAllData() alone would still leave `state !==
+  // synced.current` (synced.current is still the OLD, full pre-erase
+  // snapshot), so the debounced diff-sync effect fires on the very next
+  // render and issues a second, now-redundant `DELETE ... WHERE id IN (...)`
+  // pass for rows the server route already removed. Harmless on its own
+  // (deleting an already-gone row is a no-op), but noisy, and — more
+  // importantly — it means `synced.current`/the cache only become
+  // consistent with the empty state once that debounced pass finishes a few
+  // hundred milliseconds later; a reload (or this same tab losing network)
+  // in that window would hydrate from the STALE cache via the instant-
+  // hydration effect above and briefly show the old rows again. Setting
+  // `synced.current`/the cache to the fresh state right here, synchronously,
+  // closes that window entirely: state === synced.current on the very next
+  // render, so the diff-sync effect's own `state === synced.current` guard
+  // skips it outright — no diff generated at all, nothing left to strand.
+  const resetAllDataAlreadySynced = () => {
+    if (viewAs) return // support mode is strictly read-only
+    const fresh = freshState()
+    dirty.current = false
+    synced.current = fresh
+    if (userId) writeCache(userId, fresh)
+    setState(fresh)
   }
 
   const api = useMemo(() => ({
@@ -847,7 +939,8 @@ export function AppProvider({ children }) {
     deleteSpace, // owner-only permanent space delete — see definition above
     transferPersonalDataToSpace, // "Move my data into this space" — see definition above
     refetch, // force a fresh pull from Supabase without a page reload — see definition above
-    resetAllData, // Danger zone "Erase all data" — see definition above
+    resetAllData, // generic "clear local state, let the diff-sync delete" — see definition above
+    resetAllDataAlreadySynced, // Danger zone "Erase all data", used AFTER the server wipe — see definition above
     // update(fn): fn receives a deep clone, mutates freely, returns nothing
     // no-op while viewing another customer — support mode is strictly read-only
     update: viewAs

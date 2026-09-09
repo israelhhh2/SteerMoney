@@ -193,6 +193,7 @@ export const DICTIONARY = {
   'Data erased — one bank connection needs manual removal': { es: 'Datos borrados — una conexión bancaria necesita eliminación manual' },
   'All data erased': { es: 'Todos los datos borrados' },
   "Couldn't erase your data": { es: 'No se pudieron borrar tus datos' },
+  "Some data couldn't be deleted: {tables} — retrying in the background": { es: 'No se pudieron borrar algunos datos: {tables} — reintentando en segundo plano' },
   'a bank': { es: 'un banco' },
   'this bank': { es: 'este banco' },
   '"{name}" created. Copy the invite link to share it.': { es: '"{name}" creado. Copia el enlace de invitación para compartirlo.' },

@@ -726,7 +726,7 @@ function SharedSpacesSection() {
 // (Settings' own space section owns that, and deleting the space you're
 // standing in is a different, owner-only action).
 function DangerZoneSection() {
-  const { resetAllData } = useApp()
+  const { resetAllData, resetAllDataAlreadySynced, space } = useApp()
   const centerToast = useCenterToast()
   const t = useT()
   const [confirming, setConfirming] = useState(false)
@@ -752,24 +752,65 @@ function DangerZoneSection() {
         }
       }
     } catch (e) {
-      // couldn't even list connections — proceed with the local data wipe anyway
+      // couldn't even list connections — proceed with the server wipe anyway
+      // (app/api/account/erase has its own leftover-plaid_items backstop for
+      // exactly this case)
       bankError = bankError || e.message
     }
 
     try {
-      // store.jsx's resetAllData() — one write that puts every synced slice
-      // back to a brand-new account's shape. The diff-sync there then diffs
-      // each slice's rows by id between the last-synced state and this one,
-      // so every previously-synced row for debts/payments/budgets/recurring/
-      // transactions/goals/accounts/tags/colors gets a real
-      // `DELETE ... WHERE user_id = ? AND id IN (...)` against Supabase, not
-      // just a local/cache clear. Lives in the store rather than inline here
-      // so it can't drift out of sync with freshState() the way this block
-      // did (it missed accountTags/accountColors, and emptied budgets — which
-      // are also the category list — leaving a "fresh" account with none).
-      resetAllData()
-      centerToast(bankError ? t('Data erased — one bank connection needs manual removal') : t('All data erased'))
+      // app/api/account/erase — the AUTHORITATIVE wipe, run BEFORE touching
+      // local state at all. This used to be entirely client-side: emptying
+      // `state` and letting the debounced diff-sync (store.jsx) turn that
+      // into `DELETE ... WHERE id IN (...)` calls per table. That's what
+      // stranded rows in production — a huge id list can fail outright for
+      // one table, and that failure `throw`s and aborts every table queued
+      // after it in the same pass (see that route's comment for the full
+      // account). Plain `.eq('user_id', ...)` deletes here have no id-list
+      // size limit and no such abort-on-first-failure behavior.
+      //
+      // space_id is only sent while standing in a shared space — omitting it
+      // wipes the caller's own personal rows only; the route itself also
+      // enforces owner-only for a space (mirrors store.jsx's deleteSpace()).
+      const eraseRes = await fetch('/api/account/erase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(space?.id ? { space_id: space.id } : {}),
+      })
+      const eraseData = await eraseRes.json().catch(() => ({}))
+
+      if (eraseRes.ok && eraseData.ok) {
+        // Full success: mark the fresh local state as already synced (see
+        // store.jsx's resetAllDataAlreadySynced) so the debounced diff-sync
+        // doesn't redo a now-pointless delete pass, and — more importantly —
+        // so the localStorage cache is overwritten immediately rather than
+        // staying stale until that pass finishes, which could otherwise
+        // briefly rehydrate the old rows on a reload/network hiccup in
+        // between.
+        resetAllDataAlreadySynced()
+        centerToast(bankError ? t('Data erased — one bank connection needs manual removal') : t('All data erased'))
+      } else {
+        // Partial or total failure server-side: do NOT claim everything was
+        // erased. Still clear local state via the plain resetAllData() (not
+        // the "already synced" variant) — its debounced diff-sync will then
+        // itself try to delete every previously-synced row by id, which acts
+        // as a second, chunked/non-aborting attempt (see store.jsx's
+        // hardened diff-sync) at cleaning up exactly whatever this route
+        // couldn't finish.
+        const failedTables = (eraseData.failed || []).map((f) => f.table).filter(Boolean)
+        resetAllData()
+        centerToast(
+          failedTables.length
+            ? t("Some data couldn't be deleted: {tables} — retrying in the background", { tables: failedTables.join(', ') })
+            : (eraseData.error || t("Couldn't erase your data")),
+          'error'
+        )
+      }
     } catch (e) {
+      // Couldn't even reach the erase route — fall back to the plain local
+      // reset so the diff-sync at least attempts the delete itself, same as
+      // this flow always did before app/api/account/erase existed.
+      resetAllData()
       centerToast(e?.message || t("Couldn't erase your data"), 'error')
     }
     setBusy(false)

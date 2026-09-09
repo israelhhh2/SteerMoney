@@ -18,6 +18,16 @@ const configuration = new Configuration({
 
 export const plaidClient = new PlaidApi(configuration)
 
+// Best-effort item revoke shared by every route that permanently removes a
+// plaid_items row: app/api/plaid/items' DELETE handler (single item, and its
+// workspace_id bulk-disconnect branch) and app/api/account/erase's backstop
+// cleanup. Plaid may already have revoked the item itself (user removed
+// access from their bank's side, item error, etc.) — that's not a reason to
+// block deleting our own row, so failures here are swallowed, not thrown.
+export async function revokePlaidItem(accessToken) {
+  try { await plaidClient.itemRemove({ access_token: accessToken }) } catch { /* best effort */ }
+}
+
 // Service-role Supabase client: bypasses RLS entirely, so it must only ever
 // be used from server routes, never imported into client components. This
 // is the only client allowed to touch public.plaid_items (see

@@ -1,5 +1,5 @@
 import { createSupabaseServerClient } from '@/lib/supabase-clients'
-import { plaidClient, plaidConfigured, supabaseAdmin, ownerIdsFor } from '@/lib/plaid-server'
+import { plaidConfigured, supabaseAdmin, ownerIdsFor, revokePlaidItem } from '@/lib/plaid-server'
 
 // Lists this user's connected banks. Access tokens are never selected here,
 // let alone returned to the client. Includes `status` (roadmap item 5:
@@ -88,7 +88,7 @@ export async function DELETE(req) {
       if (findErr) throw findErr
 
       for (const row of rows || []) {
-        try { await plaidClient.itemRemove({ access_token: row.access_token }) } catch { /* best effort */ }
+        await revokePlaidItem(row.access_token) // shared helper — see lib/plaid-server.js
       }
       const { error: delErr } = await supabaseAdmin.from('plaid_items').delete().eq('user_id', workspace_id)
       if (delErr) throw delErr
@@ -108,7 +108,7 @@ export async function DELETE(req) {
     if (findErr) throw findErr
     if (!row) return Response.json({ error: 'Not found' }, { status: 404 })
 
-    try { await plaidClient.itemRemove({ access_token: row.access_token }) } catch { /* best effort, Plaid may already have revoked it */ }
+    await revokePlaidItem(row.access_token) // shared helper — see lib/plaid-server.js
 
     const { error: delErr } = await supabaseAdmin.from('plaid_items').delete().eq('id', row.id)
     if (delErr) throw delErr
