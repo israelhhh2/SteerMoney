@@ -9,7 +9,7 @@ import { Input, Label } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Segmented } from '@/components/ui/segmented'
-import { Money, CardChip, SourceBadge, ConfirmDialog, SyncingPill, TagPill, tagTone } from '@/components/shared'
+import { Money, CardChip, SourceBadge, ConfirmDialog, SyncingPill, TagPill, tagTone, ChartSkeleton } from '@/components/shared'
 import { ConnectBankButton, SyncAllButton, DuplicateBankDialog } from '@/components/connect-bank'
 import { useApp } from '@/store'
 import { useToast, useCenterToast } from '@/components/toast'
@@ -202,8 +202,26 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
             <div className="mb-1 flex items-center justify-center gap-1.5 text-[0.75rem] font-semibold text-muted-foreground">
               <span className="h-2 w-2 rounded-full" style={{ background: '#5b9df9' }} />{t('Assets')}
             </div>
-            <Money value={fmt0(assetsTotal)} className="text-2xl font-extrabold sm:text-3xl" />
-            <div className="mt-1"><ChangePill pct={assetsPct} /></div>
+            {/* assetsTotal/assetsPct fold in plaidAssetAccounts (Plaid depository
+                + investment balances) — until plaidChecked, plaidItems is still
+                [] (usePlaidItems' initial state), so this would render an
+                assets-only-from-manual-accounts number that then jumps once the
+                real Plaid balances land a beat later. A skeleton in the same
+                footprint avoids showing that half-true number at all. debtsTotal
+                below has no such gap (it's state.debts.balance straight from
+                Supabase, already synced server-side — see lib/plaid-debts.js),
+                so it renders immediately either way. */}
+            {plaidChecked ? (
+              <>
+                <Money value={fmt0(assetsTotal)} className="text-2xl font-extrabold sm:text-3xl" />
+                <div className="mt-1"><ChangePill pct={assetsPct} /></div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center gap-1.5 py-1">
+                <ChartSkeleton className="h-7 w-24 rounded-full sm:h-8" />
+                <ChartSkeleton className="h-4 w-14 rounded-full" />
+              </div>
+            )}
           </div>
           <div className="text-center">
             <div className="mb-1 flex items-center justify-center gap-1.5 text-[0.75rem] font-semibold text-muted-foreground">
@@ -213,7 +231,9 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
             <div className="mt-1"><ChangePill pct={debtsPct} invert /></div>
           </div>
         </div>
-        {series.length > 1 && (
+        {!plaidChecked ? (
+          <ChartSkeleton className="mt-4 h-40 w-full" />
+        ) : series.length > 1 && (
           <div className="mt-4 h-40">
             <ResponsiveContainer>
               <AreaChart data={series} margin={{ top: 8, right: 4, left: 4, bottom: 0 }}>
@@ -257,18 +277,22 @@ export default function Accounts({ editParam, clearEditParam } = {}) {
       )}
 
       {filteredCards.length > 0 && (
-        <Section title={t('Credit cards')} total={fmt0(filteredCards.reduce((s, a) => s + a.balance, 0))} addHref="/debts">
+        // total is null until plaidChecked: cards can include Plaid-linked
+        // debts/unmatched Plaid credit accounts, so the sum can grow once the
+        // real /api/plaid/items response lands — see Section's own comment
+        // on the `total` prop.
+        <Section title={t('Credit cards')} total={plaidChecked ? fmt0(filteredCards.reduce((s, a) => s + a.balance, 0)) : null} addHref="/debts">
           {filteredCards.map((a) => <CardRow key={a.key} account={a} tags={tagsByKey[accountUrlId(a)] || []} colorOverride={colorForAccount(state, accountUrlId(a))} />)}
         </Section>
       )}
 
       {filteredLoans.length > 0 && (
-        <Section title={t('Loans')} total={fmt0(filteredLoans.reduce((s, a) => s + a.balance, 0))} addHref="/debts">
+        <Section title={t('Loans')} total={plaidChecked ? fmt0(filteredLoans.reduce((s, a) => s + a.balance, 0)) : null} addHref="/debts">
           {filteredLoans.map((a) => <LoanRow key={a.key} account={a} tags={tagsByKey[accountUrlId(a)] || []} colorOverride={colorForAccount(state, accountUrlId(a))} />)}
         </Section>
       )}
 
-      <Section title={t('Depository')} total={fmt0(filteredDepository.reduce((s, a) => s + a.balance, 0))} onAdd={() => setEditing(null)}>
+      <Section title={t('Depository')} total={plaidChecked ? fmt0(filteredDepository.reduce((s, a) => s + a.balance, 0)) : null} onAdd={() => setEditing(null)}>
         {filteredDepository.length ? (
           filteredDepository.map((a) => <DepositoryRow key={a.key} account={a} tags={tagsByKey[accountUrlId(a)] || []} colorOverride={colorForAccount(state, accountUrlId(a))} />)
         ) : (
@@ -360,6 +384,9 @@ function TagFilterPill({ label, active, onClick, tone }) {
 // Collapsible Copilot-style section header: "▾ Title  $total" with an optional
 // "Add ›" affordance (either a Link, e.g. Credit cards → /debts, or a callback,
 // e.g. Depository → the existing AccountDialog).
+// `total` is null while its callers are still waiting on plaidChecked (this
+// section's rows could include unmatched Plaid accounts not counted yet) —
+// rendered as a small skeleton pill instead of a sum that's about to grow.
 function Section({ title, total, addHref, onAdd, children, defaultOpen = true }) {
   const t = useT()
   const [open, setOpen] = useState(defaultOpen)
@@ -369,7 +396,11 @@ function Section({ title, total, addHref, onAdd, children, defaultOpen = true })
         <button onClick={() => setOpen((o) => !o)} className="flex min-w-0 items-center gap-1.5 text-left">
           <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', !open && '-rotate-90')} />
           <span className="truncate text-[0.9375rem] font-semibold">{title}</span>
-          <span className="shrink-0 whitespace-nowrap text-[0.8125rem] font-bold" style={{ color: '#5b9df9' }}>{total}</span>
+          {total == null ? (
+            <ChartSkeleton className="h-3.5 w-12 shrink-0 rounded-full" />
+          ) : (
+            <span className="shrink-0 whitespace-nowrap text-[0.8125rem] font-bold" style={{ color: '#5b9df9' }}>{total}</span>
+          )}
         </button>
         {addHref ? (
           <Link href={addHref} className="flex shrink-0 items-center text-[0.78125rem] font-bold text-primary/90 transition hover:text-primary">{t('Add')}<ChevronRight className="h-3.5 w-3.5" /></Link>

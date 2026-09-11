@@ -185,7 +185,7 @@ function Frame({ children, modal }) {
   const pathname = usePathname()
   const router = useRouter()
   const toast = useToast()
-  const { state, syncError, viewingAs, exitViewAs, space, spaces, setSpace, createSpace, createInvite } = useApp()
+  const { state, loaded, syncError, viewingAs, exitViewAs, space, spaces, setSpace, createSpace, createInvite } = useApp()
   const t = useT()
   const isAdmin = useIsAdmin()
   // "Updated <relTime>" header note (see lib/accounts.js's lastUpdatedAt) —
@@ -221,6 +221,31 @@ function Frame({ children, modal }) {
     document.addEventListener('touchend', onTouchEnd, { passive: true })
     return () => { document.removeEventListener('touchend', onTouchEnd); clearTimeout(hideTimer) }
   }, [])
+
+  // Full-page branded loading gate — placed AFTER every hook above (no
+  // conditional hooks) so it can safely return early. `loaded` (src/store.jsx)
+  // is false only for the very first Supabase load of the current
+  // user/space/view-as context; a "Sync now", balance Refresh, or the focus/
+  // visibility refetch never flips it back to false, so this never
+  // reappears over a page the user is already looking at (see store.jsx's
+  // everLoadedFor comment). Replaces the whole shell — sidebar/header
+  // included — rather than just the `main` area below, so last session's
+  // cached numbers (see store.jsx's instant-hydration effect) are never the
+  // first thing painted.
+  if (!loaded) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <Logo className="h-10 w-10" />
+          <Wordmark className="text-base" />
+          <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {t('Loading your finances…')}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   const switchSpace = async (v) => {
     if (v === 'personal') return setSpace(null)

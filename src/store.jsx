@@ -262,12 +262,55 @@ export function AppProvider({ children }) {
   const loadingFor = useRef(null)
   const lastLoadAt = useRef(0)  // Date.now() of the last successful initial-load pass — drives the focus/visibility refetch's staleness check below
 
+  // ---- `loaded`: has the initial Supabase load for the CURRENT userId
+  // finished (success or failure), at least once? ----
+  // Drives the app shell's full-page loading gate (app/(app)/layout.jsx) so
+  // the user never sees last-session's cached numbers before this session's
+  // real ones land. Deliberately its own ref (everLoadedFor), not reused
+  // from freshFor/loadingFor:
+  //   - freshFor.current is nulled out by refetch() (Sync now / balance
+  //     Refresh / the focus-staleness check) so the initial-load effect's
+  //     guard lets it re-run — that's by design (it's how a background
+  //     refresh happens without a page reload). If `loaded` were derived
+  //     from freshFor, every one of those routine refetches would flip it
+  //     back to false and re-show the full-screen loader over a page the
+  //     user is actively looking at.
+  //   - loadingFor.current is a similarly short-lived "fetch in flight"
+  //     marker, reset to null in the same places.
+  // `everLoadedFor` instead only ever records "have we, at some point,
+  // finished a first load for this exact userId" and is reset to null in
+  // exactly the two places that load a genuinely different dataset:
+  // setSpace() and setViewAs() (both already null out `state`/synced.current
+  // for the same reason). A plain refetch() never touches it, so `loaded`
+  // goes true exactly once per user/space/view-as context and stays true.
+  const everLoadedFor = useRef(null)
+  const [loaded, setLoaded] = useState(false)
+  // Marks the initial load for `id` as finished (success OR failure) —
+  // called from every exit path of the initial-load effect below so a
+  // failed fetch (bad network, RLS hiccup, missing migration) still flips
+  // `loaded` instead of leaving the app stuck behind a spinner forever; the
+  // existing syncError/cached-fallback handling in that effect is untouched.
+  const markLoaded = (id) => {
+    if (everLoadedFor.current !== id) { everLoadedFor.current = id; setLoaded(true) }
+  }
+
   const CACHE = (id) => 'fin-cache-' + id
   const writeCache = (id, s) => { try { localStorage.setItem(CACHE(id), JSON.stringify(s)) } catch {} }
 
   // ---- instant hydration from the local cache ----
-  // New browser tabs and refreshes render the last known data immediately;
-  // the load effect below still fetches fresh rows in the background.
+  // Still runs exactly as before — it seeds `state`/`synced.current` from
+  // last session's cache immediately, before the real fetch below resolves —
+  // but the app shell (app/(app)/layout.jsx) now gates what the user SEES on
+  // `loaded`, not on `state` being non-null, so this hydrated copy is never
+  // actually painted to the screen anymore. It's kept (rather than deferred
+  // until after the load effect) because the diff-sync effect further down
+  // depends on `synced.current` being populated and `dirty.current` being
+  // correct the moment the user is first able to interact with the page —
+  // deferring hydration would either delay that or need its own bookkeeping
+  // to reproduce what this already does. It also doubles as the offline/
+  // failed-fetch fallback: if the Supabase load below errors out, whatever
+  // this effect already hydrated is what stays on screen once `loaded` flips
+  // true (see the initial-load effect's error paths below).
   useEffect(() => {
     if (!userId || viewAs || state || freshFor.current === userId) return
     try {
@@ -298,7 +341,7 @@ export function AppProvider({ children }) {
         supabase.from('account_colors').select('*').eq('user_id', userId),
       ])
       const err = [de, pa, bu, re, tx, se].find((r) => r.error)
-      if (err) { if (!cancelled) setSyncError(err.error.message); return }
+      if (err) { if (!cancelled) { setSyncError(err.error.message); markLoaded(userId) } return }
       // goals shipped after the other tables — if goals.sql hasn't been run yet, keep the app usable
       if (go.error && !cancelled) setSyncError('Goals need setup: run supabase/goals.sql in the Supabase SQL editor (' + go.error.message + ')')
       // accounts shipped after the other tables — if accounts.sql hasn't been run yet, keep the app usable
@@ -317,13 +360,13 @@ export function AppProvider({ children }) {
           s = { ...freshState(), budgets: [] }
           freshFor.current = userId
           lastLoadAt.current = Date.now()
-          if (!cancelled) { synced.current = s; setState(s) }
+          if (!cancelled) { synced.current = s; setState(s); markLoaded(userId) }
           return
         }
         // brand-new user: start fresh (default categories only, no data)
         s = freshState()
         const { error } = await supabase.from('budgets').insert(s.budgets.map((b) => mappers.budgets.toRow(b, userId)))
-        if (error) { if (!cancelled) setSyncError(error.message); return }
+        if (error) { if (!cancelled) { setSyncError(error.message); markLoaded(userId) } return }
         await supabase.from('settings').upsert({ user_id: userId, sim: s.sim, m_sim: s.mSim })
       } else {
         const byDebt = {}
@@ -345,8 +388,11 @@ export function AppProvider({ children }) {
       lastLoadAt.current = Date.now()
       if (!viewAs) writeCache(userId, s)
       // don't clobber edits the user made on top of the cached copy while we fetched
-      if (!cancelled && !dirty.current) { synced.current = s; setState(s) }
-    })().catch((e) => { if (!cancelled) setSyncError(String(e?.message || e)) })
+      if (!cancelled) {
+        if (!dirty.current) { synced.current = s; setState(s) }
+        markLoaded(userId) // the load itself succeeded regardless of the dirty-edit guard above
+      }
+    })().catch((e) => { if (!cancelled) { setSyncError(String(e?.message || e)); markLoaded(userId) } })
       .finally(() => { if (loadingFor.current === userId) loadingFor.current = null })
     return () => { cancelled = true }
   }, [supabase, userId, state])
@@ -523,6 +569,14 @@ export function AppProvider({ children }) {
     synced.current = null
     freshFor.current = null
     dirty.current = false
+    // A genuinely different dataset is about to load (the impersonated
+    // customer's, or back to the admin's own) — reset the loading gate so
+    // the full-page loader (app/(app)/layout.jsx) shows again instead of
+    // flashing whatever the old context's rows were. See everLoadedFor's
+    // definition above for why this is the only place (besides setSpace)
+    // that resets it.
+    everLoadedFor.current = null
+    setLoaded(false)
     setState(null)
     setSyncError(null)
     setViewAsState(v)
@@ -534,6 +588,11 @@ export function AppProvider({ children }) {
     synced.current = null
     freshFor.current = null
     dirty.current = false
+    // Same reasoning as setViewAs above: a different space's rows are about
+    // to load, so show the full-page loader again instead of the previous
+    // space's numbers.
+    everLoadedFor.current = null
+    setLoaded(false)
     setState(null)
     setSyncError(null)
     setSpaceState(info)
@@ -923,6 +982,7 @@ export function AppProvider({ children }) {
 
   const api = useMemo(() => ({
     state,
+    loaded, // true once the initial Supabase load for the current userId has finished (success or failure) — see everLoadedFor above
     syncError,
     viewingAs: viewAs,                     // {id, name} while impersonating, else null
     setViewAs,
@@ -948,7 +1008,7 @@ export function AppProvider({ children }) {
       : (fn) => { dirty.current = true; setState((s) => { const c = JSON.parse(JSON.stringify(s)); if (!c.goals) c.goals = []; if (!c.accounts) c.accounts = []; if (!c.accountTags) c.accountTags = []; if (!c.accountColors) c.accountColors = []; fn(c); normalize(c); return c }) },
     catInfo: (id) => state?.budgets.find((b) => b.id === id) || ({ debt: { name: 'Debt Payment' }, income: { name: 'Income' }, transfer: { name: 'Transfer' } }[id]) || { name: id || 'Other' },
     uid,
-  }), [state, syncError, viewAs, space, spaces])
+  }), [state, loaded, syncError, viewAs, space, spaces])
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>
 }

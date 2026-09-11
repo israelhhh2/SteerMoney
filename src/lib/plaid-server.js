@@ -32,8 +32,19 @@ export async function revokePlaidItem(accessToken) {
 // be used from server routes, never imported into client components. This
 // is the only client allowed to touch public.plaid_items (see
 // supabase/plaid.sql, which enables RLS with no policies at all).
-export const supabaseAdmin = process.env.SUPABASE_SERVICE_ROLE_KEY
-  ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+// Supabase renamed this credential: older projects issue it as the
+// "service_role key" (SUPABASE_SERVICE_ROLE_KEY), newer dashboards call the
+// same thing a "secret key" and people naturally name the env var
+// SUPABASE_SECRET_KEY. Accept either, because getting this wrong fails
+// SILENTLY and catastrophically: `supabaseAdmin` becomes null, and every
+// route that guards on it (app/api/plaid/items returns `{ items: [] }`,
+// sync/balance/webhook all bail early) behaves exactly as though the user
+// has no connected banks — no error, no toast, just an app that never
+// updates a balance and never lists a connection.
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY
+if (!SERVICE_KEY) console.error('[plaid-server] No SUPABASE_SERVICE_ROLE_KEY / SUPABASE_SECRET_KEY set — every Plaid server route will act as if no banks are connected.')
+export const supabaseAdmin = SERVICE_KEY
+  ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, SERVICE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     })
   : null
