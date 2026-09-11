@@ -4,9 +4,16 @@
 // inputs" logic, so it lives here once instead of drifting between two
 // copies. No 'use client' here (unlike store.jsx/lib/accounts.js) — this file
 // is imported directly by Route Handlers.
-import { mappers } from './mappers'
-import { defaultRange } from './snapshots'
-import { catNameFromBudgets } from './categories'
+// Relative imports below carry an explicit `.js` extension (like
+// lib/snapshots.js's own imports, see its header comment) so this file is
+// also directly importable by plain `node --test` — lib/chat-tools.js/
+// lib/chat-briefing.js (Step 2, 2026-09) reuse catNameResolverFor/
+// accountNameResolverFor here and are covered by
+// __tests__/chat-tools.test.mjs. Harmless for webpack, which resolves an
+// explicit .js extension on a relative import identically to an implicit one.
+import { mappers } from './mappers.js'
+import { defaultRange } from './snapshots.js'
+import { catNameFromBudgets } from './categories.js'
 
 export const GRAINS = ['day', 'week', 'month', 'quarter', 'year']
 
