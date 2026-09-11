@@ -887,7 +887,7 @@ export const DICTIONARY = {
   'Close chat': { es: 'Cerrar chat' },
   'Ask Claude': { es: 'Pregúntale a Claude' },
   'New chat': { es: 'Nuevo chat' },
-  'Ask about your spending, budgets, debts, or bills…': { es: 'Pregunta sobre tus gastos, presupuestos, deudas o facturas…' },
+  'Ask about your money…': { es: 'Pregunta sobre tu dinero…' },
   'Stop': { es: 'Detener' },
   'Try asking:': { es: 'Intenta preguntar:' },
   'How much did I spend on dining this month vs last?': { es: '¿Cuánto gasté en restaurantes este mes comparado con el anterior?' },

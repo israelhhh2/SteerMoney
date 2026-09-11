@@ -415,7 +415,8 @@ function Frame({ children, modal }) {
       {inviteUrl && <InviteLinkDialog url={inviteUrl} onClose={() => setInviteUrl(null)} />}
       {/* /chat renders the same conversation full-page — don't double it with the bubble there */}
       {state && pathname !== '/chat' ? <FinanceChat /> : null}
-      {state ? <FeedbackWidget /> : null}
+      {/* the feedback bubble would sit on the chat's send button on phones — /chat has its own full-width composer */}
+      {state && pathname !== '/chat' ? <FeedbackWidget /> : null}
       {modal}
     </div>
   )

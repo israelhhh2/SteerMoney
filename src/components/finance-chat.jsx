@@ -333,7 +333,7 @@ export function FinanceChat({ mode = 'floating' }) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={t('Ask about your spending, budgets, debts, or bills…')}
+          placeholder={t('Ask about your money…')}
           disabled={streaming}
           className="max-h-40 min-h-[2.25rem] flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60 [color-scheme:dark]"
         />
@@ -372,7 +372,7 @@ export function FinanceChat({ mode = 'floating' }) {
       <div
         role="region"
         aria-label={t('Ask about your money')}
-        className="fade-in flex h-[calc(100dvh-13.5rem)] min-h-[24rem] flex-col overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm md:h-[calc(100dvh-8.5rem)]"
+        className="fade-in flex h-[calc(100dvh-10.5rem-env(safe-area-inset-bottom))] min-h-[22rem] flex-col overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm md:h-[calc(100dvh-8.5rem)]"
       >
         {panelBody}
       </div>
@@ -401,7 +401,10 @@ export function FinanceChat({ mode = 'floating' }) {
             role="dialog"
             aria-label={t('Ask about your money')}
             className={cn(
-              'no-print fixed z-[55] flex flex-col border-border/60 bg-card shadow-2xl',
+              // z-[56]: one above the two FABs (this one + feedback, both z-[55]) so
+              // the open sheet covers them on mobile, still under the dialog ladder
+              // (@modal z-[60] / ui/dialog z-[65]+) documented in CLAUDE.md.
+              'no-print fixed z-[56] flex flex-col border-border/60 bg-card shadow-2xl',
               'inset-0 rounded-none border-0',
               'md:inset-auto md:bottom-24 md:right-4 md:h-[35rem] md:w-[23.75rem] md:rounded-2xl md:border'
             )}
