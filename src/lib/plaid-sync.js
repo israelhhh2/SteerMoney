@@ -2,21 +2,43 @@ import { plaidClient, supabaseAdmin } from '@/lib/plaid-server'
 import { mapPlaidCategory } from '@/lib/plaid-categories'
 import { syncDebtsFromPlaid } from '@/lib/plaid-debts'
 import { isCardPaymentDescription } from '@/lib/recurring-detect'
+import { cleanMerchant } from '@/lib/merchant'
 
-// Small keyword map from Plaid's merchant/transaction name to this app's
-// category ids. Kept only as a defensive fallback for the rare transaction
-// Plaid doesn't enrich with a `personal_finance_category` at all — the
-// primary categorization path is mapPlaidCategory() (lib/plaid-categories.js),
-// which reads Plaid's actual PFC taxonomy instead of guessing from the name.
-const CATEGORY_RULES = [
-  ['housing', /rent|mortgage/i],
-  ['groceries', /grocery|market|supermarket/i],
-  ['dining', /restaurant|food|coffee|pizza/i],
-  ['auto', /gas|fuel|auto|uber|lyft/i],
-  ['utilities', /electric|water|internet|phone|utility/i],
+// Keyword map from Plaid's merchant/transaction name to this app's category
+// ids — a defensive fallback for the rare transaction Plaid doesn't enrich
+// with a `personal_finance_category` at all (the primary categorization path
+// is mapPlaidCategory(), which reads Plaid's actual PFC taxonomy instead of
+// guessing from the name), and also the ONLY categorizer available for
+// imported/manual transactions that never went through Plaid at all (see
+// lib/transactions-backfill.js's second pass). Extended to the full
+// lib/categories.js taxonomy alongside mapPlaidCategory's PFC table — order
+// matters (first match wins), and borrows some vocabulary from
+// lib/wescom.js's own EXPENSE_RULES (that file's rules stay merchant-name
+// specific to Wescom's CSV export; these stay generic enough for any
+// institution's Plaid `name`/`merchant_name`).
+export const CATEGORY_RULES = [
+  ['housing', /\brent\b|mortgage|\bhoa\b/i],
+  ['groceries', /grocery|market|supermarket|trader joe|whole foods|costco whse|vons|ralphs|albertsons|sprouts/i],
+  ['dining', /restaurant|starbucks|coffee|pizza|mcdonald|chipotle|doordash|grubhub|\bcafe\b/i],
+  ['transport', /\buber\b|\blyft\b|transit|\bmetro\b|amtrak|bike share|scooter/i],
+  ['auto', /\bgas station\b|\bfuel\b|auto repair|chevron|\bshell\b|\barco\b|\bmobil\b|parking|\btoll/i],
+  ['utilities', /electric|internet|\bcable\b|phone bill|utility|t-mobile|verizon|at&t|comcast/i],
+  ['subscriptions', /netflix|\bhulu\b|spotify|disney\+|apple\.com\/bill|icloud|patreon|audible/i],
+  ['entertainment', /cinema|movie|\bamc\b|regal |fandango|casino|amusement|museum/i],
+  ['health', /pharmacy|\bcvs\b|walgreens|medical|clinic|doctor|dental|veterinary|\bvet\b/i],
+  ['personal', /\bsalon\b|\bspa\b|barber|nails|beauty/i],
+  ['household', /home depot|lowe.?s|\bikea\b|hardware|storage/i],
+  ['kids', /daycare|childcare|toys.?r.?us/i],
+  ['family', /\bgift\b|\bzelle\b|\bvenmo\b/i],
+  ['travel', /airline|\bhotel\b|airbnb|expedia|\bdelta\b|united air|southwest/i],
+  ['education', /tuition|\bschool\b|university|college/i],
+  ['fees', /overdraft|late fee|interest charge|service fee|\birs\b|tax payment/i],
+  ['cash', /\batm\b|cash withdrawal/i],
+  ['business', /shipping|postage|legal services|accounting/i],
+  ['shopping', /amazon|\btarget\b|walmart|\bebay\b/i],
 ]
 
-function guessCategory(tx) {
+export function guessCategory(tx) {
   const text = [tx.merchant_name, tx.name].filter(Boolean).join(' ')
   for (const [cat, re] of CATEGORY_RULES) if (re.test(text)) return cat
   return 'other'
@@ -42,7 +64,10 @@ function guessCategory(tx) {
 // insertRow/accountsGet refresh in this file and app/api/plaid/exchange
 // store: {account_id, type, subtype, ...}). `accountsById` is built once per
 // sync pass, not per transaction — see its call site below.
-function classifyTx(tx, accountsById) {
+// Exported so lib/transactions-backfill.js (POST /api/transactions/
+// backfill-categories) can reuse the exact same payment/refund logic against
+// historical Plaid transactions instead of re-implementing it.
+export function classifyTx(tx, accountsById) {
   const desc = tx.merchant_name || tx.name || ''
   const pfc = tx?.personal_finance_category
   const acctType = accountsById.get(tx.account_id)?.type || null
@@ -214,6 +239,12 @@ export async function syncPlaidItem(item, opts = {}) {
           const orphan = orphanByKey.get(key)
           if (!orphan) continue
           orphanByKey.delete(key) // each orphaned row re-points at most one incoming transaction
+          // Deliberately only ever writes id/account_id — never category or
+          // cat_source, so a manually/rule-recategorized orphaned row keeps
+          // exactly the category it had. This transaction_id also lands in
+          // repointedIds below, which excludes it from upsertRows entirely,
+          // so it never goes through the cat_source-protection path either —
+          // there's simply nothing here that could clobber it.
           const { error: repointErr } = await supabaseAdmin
             .from('transactions')
             .update({ id: 'pl_' + tx.transaction_id, account_id: tx.account_id || null })
@@ -249,6 +280,7 @@ export async function syncPlaidItem(item, opts = {}) {
     .filter((tx) => !repointedIds.has(tx.transaction_id))
     .map((tx) => {
       const { type, category } = classifyTx(tx, accountsById)
+      const pfc = tx?.personal_finance_category
       return {
         user_id: userId,
         id: 'pl_' + tx.transaction_id,
@@ -259,18 +291,94 @@ export async function syncPlaidItem(item, opts = {}) {
         category,
         // Lets the Accounts detail sheet / Transactions page filter by account.
         account_id: tx.account_id || null,
+        // Plaid's own clean merchant name when it has one, else this app's
+        // own best-effort cleanup of the raw name (lib/merchant.js) — stored
+        // separately from `description` (which stays the raw name, unchanged
+        // behavior) so a future re-categorization pass or rules feature has
+        // something normalized to work from without re-fetching from Plaid.
+        merchant: tx.merchant_name || cleanMerchant(tx.name) || null,
+        // The raw PFC this row was categorized from — see CLAUDE.md/this
+        // session's note: previously dropped entirely, which meant history
+        // could never be re-categorized (as the taxonomy above improved)
+        // without re-pulling from Plaid. Kept even when it didn't change the
+        // outcome, so a future backfill pass always has the real signal.
+        pfc_primary: pfc?.primary || null,
+        pfc_detailed: pfc?.detailed || null,
+        // Every row synced from Plaid starts life 'plaid'-sourced; the UI
+        // (Transactions.jsx's TxDialog, AccountDetail's inline select) sets
+        // this to 'manual' the moment a person picks a different category by
+        // hand, so a later re-categorization pass (see
+        // lib/transactions-backfill.js) can tell "never touched" apart from
+        // "the owner already fixed this" and never clobber the latter.
+        cat_source: 'plaid',
       }
     })
 
+  // ---- never clobber a manually/rule-categorized row on a `modified` event ----
+  // A transaction already stored gets upserted again here on any later
+  // `modified` from Plaid — a pending transaction settling, an amount
+  // correction, a merchant name Plaid enriches after the fact, etc. Without
+  // this check, that upsert always overwrote `category`/`cat_source` with a
+  // fresh classifyTx() result, silently reverting a category the owner
+  // picked by hand (Transactions.jsx's TxDialog, AccountDetail's inline
+  // select — both set cat_source:'manual') or one the keyword-rule backfill
+  // set (cat_source:'rule') back to whatever Plaid/mapPlaidCategory would
+  // guess today. Fetching the currently-stored category/cat_source for this
+  // batch's ids up front — one query, chunked by 200 ids the same way every
+  // other id-list query in this app is (see lib/transactions-dedupe.js) —
+  // lets every OTHER field (amount/date/description/merchant/pfc_*) still
+  // refresh normally while `category`/`cat_source` are pinned back to
+  // whatever the owner/rule-backfill already set.
+  const catSourceById = new Map()
+  let catSourceProtectionAvailable = true
   if (upsertRows.length) {
-    let { error } = await supabaseAdmin.from('transactions').upsert(upsertRows, { onConflict: 'user_id,id' })
-    if (error && /account_id/i.test(error.message || '')) {
-      // `account_id` column not migrated onto public.transactions yet — retry
-      // without it so sync keeps working. Add the column (see supabase/plaid.sql
-      // or `ALTER TABLE transactions ADD COLUMN account_id text;`) to enable
-      // account-filtered transactions.
-      const fallbackRows = upsertRows.map(({ account_id, ...rest }) => rest)
-      ;({ error } = await supabaseAdmin.from('transactions').upsert(fallbackRows, { onConflict: 'user_id,id' }))
+    const ids = upsertRows.map((r) => r.id)
+    const FETCH_CHUNK = 200
+    for (let i = 0; i < ids.length && catSourceProtectionAvailable; i += FETCH_CHUNK) {
+      const chunk = ids.slice(i, i + FETCH_CHUNK)
+      const { data, error } = await supabaseAdmin.from('transactions').select('id, category, cat_source').eq('user_id', userId).in('id', chunk)
+      if (error) {
+        // Most likely cat_source not migrated yet (supabase/categories-v2.sql)
+        // — nothing to protect against in that case, since no row could have
+        // a 'manual'/'rule' cat_source recorded at all yet. Any other query
+        // failure degrades the exact same way: this protection check is
+        // ancillary (same "never let a best-effort add-on block the actual
+        // sync" philosophy as the balance refresh/debt sync below) — skip it
+        // for this pass rather than throwing, and let the upsert proceed
+        // with classifyTx()'s fresh category like before this check existed.
+        console.warn('[plaid] transactions.cat_source protection query failed — skipping manual/rule category protection for this sync (run supabase/categories-v2.sql if the column is missing):', error.message)
+        catSourceProtectionAvailable = false
+        break
+      }
+      for (const row of data || []) if (row.cat_source === 'manual' || row.cat_source === 'rule') catSourceById.set(row.id, row)
+    }
+  }
+  if (catSourceProtectionAvailable && catSourceById.size) {
+    for (const row of upsertRows) {
+      const existing = catSourceById.get(row.id)
+      if (existing) { row.category = existing.category; row.cat_source = existing.cat_source }
+    }
+  }
+
+  // Columns this app may not have migrated onto public.transactions yet:
+  // account_id (older) and merchant/pfc_primary/pfc_detailed/cat_source (see
+  // supabase/categories-v2.sql). PostgREST's "column ... does not exist"
+  // error (PGRST204) names one missing column per response, so this retries
+  // in a small loop — dropping whichever column the error names — rather
+  // than a single hardcoded fallback, so sync degrades correctly whichever
+  // subset of these has actually been migrated.
+  const OPTIONAL_TX_COLUMNS = ['account_id', 'merchant', 'pfc_primary', 'pfc_detailed', 'cat_source']
+  if (upsertRows.length) {
+    let rows = upsertRows
+    let { error } = await supabaseAdmin.from('transactions').upsert(rows, { onConflict: 'user_id,id' })
+    let guard = 0
+    while (error && guard < OPTIONAL_TX_COLUMNS.length) {
+      guard++
+      const missing = OPTIONAL_TX_COLUMNS.find((col) => col in rows[0] && new RegExp(col, 'i').test(error.message || ''))
+      if (!missing) break
+      console.warn(`[plaid] transactions.${missing} column missing — retrying sync without it. Run supabase/categories-v2.sql (or supabase/plaid.sql for account_id) to enable it.`)
+      rows = rows.map((r) => { const { [missing]: _drop, ...rest } = r; return rest })
+      ;({ error } = await supabaseAdmin.from('transactions').upsert(rows, { onConflict: 'user_id,id' }))
     }
     if (error) throw error
   }

@@ -314,7 +314,11 @@ export default function AccountDetail({ id }) {
   const handleCatChange = (txId, catId) => {
     update((s) => {
       const found = s.transactions.find((x) => x.id === txId)
-      if (found) found.cat = catId
+      // catSource: 'manual' — same reasoning as Transactions.jsx's TxDialog
+      // save(): a person picked this category by hand, so a future
+      // re-categorization pass (lib/transactions-backfill.js) must never
+      // override it.
+      if (found) { found.cat = catId; found.catSource = 'manual' }
     })
   }
 

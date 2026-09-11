@@ -142,10 +142,10 @@ export const DICTIONARY = {
   "Couldn't check for cleanup": { es: 'No se pudo verificar la limpieza' },
   'No duplicate or miscategorized transactions found': { es: 'No se encontraron transacciones duplicadas ni mal categorizadas' },
   'Clean up transactions?': { es: '¿Limpiar transacciones?' },
-  'Found {dup} duplicate transaction{dp} from a reconnected bank, and {rc} transaction{rp} miscounted as income or debt that are really card payments or refunds. This can\'t be undone.': { es: 'Se encontraron {dup} transacción{dp} duplicada{dp} de un banco reconectado, y {rc} transacción{rp} mal contada{rp} como ingreso o deuda que en realidad son pagos de tarjeta o reembolsos. Esto no se puede deshacer.' },
+  'Found {dup} duplicate transaction{dp} from a reconnected bank, {rc} transaction{rp} miscounted as income or debt that are really card payments or refunds, and {rec} transaction{recp} Plaid can put in a better category than before. This can\'t be undone.': { es: 'Se encontraron {dup} transacción{dp} duplicada{dp} de un banco reconectado, {rc} transacción{rp} mal contada{rp} como ingreso o deuda que en realidad son pagos de tarjeta o reembolsos, y {rec} transacción{recp} que Plaid puede poner en una mejor categoría. Esto no se puede deshacer.' },
   'Clean up': { es: 'Limpiar' },
   "Couldn't clean up transactions": { es: 'No se pudieron limpiar las transacciones' },
-  'Removed {dup} duplicate transaction{dp} and fixed {rc} miscategorized transaction{rp}': { es: 'Se eliminaron {dup} transacción{dp} duplicada{dp} y se corrigieron {rc} transacción{rp} mal categorizada{rp}' },
+  'Removed {dup} duplicate transaction{dp}, fixed {rc} miscategorized transaction{rp}, and recategorized {rec} transaction{recp} using Plaid\'s own data': { es: 'Se eliminaron {dup} transacción{dp} duplicada{dp}, se corrigieron {rc} transacción{rp} mal categorizada{rp}, y se recategorizaron {rec} transacción{recp} usando los datos de Plaid' },
   // ---- duplicate bank connection (connect-bank.jsx's DuplicateBankDialog,
   // Accounts.jsx's "connected twice" banner) ----
   'Remove the duplicate connection?': { es: '¿Eliminar la conexión duplicada?' },

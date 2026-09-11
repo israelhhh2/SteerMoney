@@ -148,12 +148,15 @@ function ConnectedBanksSection() {
   const [syncing, setSyncing] = useState(false)
   const [removing, setRemoving] = useState(null)
   // "Clean up transactions" — dedupes a reconnected bank's re-imported
-  // history (app/api/transactions/dedupe) and fixes card payments/refunds
-  // that were counted as income (app/api/transactions/reclassify). Both
-  // scoped to the current space the same way `sync`/eraseAll below are —
-  // `space?.id` only when standing in a shared space.
+  // history (app/api/transactions/dedupe), fixes card payments/refunds that
+  // were counted as income (app/api/transactions/reclassify), and — Phase 2A
+  // — re-pulls Plaid's own category data to fill in merchant/pfc columns and
+  // recategorize onto the fuller taxonomy (app/api/transactions/
+  // backfill-categories). All three scoped to the current space the same
+  // way `sync`/eraseAll below are — `space?.id` only when standing in a
+  // shared space.
   const [cleanupPreviewing, setCleanupPreviewing] = useState(false)
-  const [cleanupConfirm, setCleanupConfirm] = useState(null) // { duplicatesRemoved, reclassified } once previewed
+  const [cleanupConfirm, setCleanupConfirm] = useState(null) // { duplicatesRemoved, reclassified, recategorized } once previewed
   const [cleaning, setCleaning] = useState(false)
 
   const loadItems = async () => {
@@ -204,22 +207,33 @@ function ConnectedBanksSection() {
   // Dry-run both cleanup passes first so the ConfirmDialog below shows real
   // counts instead of a blind "are you sure?" — same "preview, then confirm"
   // shape as RemoveBankDialog/DangerZoneSection's ConfirmDialog usage.
+  // backfill-categories is best-effort here: it needs Plaid API calls (one
+  // per connected bank) that dedupe/reclassify don't, and a project that
+  // hasn't run supabase/categories-v2.sql yet gets a clear 500 back from it
+  // (see lib/transactions-backfill.js) — neither is a reason to block the
+  // other two passes, which have worked standalone since before this
+  // existed. Its count is added when available and simply omitted (0) when
+  // the request fails, rather than surfacing a second error toast on top of
+  // whatever dedupe/reclassify already reported.
   const previewCleanup = async () => {
     setCleanupPreviewing(true)
     try {
       const body = JSON.stringify(space?.id ? { space_id: space.id, dry_run: true } : { dry_run: true })
-      const [dedupeRes, reclassifyRes] = await Promise.all([
+      const [dedupeRes, reclassifyRes, backfillRes] = await Promise.all([
         fetch('/api/transactions/dedupe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
         fetch('/api/transactions/reclassify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
+        fetch('/api/transactions/backfill-categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
       ])
       const dedupeData = await dedupeRes.json().catch(() => ({}))
       const reclassifyData = await reclassifyRes.json().catch(() => ({}))
+      const backfillData = await backfillRes.json().catch(() => ({}))
       if (!dedupeRes.ok) throw new Error(dedupeData.error || t("Couldn't check for cleanup"))
       if (!reclassifyRes.ok) throw new Error(reclassifyData.error || t("Couldn't check for cleanup"))
       const duplicatesRemoved = dedupeData.duplicatesRemoved || 0
       const reclassified = reclassifyData.changed || 0
-      if (!duplicatesRemoved && !reclassified) toast(t('No duplicate or miscategorized transactions found'))
-      else setCleanupConfirm({ duplicatesRemoved, reclassified })
+      const recategorized = backfillRes.ok ? (backfillData.recategorized || 0) + (backfillData.ruleRecategorized || 0) : 0
+      if (!duplicatesRemoved && !reclassified && !recategorized) toast(t('No duplicate or miscategorized transactions found'))
+      else setCleanupConfirm({ duplicatesRemoved, reclassified, recategorized })
     } catch (e) {
       toast(e.message, 'error')
     } finally {
@@ -237,11 +251,20 @@ function ConnectedBanksSection() {
       const reclassifyRes = await fetch('/api/transactions/reclassify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
       const reclassifyData = await reclassifyRes.json().catch(() => ({}))
       if (!reclassifyRes.ok) throw new Error(reclassifyData.error || t("Couldn't clean up transactions"))
+      // Best-effort, as in previewCleanup above — a backfill failure (Plaid
+      // API hiccup, migration not run yet) never blocks the dedupe/reclassify
+      // results the user already confirmed.
+      let recategorized = 0
+      try {
+        const backfillRes = await fetch('/api/transactions/backfill-categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+        const backfillData = await backfillRes.json().catch(() => ({}))
+        if (backfillRes.ok) recategorized = (backfillData.recategorized || 0) + (backfillData.ruleRecategorized || 0)
+      } catch { /* best effort */ }
       const dup = dedupeData.duplicatesRemoved || 0, rc = reclassifyData.changed || 0
-      toast(t('Removed {dup} duplicate transaction{dp} and fixed {rc} miscategorized transaction{rp}', {
-        dup, dp: dup === 1 ? '' : 's', rc, rp: rc === 1 ? '' : 's',
+      toast(t('Removed {dup} duplicate transaction{dp}, fixed {rc} miscategorized transaction{rp}, and recategorized {rec} transaction{recp} using Plaid\'s own data', {
+        dup, dp: dup === 1 ? '' : 's', rc, rp: rc === 1 ? '' : 's', rec: recategorized, recp: recategorized === 1 ? '' : 's',
       }))
-      refetch() // pulls the corrected/deduped transactions back into the store
+      refetch() // pulls the corrected/deduped/recategorized transactions back into the store
     } catch (e) {
       toast(e.message, 'error')
     } finally {
@@ -339,9 +362,10 @@ function ConnectedBanksSection() {
       {cleanupConfirm && (
         <ConfirmDialog
           title={t('Clean up transactions?')}
-          desc={t('Found {dup} duplicate transaction{dp} from a reconnected bank, and {rc} transaction{rp} miscounted as income or debt that are really card payments or refunds. This can\'t be undone.', {
+          desc={t('Found {dup} duplicate transaction{dp} from a reconnected bank, {rc} transaction{rp} miscounted as income or debt that are really card payments or refunds, and {rec} transaction{recp} Plaid can put in a better category than before. This can\'t be undone.', {
             dup: cleanupConfirm.duplicatesRemoved, dp: cleanupConfirm.duplicatesRemoved === 1 ? '' : 's',
             rc: cleanupConfirm.reclassified, rp: cleanupConfirm.reclassified === 1 ? '' : 's',
+            rec: cleanupConfirm.recategorized || 0, recp: (cleanupConfirm.recategorized || 0) === 1 ? '' : 's',
           })}
           confirmLabel={t('Clean up')}
           busy={cleaning}

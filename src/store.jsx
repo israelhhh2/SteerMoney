@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useAuthUser } from '@/components/auth-provider'
 import { createAuthedSupabaseClient } from '@/lib/supabase'
 import { uid } from './lib/utils'
+import { CATEGORY_DEFS, CATEGORIES_V } from './lib/categories'
 
 // ---------------- row <-> state mapping ----------------
 // DB column names avoid SQL keywords (desc, limit, min); state keeps the
@@ -64,17 +65,32 @@ const mappers = {
     }),
   },
   transactions: {
-    // `account_id`/`accountId` are only included when already present — omitting
-    // the key entirely (rather than sending null) keeps this working even if the
-    // `account_id` column hasn't been migrated onto public.transactions yet.
+    // `account_id`/`accountId` (and, as of categories-v2.sql, `merchant`/
+    // `pfc_primary`/`pfc_detailed`/`cat_source`) are only included when
+    // already present — omitting the key entirely (rather than sending
+    // null) keeps this working even if the column hasn't been migrated onto
+    // public.transactions yet. merchant/pfcPrimary/pfcDetailed are written by
+    // lib/plaid-sync.js's sync route and lib/transactions-backfill.js, never
+    // by the client — this mapper just round-trips whatever's there.
+    // catSource IS written client-side: 'manual' the moment a person picks a
+    // category by hand (Transactions.jsx's TxDialog, AccountDetail's inline
+    // select) — see lib/transactions-backfill.js for why that flag matters.
     toRow: (t, userId) => ({
       user_id: userId, id: t.id, date: t.date, description: t.desc,
       amount: t.amount, type: t.type, category: t.cat ?? 'other',
       ...(t.accountId !== undefined ? { account_id: t.accountId } : {}),
+      ...(t.merchant !== undefined ? { merchant: t.merchant } : {}),
+      ...(t.pfcPrimary !== undefined ? { pfc_primary: t.pfcPrimary } : {}),
+      ...(t.pfcDetailed !== undefined ? { pfc_detailed: t.pfcDetailed } : {}),
+      ...(t.catSource !== undefined ? { cat_source: t.catSource } : {}),
     }),
     fromRow: (r) => ({
       id: r.id, date: r.date, desc: r.description, amount: Number(r.amount), type: r.type, cat: r.category,
       ...(r.account_id !== undefined ? { accountId: r.account_id } : {}),
+      ...(r.merchant !== undefined ? { merchant: r.merchant } : {}),
+      ...(r.pfc_primary !== undefined ? { pfcPrimary: r.pfc_primary } : {}),
+      ...(r.pfc_detailed !== undefined ? { pfcDetailed: r.pfc_detailed } : {}),
+      ...(r.cat_source !== undefined ? { catSource: r.cat_source } : {}),
     }),
   },
   goals: {
@@ -122,12 +138,13 @@ const mappers = {
   },
 }
 
-// Every new account starts fresh: no data, just a small starter category list
-// (0 = no limit) so new users aren't buried in categories. They add more as needed.
-const DEFAULT_CATEGORIES = [
-  ['housing', 'Housing / Rent'], ['groceries', 'Groceries'], ['dining', 'Dining Out'],
-  ['auto', 'Car & Gas'], ['utilities', 'Utilities & Phone'], ['other', 'Other'],
-]
+// Every new account starts fresh: no data, just the default category list
+// (0 = no limit) so it's never staring at a totally empty Budgets page. They
+// add more/edit/delete as needed. The actual id/name list now lives in
+// lib/categories.js's CATEGORY_DEFS (imported above) — the single source
+// also used by the "ensure default categories" backfill below (for existing
+// accounts) and by lib/plaid-categories.js/lib/plaid-sync.js's categorizers.
+const DEFAULT_CATEGORIES = CATEGORY_DEFS
 
 function freshState() {
   return {
@@ -382,7 +399,22 @@ export function AppProvider({ children }) {
         s = freshState()
         const { error } = await supabase.from('budgets').insert(s.budgets.map((b) => mappers.budgets.toRow(b, userId)))
         if (error) { if (stillCurrent()) { setSyncError(error.message); markLoaded(userId) } return }
-        await supabase.from('settings').upsert({ user_id: userId, sim: s.sim, m_sim: s.mSim })
+        // categories_v recorded up front too — a brand-new account already
+        // has the full CATEGORY_DEFS set from freshState() above, so there's
+        // nothing to backfill later; this just keeps the ensure-default-
+        // categories step below from ever re-checking a fresh account for no
+        // reason. Guarded (not just fire-and-forget like the plain sim/mSim
+        // upsert this replaces) because an upsert naming a column that
+        // doesn't exist yet fails as a WHOLE request in PostgREST, not just
+        // for that one column — without the retry, a project that hasn't run
+        // supabase/categories-v2.sql yet would silently stop writing sim/
+        // mSim for every brand-new signup too.
+        {
+          const { error: setErr } = await supabase.from('settings').upsert({ user_id: userId, sim: s.sim, m_sim: s.mSim, categories_v: CATEGORIES_V })
+          if (setErr && /categories_v/i.test(setErr.message || '')) {
+            await supabase.from('settings').upsert({ user_id: userId, sim: s.sim, m_sim: s.mSim })
+          }
+        }
       } else {
         const byDebt = {}
         pa.data.forEach((r) => (byDebt[r.debt_id] = byDebt[r.debt_id] || []).push(mappers.payments.fromRow(r)))
@@ -397,6 +429,45 @@ export function AppProvider({ children }) {
           accountColors: cl.error ? [] : cl.data.map(mappers.accountColors.fromRow),
           sim: se.data?.sim || { budget: 2100, strategy: 'avalanche', snowExtra: 0 },
           mSim: se.data?.m_sim || { income: '', items: [] },
+        }
+
+        // ---- ensure default categories (Phase 2A taxonomy expansion) ----
+        // Existing accounts predate lib/categories.js's expanded taxonomy —
+        // the owner's real data, for instance, only ever had housing/
+        // groceries/auto/utilities plus one custom category. Rather than
+        // leave them stuck with the old 6-category default forever, append
+        // any CATEGORY_DEFS id missing from this account's budgets, with
+        // limit 0 (same "no limit yet, user sets it" convention every
+        // default category already uses) — but only ONCE per account,
+        // gated by settings.categories_v, so a default category the user
+        // later deletes on purpose doesn't silently reappear on the next
+        // load. viewAs (impersonating) already returned early above and
+        // never reaches here — support mode stays strictly read-only.
+        //
+        // TRADEOFF while supabase/categories-v2.sql hasn't been run yet:
+        // settings.categories_v doesn't exist, so `currentV` below reads as
+        // 0 forever and this block re-runs every load — harmless on its own
+        // (missing ids are only inserted once; re-running finds nothing
+        // missing the second time), but a category a user deletes in that
+        // window WOULD come back on the next load, since there's no flag to
+        // remember the deletion was deliberate. This is called out here and
+        // in the SQL file's own comment rather than silently accepted.
+        const currentV = se.data?.categories_v || 0
+        if (currentV < CATEGORIES_V) {
+          const haveIds = new Set(s.budgets.map((b) => b.id))
+          const missing = CATEGORY_DEFS.filter(([id]) => !haveIds.has(id))
+          if (missing.length) {
+            const newBudgets = missing.map(([id, name], i) => ({ id, name, limit: 0, position: s.budgets.length + i }))
+            s.budgets = [...s.budgets, ...newBudgets]
+            const { error: insErr } = await supabase.from('budgets').insert(newBudgets.map((b) => mappers.budgets.toRow(b, userId)))
+            if (insErr) console.warn('[store] ensure-default-categories: inserting missing default categories failed:', insErr.message)
+          }
+          const { error: vErr } = await supabase.from('settings').upsert({ user_id: userId, categories_v: CATEGORIES_V })
+          if (vErr && /categories_v/i.test(vErr.message || '')) {
+            console.warn('[store] settings.categories_v column missing — run supabase/categories-v2.sql. New default categories will keep re-checking on every load until then.')
+          } else if (vErr) {
+            console.warn('[store] ensure-default-categories: recording categories_v failed:', vErr.message)
+          }
         }
       }
       freshFor.current = userId

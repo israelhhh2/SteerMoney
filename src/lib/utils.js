@@ -35,26 +35,15 @@ export const prettyDate = (iso) => {
 }
 export const uid = (p = 'x') => p + Math.random().toString(36).slice(2, 9)
 
-export const CAT_COLORS = {
-  housing: '#38bdf8', auto: '#fb923c', shopping: '#f472b6', dining: '#fbbf24',
-  groceries: '#4ade80', other: '#a1a1aa', family: '#a78bfa', cash: '#2dd4bf',
-  utilities: '#22d3ee', kids: '#facc15', entertainment: '#e879f9', subscriptions: '#818cf8',
-  household: '#f97316', personal: '#fb7185', debt: '#f87171', income: '#34d399', transfer: '#94a3b8',
-  // 'refund' — merchant refund/return credited to a credit card. Treated
-  // like 'transfer' everywhere income is totaled (see store.jsx's
-  // incomeIn/dataMonths) — see lib/plaid-sync.js's classifyTx() for why this
-  // category exists instead of a negative 'expense' amount.
-  refund: '#94a3b8',
-}
-export const catColor = (id) => CAT_COLORS[id] || '#a1a1aa'
-
-export const CAT_EMOJI = {
-  housing: '🏡', auto: '🚗', shopping: '🛍️', dining: '🍔', groceries: '🥑',
-  other: '📦', family: '👨‍👩‍👧', cash: '💵', utilities: '💡', kids: '🧸',
-  entertainment: '🎬', subscriptions: '📺', household: '🔧', personal: '💇',
-  debt: '💳', income: '💰', transfer: '🔁', refund: '↩️',
-}
-export const catEmoji = (id) => CAT_EMOJI[id] || '🎯'
+// Category id -> color/emoji lookups now live in lib/categories.js (the
+// single source shared with store.jsx's DEFAULT_CATEGORIES and
+// components/shared.jsx's CAT_ICONS — see that file's header comment) —
+// re-exported here unchanged so every existing `from '@/lib/utils'` import
+// keeps working.
+export { CAT_COLORS, CAT_EMOJI } from './categories'
+import { CAT_COLORS as _CAT_COLORS, CAT_EMOJI as _CAT_EMOJI } from './categories'
+export const catColor = (id) => _CAT_COLORS[id] || '#a1a1aa'
+export const catEmoji = (id) => _CAT_EMOJI[id] || '🎯'
 
 export const ordinal = (n) => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]) }
 

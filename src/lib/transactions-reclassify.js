@@ -14,19 +14,17 @@ import { isCardPaymentDescription } from '@/lib/recurring-detect'
 // description match (isCardPaymentDescription, shared with lib/plaid-sync.js
 // and lib/recurring-detect.js's own recurring-bill filter) instead of PFC.
 //
-// LIMITATION (documented, not fixed here): the only signal this schema has
-// for "never hand-edited" is the id prefix — 'pl_' means Plaid-imported,
-// anything else means a manually-added row (see store.jsx's mappers /
-// Transactions.jsx's uid('tx')) — so this only ever touches 'pl_' rows.
-// There's no per-row "the owner manually recategorized this" column, so a
-// Plaid-imported row the owner already recategorized by hand (still keeping
-// its 'pl_' id) could theoretically get touched again here too. Given the
-// alternative — leaving the actual reported bug (card payments/refunds
-// counted as income, confirmed on production: 29 Chase rows, 33 Wells
-// Fargo, 25 Target) unfixed — this tradeoff is accepted and called out
-// here and in the route's own comment, rather than silently ignored. A
-// future `edited_at`/`manual` column on transactions would let this exclude
-// those rows precisely.
+// The id prefix ('pl_' = Plaid-imported, anything else = manually-added —
+// see store.jsx's mappers / Transactions.jsx's uid('tx')) is why this only
+// ever touches 'pl_' rows in the first place. UPDATE (categories-v2.sql):
+// a Plaid-imported row the owner already recategorized by hand used to be
+// fair game for this pass too (still keeping its 'pl_' id, with no way to
+// tell it apart from one never touched) — this now also skips any row whose
+// `cat_source` is 'manual' (a person picked it in the UI) or 'rule' (the
+// keyword-backfill set it), the same protection lib/plaid-sync.js's sync
+// upsert and lib/transactions-backfill.js apply. Degrades to no protection
+// at all (same behavior as before this column existed) on a project that
+// hasn't run categories-v2.sql yet — see hasCatSource below.
 export async function reclassifyPlaidTransactions({ userId, dryRun = false }) {
   if (!supabaseAdmin) return { ok: false, error: 'Supabase admin client not configured' }
 
@@ -35,12 +33,26 @@ export async function reclassifyPlaidTransactions({ userId, dryRun = false }) {
   const accountType = new Map()
   for (const row of items || []) for (const a of (row.accounts || [])) if (a?.account_id) accountType.set(a.account_id, a.type || null)
 
+  // cat_source (supabase/categories-v2.sql) may not be migrated yet on an
+  // older project — select it when available so the loop below can honor
+  // the same "never override a manual/rule categorization" rule
+  // lib/plaid-sync.js's sync upsert and lib/transactions-backfill.js already
+  // do; degrade to selecting without it (no protection possible — no row
+  // could have a 'manual'/'rule' cat_source recorded yet anyway on a project
+  // this far behind) rather than failing the whole reclassify pass.
+  let hasCatSource = true
+  {
+    const { error: probeErr } = await supabaseAdmin.from('transactions').select('cat_source').eq('user_id', userId).limit(1)
+    if (probeErr) hasCatSource = false
+  }
+  const selectCols = hasCatSource ? 'id, description, type, category, account_id, cat_source' : 'id, description, type, category, account_id'
+
   const PAGE = 1000
   let all = []
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabaseAdmin
       .from('transactions')
-      .select('id, description, type, category, account_id')
+      .select(selectCols)
       .eq('user_id', userId)
       .like('id', 'pl_%')
       .not('account_id', 'is', null)
@@ -54,6 +66,7 @@ export async function reclassifyPlaidTransactions({ userId, dryRun = false }) {
   const byReason = { creditCardPayment: 0, creditRefund: 0, depositoryCardPayment: 0 }
 
   for (const row of all) {
+    if (row.cat_source === 'manual' || row.cat_source === 'rule') continue // never override a person's own pick or a rule-backfill's result
     const acctType = accountType.get(row.account_id)
     if (!acctType) continue // account not found in any current plaid_items row — leave alone
 

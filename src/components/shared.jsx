@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useAuthUser } from '@/components/auth-provider'
-import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List, Link2, Pencil, Loader2, Plus, X, RotateCcw } from 'lucide-react'
+import { Home, Car, ShoppingBag, Utensils, ShoppingCart, Package, Users, Banknote, Wifi, Baby, Clapperboard, Tv, Wrench, Scissors, CreditCard, TrendingUp, Repeat, ChevronRight, LayoutGrid, List, Link2, Pencil, Loader2, Plus, X, RotateCcw, Bus, HeartPulse, Plane, GraduationCap, Receipt, Briefcase } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,10 +12,17 @@ import { useApp } from '@/store'
 import { tagsForAccount, allAccountTags, addAccountTag, removeAccountTag, colorForAccount, setAccountColor } from '@/lib/accounts'
 import { useT } from '@/lib/i18n'
 
+// Icon per category id (see lib/categories.js's CATEGORY_DEFS for the full
+// default taxonomy this maps onto, plus the four fixed non-budget ids below)
+// — falls back to the generic Package icon for anything not listed here
+// (a user-created custom category, or a future taxonomy addition), so this
+// map never needs to be exhaustive to stay safe.
 const CAT_ICONS = {
   housing: Home, auto: Car, shopping: ShoppingBag, dining: Utensils, groceries: ShoppingCart,
   other: Package, family: Users, cash: Banknote, utilities: Wifi, kids: Baby,
   entertainment: Clapperboard, subscriptions: Tv, household: Wrench, personal: Scissors,
+  transport: Bus, health: HeartPulse, travel: Plane, education: GraduationCap,
+  fees: Receipt, business: Briefcase,
   debt: CreditCard, income: TrendingUp, transfer: Repeat, refund: RotateCcw,
 }
 

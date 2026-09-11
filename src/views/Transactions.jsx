@@ -412,7 +412,13 @@ function ImportDialog({ rows, setRows, onClose }) {
   const setRow = (key, patch) => setRows(rows.map((r) => (r.key === key ? { ...r, ...patch } : r)))
   const doImport = () => {
     update((s) => {
-      selected.forEach((r) => s.transactions.push({ id: uid('tx'), date: r.date, desc: r.desc, amount: r.amount, type: r.type, cat: r.cat }))
+      // catSource: 'import' — came from a Wescom CSV, categorized by
+      // guessCat()'s learned-match/keyword rules (or hand-picked in this
+      // dialog's own category Select) rather than Plaid or a direct manual
+      // edit. Distinct from 'manual' so a future categorization pass can
+      // still tell "the user actually typed/edited this on the Transactions
+      // page" apart from "came in through an import."
+      selected.forEach((r) => s.transactions.push({ id: uid('tx'), date: r.date, desc: r.desc, amount: r.amount, type: r.type, cat: r.cat, catSource: 'import' }))
       s.transactions.sort((a, b) => b.date.localeCompare(a.date))
     })
     toast(selected.length === 1 ? t('Imported {n} transaction', { n: selected.length }) : t('Imported {n} transactions', { n: selected.length }))
@@ -494,7 +500,11 @@ function TxDialog({ id, onClose }) {
     const amount = parseFloat(f.amount)
     if (isNaN(amount)) return toast(t('Enter an amount'), 'error')
     update((s) => {
-      const data = { date: f.date, desc: f.desc.trim(), amount: Math.abs(amount), type: f.type, cat: f.cat }
+      // catSource: 'manual' — this dialog is the direct "a person picked a
+      // category" path (both a brand-new transaction and an edit to an
+      // existing one, Plaid-synced or not), so any future re-categorization
+      // pass (lib/transactions-backfill.js) knows never to override it.
+      const data = { date: f.date, desc: f.desc.trim(), amount: Math.abs(amount), type: f.type, cat: f.cat, catSource: 'manual' }
       if (id) Object.assign(s.transactions.find((x) => x.id === id), data)
       else s.transactions.unshift({ id: uid('tx'), ...data })
       s.transactions.sort((a, b) => b.date.localeCompare(a.date))
