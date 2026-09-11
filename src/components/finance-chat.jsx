@@ -54,22 +54,68 @@ function renderLite(text) {
   const lines = String(text || '').split('\n')
   const out = []
   let listBuf = []
+  let listTag = 'ul'
+  let tableBuf = []
   const flushList = (key) => {
     if (!listBuf.length) return
-    out.push(<ul key={`ul-${key}`} className="my-1 list-disc space-y-0.5 pl-4">{listBuf}</ul>)
+    const Tag = listTag
+    out.push(
+      <Tag key={`${Tag}-${key}`} className={cn('my-1 space-y-0.5 pl-4', Tag === 'ul' ? 'list-disc' : 'list-decimal')}>
+        {listBuf}
+      </Tag>
+    )
     listBuf = []
   }
+  // Markdown pipe tables: the system prompt forbids them, but a model can
+  // still slip one in — render it as a real compact table instead of a wall
+  // of raw "|" characters. Separator rows (|---|---|) are dropped.
+  const flushTable = (key) => {
+    if (!tableBuf.length) return
+    const rows = tableBuf.filter((r) => !/^\|?\s*:?-{2,}/.test(r)).map((r) => r.replace(/^\||\|$/g, '').split('|').map((c) => c.trim()))
+    tableBuf = []
+    if (!rows.length) return
+    const [head, ...body] = rows
+    out.push(
+      <div key={`tbl-${key}`} className="my-1.5 overflow-x-auto">
+        <table className="w-full text-[0.75rem]">
+          <thead>
+            <tr>{head.map((c, i) => <th key={i} className={cn('pb-1 pr-3 font-bold text-muted-foreground', i > 0 && 'text-right')}>{renderInline(c, `th-${key}-${i}`)}</th>)}</tr>
+          </thead>
+          <tbody>
+            {body.map((r, ri) => (
+              <tr key={ri} className="border-t border-border/40">
+                {r.map((c, i) => <td key={i} className={cn('py-1 pr-3', i > 0 && 'text-right tabular-nums')}>{renderInline(c, `td-${key}-${ri}-${i}`)}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
   lines.forEach((line, i) => {
-    const bullet = line.match(/^-\s+(.*)$/)
-    if (bullet) {
-      listBuf.push(<li key={`li-${i}`}>{renderInline(bullet[1], `li-${i}`)}</li>)
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      flushList(i)
+      tableBuf.push(line.trim())
+      return
+    }
+    flushTable(i)
+    const bullet = line.match(/^\s*[-*•]\s+(.*)$/)
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/)
+    if (bullet || numbered) {
+      const tag = bullet ? 'ul' : 'ol'
+      if (listBuf.length && tag !== listTag) flushList(i)
+      listTag = tag
+      listBuf.push(<li key={`li-${i}`}>{renderInline((bullet || numbered)[1], `li-${i}`)}</li>)
       return
     }
     flushList(i)
-    if (line.trim()) out.push(<p key={`p-${i}`} className="my-1 first:mt-0 last:mb-0">{renderInline(line, `p-${i}`)}</p>)
+    const heading = line.match(/^#{1,4}\s+(.*)$/)
+    if (heading) out.push(<p key={`h-${i}`} className="my-1 font-bold first:mt-0">{renderInline(heading[1], `h-${i}`)}</p>)
+    else if (line.trim()) out.push(<p key={`p-${i}`} className="my-1 first:mt-0 last:mb-0">{renderInline(line, `p-${i}`)}</p>)
     else out.push(<div key={`sp-${i}`} className="h-1.5" />)
   })
   flushList('end')
+  flushTable('end')
   return out
 }
 
@@ -293,7 +339,7 @@ export function FinanceChat({ mode = 'floating' }) {
             <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
               <div
                 className={cn(
-                  'max-w-[85%] rounded-2xl px-3 py-2 text-[0.8125rem] leading-snug',
+                  'max-w-[88%] rounded-2xl px-3 py-2 text-[0.8125rem] leading-relaxed',
                   m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-secondary/70 text-foreground'
                 )}
               >
