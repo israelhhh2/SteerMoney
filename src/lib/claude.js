@@ -69,7 +69,6 @@ export async function askJson({ system, messages, maxTokens = 4096, label = 'ask
     const resp = await client.messages.create({
       model: MODEL,
       max_tokens: maxTokens,
-      temperature: 0,
       system,
       messages: msgs,
     })

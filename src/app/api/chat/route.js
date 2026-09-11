@@ -129,7 +129,7 @@ export async function POST(req) {
         for (let round = 0; round < MAX_ROUNDS; round++) {
           const isLastRound = round === MAX_ROUNDS - 1
           const params = {
-            model: MODEL, max_tokens: 1024, temperature: 0.2,
+            model: MODEL, max_tokens: 1024, // no `temperature`: Claude 5 models reject it (400)
             system, messages: convo, tools: CHAT_TOOLS,
             // Force a plain text reply on the last allowed round instead of
             // letting the model ask for yet another tool call it would never
