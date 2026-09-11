@@ -11,10 +11,12 @@ import { useIsAdmin } from '@/lib/useIsAdmin'
 import { useApp } from '@/store'
 import { fmt, fmt0, prettyDate } from '@/lib/utils'
 
-// average monthly income from a user's transactions (transfers excluded)
+// average monthly income from a user's transactions (transfers and credit-
+// card refunds excluded — a refund is type:'income' but isn't real income,
+// see store.jsx's incomeIn / lib/plaid-sync.js's classifyTx())
 function avgIncome(tx) {
   const byM = {}
-  tx.forEach((t) => { if (t.type === 'income' && t.category !== 'transfer') byM[t.date.slice(0, 7)] = (byM[t.date.slice(0, 7)] || 0) + Number(t.amount) })
+  tx.forEach((t) => { if (t.type === 'income' && t.category !== 'transfer' && t.category !== 'refund') byM[t.date.slice(0, 7)] = (byM[t.date.slice(0, 7)] || 0) + Number(t.amount) })
   const months = Object.values(byM)
   return months.length ? months.reduce((a, b) => a + b, 0) / months.length : 0
 }

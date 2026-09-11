@@ -28,7 +28,8 @@ export default function Simulator() {
 
   const mins = state.debts.reduce((s, d) => s + d.min, 0)
   const recT = state.recurring.filter((r) => r.active !== false).reduce((s, r) => s + recMonthly(r), 0)
-  const yms = [...new Set(state.transactions.filter((t) => t.type === 'income' && t.cat !== 'transfer').map((t) => t.date.slice(0, 7)))]
+  // 'refund' excluded alongside 'transfer' — see store.jsx's incomeIn.
+  const yms = [...new Set(state.transactions.filter((t) => t.type === 'income' && t.cat !== 'transfer' && t.cat !== 'refund').map((t) => t.date.slice(0, 7)))]
   const avgInc = yms.length ? yms.reduce((s, m) => s + incomeIn(state, m), 0) / yms.length : 0
 
   const setIncome = (v) => update((s) => { s.mSim.income = Math.max(0, parseFloat(v) || 0) })
@@ -41,7 +42,7 @@ export default function Simulator() {
     else if (v === 'rec-all') it = { desc: t('All recurring bills'), amount: recT }
     else if (v === 'spend-avg') {
       const nowYm = today().slice(0, 7)
-      const all = [...new Set(state.transactions.filter((t) => t.cat !== 'transfer').map((t) => t.date.slice(0, 7)))]
+      const all = [...new Set(state.transactions.filter((t) => t.cat !== 'transfer' && t.cat !== 'refund').map((t) => t.date.slice(0, 7)))]
       const full = all.filter((m) => m !== nowYm)
       const use = full.length ? full : all
       const avg = use.reduce((s, m) => s + expensesIn(state, m), 0) / (use.length || 1)

@@ -1024,7 +1024,7 @@ export function AppProvider({ children }) {
     update: viewAs
       ? () => {}
       : (fn) => { dirty.current = true; setState((s) => { const c = JSON.parse(JSON.stringify(s)); if (!c.goals) c.goals = []; if (!c.accounts) c.accounts = []; if (!c.accountTags) c.accountTags = []; if (!c.accountColors) c.accountColors = []; fn(c); normalize(c); return c }) },
-    catInfo: (id) => state?.budgets.find((b) => b.id === id) || ({ debt: { name: 'Debt Payment' }, income: { name: 'Income' }, transfer: { name: 'Transfer' } }[id]) || { name: id || 'Other' },
+    catInfo: (id) => state?.budgets.find((b) => b.id === id) || ({ debt: { name: 'Debt Payment' }, income: { name: 'Income' }, transfer: { name: 'Transfer' }, refund: { name: 'Refund' } }[id]) || { name: id || 'Other' },
     uid,
   }), [state, loaded, syncError, viewAs, space, spaces])
 
@@ -1036,7 +1036,13 @@ export const useApp = () => useContext(Ctx)
 // ---- shared selectors ----
 export const monthTx = (state, ym) => state.transactions.filter((t) => t.date.startsWith(ym))
 export const rangeTx = (state, from, to) => state.transactions.filter((t) => t.date >= from && t.date <= to)
-export const incomeIn = (state, ym) => monthTx(state, ym).filter((t) => t.type === 'income' && t.cat !== 'transfer').reduce((s, t) => s + t.amount, 0)
+// 'refund' (merchant refund/return credited to a credit card — see
+// lib/plaid-sync.js's classifyTx()) is type:'income' but, like 'transfer',
+// isn't real income — excluded from every income total the same way
+// 'transfer' already was. Every other `cat !== 'transfer'` filter across
+// Dashboard/Charts/Simulator/Recurring/Admin/Transactions got the same
+// 'refund' exclusion added alongside it.
+export const incomeIn = (state, ym) => monthTx(state, ym).filter((t) => t.type === 'income' && t.cat !== 'transfer' && t.cat !== 'refund').reduce((s, t) => s + t.amount, 0)
 export const expensesIn = (state, ym) => monthTx(state, ym).filter((t) => t.type === 'expense' && t.cat !== 'transfer').reduce((s, t) => s + t.amount, 0)
 export const spentIn = (state, ym, cat) => monthTx(state, ym).filter((t) => t.type === 'expense' && t.cat === cat).reduce((s, t) => s + t.amount, 0)
-export const dataMonths = (state) => [...new Set(state.transactions.filter((t) => t.cat !== 'transfer').map((t) => t.date.slice(0, 7)))].sort().reverse()
+export const dataMonths = (state) => [...new Set(state.transactions.filter((t) => t.cat !== 'transfer' && t.cat !== 'refund').map((t) => t.date.slice(0, 7)))].sort().reverse()

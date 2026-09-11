@@ -16,7 +16,7 @@ const CAT_ICONS = {
   housing: Home, auto: Car, shopping: ShoppingBag, dining: Utensils, groceries: ShoppingCart,
   other: Package, family: Users, cash: Banknote, utilities: Wifi, kids: Baby,
   entertainment: Clapperboard, subscriptions: Tv, household: Wrench, personal: Scissors,
-  debt: CreditCard, income: TrendingUp, transfer: Repeat,
+  debt: CreditCard, income: TrendingUp, transfer: Repeat, refund: RotateCcw,
 }
 
 export function CatIcon({ cat, className = 'h-4 w-4' }) {

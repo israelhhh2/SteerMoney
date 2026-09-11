@@ -597,6 +597,7 @@ export default function AccountDetail({ id }) {
                       <option value="debt">{t('Debt Payment')}</option>
                       <option value="income">{t('Income')}</option>
                       <option value="transfer">{t('Transfer')}</option>
+                      <option value="refund">{t('Refund')}</option>
                     </Select>
                     <span className={`w-16 shrink-0 text-right text-[0.8125rem] font-semibold sm:w-24 ${tx.type === 'income' ? 'text-emerald-400' : tx.cat === 'transfer' ? 'text-muted-foreground' : ''}`}>
                       {tx.type === 'income' ? '+' : '−'}{fmt(tx.amount)}

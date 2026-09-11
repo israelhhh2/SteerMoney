@@ -20,7 +20,11 @@ export default function Charts({ focus } = {}) {
   const { state, catInfo } = useApp()
   const isMobile = useIsMobile()
   const t = useT()
-  const noTr = useMemo(() => state.transactions.filter((t) => t.cat !== 'transfer'), [state.transactions])
+  // 'refund' excluded alongside 'transfer' — a credit-card refund is
+  // type:'income' but isn't real income (see store.jsx's incomeIn /
+  // lib/plaid-sync.js's classifyTx()), so it shouldn't inflate the
+  // Income-by-month line below either.
+  const noTr = useMemo(() => state.transactions.filter((t) => t.cat !== 'transfer' && t.cat !== 'refund'), [state.transactions])
 
   // Deep-link support for /charts?focus=income|spending (Dashboard's "Avg
   // Monthly Income"/"Avg Monthly Spending" KPIs link here) — scrolls the

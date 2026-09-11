@@ -149,6 +149,32 @@ function isExcludedMerchant(desc) {
   return EXCLUDE_PATTERNS.some((re) => re.test(String(desc || '')))
 }
 
+// Credit-card BILL PAYMENT description patterns — a subset of
+// EXCLUDE_PATTERNS above (same vocabulary, kept in sync intentionally
+// instead of drifting into its own copy) plus a few brand-name patterns
+// borrowed from lib/wescom.js's 'debt' rule. Exported so lib/plaid-sync.js
+// (payment/refund classification — see its classifyTx()) and
+// lib/transactions-reclassify.js (the one-time backfill for transactions
+// synced before that classification existed) can both recognize "this
+// description reads like a payment made TO a credit card" without
+// duplicating the regex list a third time.
+export const CARD_PAYMENT_DESC_PATTERNS = [
+  /payment\s*thank\s*you/i,      // "AMEX Payment Thank You"
+  /\bautopay\b/i,
+  /\bepay\b/i,
+  /\bpymt\b/i,
+  /crcardpmt/i,                  // "Capital One Type Crcardpmt Co..."
+  /cr\s*crd\s*pmt/i,
+  /credit\s*card\s*pay(ment)?/i,
+  /card\s*pmt/i,
+  /cardmember/i,                 // "Cardmember Serv" (Citi/Chase billing entity)
+  /payment.*(card|visa|mastercard|amex|capital\s*one|chase|discover|wells\s*fargo|citi|barclay)/i,
+]
+
+export function isCardPaymentDescription(desc) {
+  return CARD_PAYMENT_DESC_PATTERNS.some((re) => re.test(String(desc || '')))
+}
+
 // ---- cadence classification ----
 const DAY_MS = 86400000
 

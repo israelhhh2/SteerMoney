@@ -150,7 +150,8 @@ export default function Recurring() {
   const sel = act.filter((r) => whatIf.has(r.id))
   const save = sel.reduce((s, r) => s + recMonthly(r), 0)
   const mins = state.debts.reduce((s, d) => s + d.min, 0)
-  const yms = [...new Set(state.transactions.filter((t) => t.type === 'income' && t.cat !== 'transfer').map((t) => t.date.slice(0, 7)))]
+  // 'refund' excluded alongside 'transfer' — see store.jsx's incomeIn.
+  const yms = [...new Set(state.transactions.filter((t) => t.type === 'income' && t.cat !== 'transfer' && t.cat !== 'refund').map((t) => t.date.slice(0, 7)))]
   const avgIncome = yms.length ? yms.reduce((s, ym) => s + incomeIn(state, ym), 0) / yms.length : 0
   const base = useMemo(() => (sel.length ? simulatePlan(state.debts, state.sim.budget, state.sim.strategy) : null), [sel.length, state.debts, state.sim])
   const boost = useMemo(() => (sel.length ? simulatePlan(state.debts, state.sim.budget + save, state.sim.strategy) : null), [sel.length, save, state.debts, state.sim])

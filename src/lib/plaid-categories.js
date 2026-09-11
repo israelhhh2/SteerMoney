@@ -9,7 +9,12 @@
 // budget-backed ones, and Transactions.jsx's `validCats` for the full set
 // every view already knows how to render even without a matching budget
 // row): 'housing', 'groceries', 'dining', 'auto', 'utilities' (budget ids),
-// plus the non-budget special ids 'debt', 'income', 'transfer', 'other'.
+// plus the non-budget special ids 'debt', 'income', 'transfer', 'refund',
+// 'other'. This module only ever returns 'debt'/'transfer'/a merchandise
+// category from LOAN_PAYMENTS/TRANSFER_IN/TRANSFER_OUT/other PFC values —
+// 'refund' is assigned one level up, in lib/plaid-sync.js's classifyTx(),
+// which is also where the LOAN_PAYMENTS 'debt' this file returns can get
+// overridden to 'transfer' for a credit-card bill payment.
 //
 // Deliberately conservative: only maps PFC values onto app ids that already
 // exist by default. Anything not covered below (entertainment, medical,

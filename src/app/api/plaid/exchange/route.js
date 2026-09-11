@@ -2,6 +2,7 @@ import { createSupabaseServerClient } from '@/lib/supabase-clients'
 import { plaidClient, plaidConfigured, supabaseAdmin, ownerIdsFor } from '@/lib/plaid-server'
 import { syncDebtsFromPlaid } from '@/lib/plaid-debts'
 import { isFullyDuplicateOf } from '@/lib/accounts'
+import { dedupeOrphanedTransactions } from '@/lib/transactions-dedupe'
 
 // Exchanges a Plaid Link public_token for a permanent access_token and
 // stores the connection. The access token never leaves this route.
@@ -97,6 +98,20 @@ export async function POST(req) {
       if (match) duplicate = { institution: match.institution || institution || null, item_id: match.item_id }
     } catch (e) {
       console.error('[plaid] duplicate-connection check failed', e?.message || e)
+    }
+
+    // Best-effort cleanup for the exact re-connect-the-same-bank scenario
+    // this route handles: a fresh link_token exchange here always means a
+    // brand-new plaid_items row (and, for a re-connect, brand-new
+    // account_ids), which is precisely when a PRE-EXISTING orphaned
+    // duplicate from an earlier disconnect finally has a "live" twin to be
+    // matched against (see lib/transactions-dedupe.js). Cheap no-op the
+    // first time any bank is ever connected (nothing orphaned yet); never
+    // blocks the bank-linking response itself.
+    try {
+      await dedupeOrphanedTransactions({ userId, dryRun: false })
+    } catch (e) {
+      console.error('[plaid] post-link dedupe failed', e?.message || e)
     }
 
     return Response.json({

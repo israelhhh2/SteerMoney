@@ -40,6 +40,11 @@ export const CAT_COLORS = {
   groceries: '#4ade80', other: '#a1a1aa', family: '#a78bfa', cash: '#2dd4bf',
   utilities: '#22d3ee', kids: '#facc15', entertainment: '#e879f9', subscriptions: '#818cf8',
   household: '#f97316', personal: '#fb7185', debt: '#f87171', income: '#34d399', transfer: '#94a3b8',
+  // 'refund' — merchant refund/return credited to a credit card. Treated
+  // like 'transfer' everywhere income is totaled (see store.jsx's
+  // incomeIn/dataMonths) — see lib/plaid-sync.js's classifyTx() for why this
+  // category exists instead of a negative 'expense' amount.
+  refund: '#94a3b8',
 }
 export const catColor = (id) => CAT_COLORS[id] || '#a1a1aa'
 
@@ -47,7 +52,7 @@ export const CAT_EMOJI = {
   housing: '🏡', auto: '🚗', shopping: '🛍️', dining: '🍔', groceries: '🥑',
   other: '📦', family: '👨‍👩‍👧', cash: '💵', utilities: '💡', kids: '🧸',
   entertainment: '🎬', subscriptions: '📺', household: '🔧', personal: '💇',
-  debt: '💳', income: '💰', transfer: '🔁',
+  debt: '💳', income: '💰', transfer: '🔁', refund: '↩️',
 }
 export const catEmoji = (id) => CAT_EMOJI[id] || '🎯'
 

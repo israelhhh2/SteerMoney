@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthUser, useSignOut } from '@/components/auth-provider'
-import { Eye, Pencil, Plus, Link2, Users, ChevronRight, Loader2, UserMinus, Landmark, RefreshCw, AlertTriangle, Trash2, ArrowRightLeft } from 'lucide-react'
+import { Eye, Pencil, Plus, Link2, Users, ChevronRight, Loader2, UserMinus, Landmark, RefreshCw, AlertTriangle, Trash2, ArrowRightLeft, Sparkles } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
@@ -142,11 +142,19 @@ function AccountSection() {
 function ConnectedBanksSection() {
   const toast = useToast()
   const t = useT()
-  const { refetch } = useApp()
+  const { refetch, space } = useApp()
   const { refetchPlaidItems } = usePlaidItems()
   const [items, setItems] = useState(null) // null = loading
   const [syncing, setSyncing] = useState(false)
   const [removing, setRemoving] = useState(null)
+  // "Clean up transactions" — dedupes a reconnected bank's re-imported
+  // history (app/api/transactions/dedupe) and fixes card payments/refunds
+  // that were counted as income (app/api/transactions/reclassify). Both
+  // scoped to the current space the same way `sync`/eraseAll below are —
+  // `space?.id` only when standing in a shared space.
+  const [cleanupPreviewing, setCleanupPreviewing] = useState(false)
+  const [cleanupConfirm, setCleanupConfirm] = useState(null) // { duplicatesRemoved, reclassified } once previewed
+  const [cleaning, setCleaning] = useState(false)
 
   const loadItems = async () => {
     try {
@@ -190,6 +198,55 @@ function ConnectedBanksSection() {
       toast(e.message, 'error')
     } finally {
       setSyncing(false)
+    }
+  }
+
+  // Dry-run both cleanup passes first so the ConfirmDialog below shows real
+  // counts instead of a blind "are you sure?" — same "preview, then confirm"
+  // shape as RemoveBankDialog/DangerZoneSection's ConfirmDialog usage.
+  const previewCleanup = async () => {
+    setCleanupPreviewing(true)
+    try {
+      const body = JSON.stringify(space?.id ? { space_id: space.id, dry_run: true } : { dry_run: true })
+      const [dedupeRes, reclassifyRes] = await Promise.all([
+        fetch('/api/transactions/dedupe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
+        fetch('/api/transactions/reclassify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
+      ])
+      const dedupeData = await dedupeRes.json().catch(() => ({}))
+      const reclassifyData = await reclassifyRes.json().catch(() => ({}))
+      if (!dedupeRes.ok) throw new Error(dedupeData.error || t("Couldn't check for cleanup"))
+      if (!reclassifyRes.ok) throw new Error(reclassifyData.error || t("Couldn't check for cleanup"))
+      const duplicatesRemoved = dedupeData.duplicatesRemoved || 0
+      const reclassified = reclassifyData.changed || 0
+      if (!duplicatesRemoved && !reclassified) toast(t('No duplicate or miscategorized transactions found'))
+      else setCleanupConfirm({ duplicatesRemoved, reclassified })
+    } catch (e) {
+      toast(e.message, 'error')
+    } finally {
+      setCleanupPreviewing(false)
+    }
+  }
+
+  const runCleanup = async () => {
+    setCleaning(true)
+    try {
+      const body = JSON.stringify(space?.id ? { space_id: space.id } : {})
+      const dedupeRes = await fetch('/api/transactions/dedupe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+      const dedupeData = await dedupeRes.json().catch(() => ({}))
+      if (!dedupeRes.ok) throw new Error(dedupeData.error || t("Couldn't clean up transactions"))
+      const reclassifyRes = await fetch('/api/transactions/reclassify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+      const reclassifyData = await reclassifyRes.json().catch(() => ({}))
+      if (!reclassifyRes.ok) throw new Error(reclassifyData.error || t("Couldn't clean up transactions"))
+      const dup = dedupeData.duplicatesRemoved || 0, rc = reclassifyData.changed || 0
+      toast(t('Removed {dup} duplicate transaction{dp} and fixed {rc} miscategorized transaction{rp}', {
+        dup, dp: dup === 1 ? '' : 's', rc, rp: rc === 1 ? '' : 's',
+      }))
+      refetch() // pulls the corrected/deduped transactions back into the store
+    } catch (e) {
+      toast(e.message, 'error')
+    } finally {
+      setCleaning(false)
+      setCleanupConfirm(null)
     }
   }
 
@@ -266,10 +323,32 @@ function ConnectedBanksSection() {
           <p className="py-1 text-xs text-muted-foreground">{t('No banks connected yet.')}</p>
         )}
 
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* Reconnecting a bank after a disconnect re-imports its whole
+              history under new Plaid ids (see lib/transactions-dedupe.js) —
+              only worth offering once there's at least one connection to
+              clean up. */}
+          {items && items.length > 0 ? (
+            <Button variant="outline" size="sm" disabled={cleanupPreviewing} onClick={previewCleanup}>
+              {cleanupPreviewing ? <Loader2 className="animate-spin" /> : <Sparkles />}{t('Clean up transactions')}
+            </Button>
+          ) : <span />}
           <ConnectBankButton size="sm" onDone={async () => { await loadItems(); setTimeout(() => window.location.reload(), 1200) }} />
         </div>
       </Card>
+      {cleanupConfirm && (
+        <ConfirmDialog
+          title={t('Clean up transactions?')}
+          desc={t('Found {dup} duplicate transaction{dp} from a reconnected bank, and {rc} transaction{rp} miscounted as income or debt that are really card payments or refunds. This can\'t be undone.', {
+            dup: cleanupConfirm.duplicatesRemoved, dp: cleanupConfirm.duplicatesRemoved === 1 ? '' : 's',
+            rc: cleanupConfirm.reclassified, rp: cleanupConfirm.reclassified === 1 ? '' : 's',
+          })}
+          confirmLabel={t('Clean up')}
+          busy={cleaning}
+          onConfirm={runCleanup}
+          onClose={() => !cleaning && setCleanupConfirm(null)}
+        />
+      )}
       {removing && (
         <RemoveBankDialog
           institution={removing.institution || t('this bank')}

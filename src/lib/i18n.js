@@ -135,6 +135,17 @@ export const DICTIONARY = {
   'Remove {institution}?': { es: '¿Eliminar {institution}?' },
   'SteerMoney stops pulling new transactions from this bank. Transactions already imported stay in your account.': { es: 'SteerMoney deja de importar nuevas transacciones de este banco. Las transacciones ya importadas permanecen en tu cuenta.' },
   'Cancel': { es: 'Cancelar' },
+  // ---- "Clean up transactions" (Connected banks) — dedupes a reconnected
+  // bank's re-imported history and fixes card payments/refunds that were
+  // miscounted as income; see app/api/transactions/dedupe + reclassify ----
+  'Clean up transactions': { es: 'Limpiar transacciones' },
+  "Couldn't check for cleanup": { es: 'No se pudo verificar la limpieza' },
+  'No duplicate or miscategorized transactions found': { es: 'No se encontraron transacciones duplicadas ni mal categorizadas' },
+  'Clean up transactions?': { es: '¿Limpiar transacciones?' },
+  'Found {dup} duplicate transaction{dp} from a reconnected bank, and {rc} transaction{rp} miscounted as income or debt that are really card payments or refunds. This can\'t be undone.': { es: 'Se encontraron {dup} transacción{dp} duplicada{dp} de un banco reconectado, y {rc} transacción{rp} mal contada{rp} como ingreso o deuda que en realidad son pagos de tarjeta o reembolsos. Esto no se puede deshacer.' },
+  'Clean up': { es: 'Limpiar' },
+  "Couldn't clean up transactions": { es: 'No se pudieron limpiar las transacciones' },
+  'Removed {dup} duplicate transaction{dp} and fixed {rc} miscategorized transaction{rp}': { es: 'Se eliminaron {dup} transacción{dp} duplicada{dp} y se corrigieron {rc} transacción{rp} mal categorizada{rp}' },
   // ---- duplicate bank connection (connect-bank.jsx's DuplicateBankDialog,
   // Accounts.jsx's "connected twice" banner) ----
   'Remove the duplicate connection?': { es: '¿Eliminar la conexión duplicada?' },
@@ -387,6 +398,7 @@ export const DICTIONARY = {
   'All categories': { es: 'Todas las categorías' },
   'Debt Payment': { es: 'Pago de deuda' },
   'Transfer': { es: 'Transferencia' },
+  'Refund': { es: 'Reembolso' },
   'All accounts': { es: 'Todas las cuentas' },
   'In': { es: 'Entradas' },
   'Out': { es: 'Salidas' },

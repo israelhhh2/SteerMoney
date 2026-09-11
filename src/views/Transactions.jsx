@@ -129,7 +129,7 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
     rd.onload = (e) => {
       const parsed = parseWescomCSV(e.target.result)
       if (!parsed.length) return toast(t("Couldn't find any transactions — export History as CSV from Wescom online banking"), 'error')
-      const validCats = new Set([...state.budgets.map((b) => b.id), 'debt', 'income', 'transfer', 'other'])
+      const validCats = new Set([...state.budgets.map((b) => b.id), 'debt', 'income', 'transfer', 'refund', 'other'])
       const existing = new Set(state.transactions.map((tx) => `${tx.date}|${tx.type}|${tx.amount.toFixed(2)}|${tx.desc}`))
       setImportRows(parsed.map((r, i) => {
         const dup = existing.has(`${r.date}|${r.type}|${r.amount.toFixed(2)}|${r.desc}`)
@@ -179,7 +179,8 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
   if (account) list = list.filter((tx) => tx.accountId === account)
   if (cat !== 'all') list = list.filter((tx) => tx.cat === cat)
   if (q) list = list.filter((tx) => tx.desc.toLowerCase().includes(q.toLowerCase()))
-  const inc = list.filter((tx) => tx.type === 'income' && tx.cat !== 'transfer').reduce((s, tx) => s + tx.amount, 0)
+  // 'refund' excluded alongside 'transfer' — see store.jsx's incomeIn.
+  const inc = list.filter((tx) => tx.type === 'income' && tx.cat !== 'transfer' && tx.cat !== 'refund').reduce((s, tx) => s + tx.amount, 0)
   const exp = list.filter((tx) => tx.type === 'expense' && tx.cat !== 'transfer').reduce((s, tx) => s + tx.amount, 0)
   const byDate = {}
   list.forEach((tx) => { (byDate[tx.date] = byDate[tx.date] || []).push(tx) })
@@ -214,7 +215,7 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
           <Select className="w-full text-xs sm:w-auto" value={cat} onChange={(e) => setCat(e.target.value)}>
             <option value="all">{t('All categories')}</option>
             {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            <option value="debt">{t('Debt Payment')}</option><option value="income">{t('Income')}</option><option value="transfer">{t('Transfer')}</option>
+            <option value="debt">{t('Debt Payment')}</option><option value="income">{t('Income')}</option><option value="transfer">{t('Transfer')}</option><option value="refund">{t('Refund')}</option>
           </Select>
           {/* Only rendered once there's at least one connected bank — manual-only
               users have nothing to filter by, so no dropdown clutter (design goal 3). */}
@@ -438,7 +439,7 @@ function ImportDialog({ rows, setRows, onClose }) {
               </span>
               <Select className="!h-7 ml-6 w-[calc(100%-1.5rem)] text-[0.6875rem] sm:ml-0 sm:w-32 sm:shrink-0" value={r.cat} onChange={(e) => setRow(r.key, { cat: e.target.value })}>
                 {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                <option value="debt">{t('Debt Payment')}</option><option value="income">{t('Income')}</option><option value="transfer">{t('Transfer')}</option>
+                <option value="debt">{t('Debt Payment')}</option><option value="income">{t('Income')}</option><option value="transfer">{t('Transfer')}</option><option value="refund">{t('Refund')}</option>
               </Select>
             </div>
           ))}
@@ -557,7 +558,7 @@ function TxDialog({ id, onClose }) {
             ) : (
               <Select className="w-full" value={f.cat} onChange={selectCat}>
                 {state.budgets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                <option value="debt">{t('Debt Payment')}</option><option value="income">{t('Income')}</option><option value="transfer">{t('Transfer')}</option>
+                <option value="debt">{t('Debt Payment')}</option><option value="income">{t('Income')}</option><option value="transfer">{t('Transfer')}</option><option value="refund">{t('Refund')}</option>
                 <option value={ADD_CATEGORY}>{t('+ Add category…')}</option>
               </Select>
             )}

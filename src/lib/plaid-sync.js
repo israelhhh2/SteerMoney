@@ -1,6 +1,7 @@
 import { plaidClient, supabaseAdmin } from '@/lib/plaid-server'
 import { mapPlaidCategory } from '@/lib/plaid-categories'
 import { syncDebtsFromPlaid } from '@/lib/plaid-debts'
+import { isCardPaymentDescription } from '@/lib/recurring-detect'
 
 // Small keyword map from Plaid's merchant/transaction name to this app's
 // category ids. Kept only as a defensive fallback for the rare transaction
@@ -19,6 +20,93 @@ function guessCategory(tx) {
   const text = [tx.merchant_name, tx.name].filter(Boolean).join(' ')
   for (const [cat, re] of CATEGORY_RULES) if (re.test(text)) return cat
   return 'other'
+}
+
+// PM/CLAUDE.md note (production data, 2026-09): Plaid's own convention —
+// `type: tx.amount < 0 ? 'income' : 'expense'` — is right for a depository
+// (checking/savings) account, where money coming IN really is income. It's
+// WRONG on a CREDIT account: there, a negative Plaid amount is money moving
+// TOWARD the card — either the owner paying their own bill (not new income,
+// it's the same dollars already counted as spending when the purchases
+// posted) or a merchant refund/return (a credit, not income either). Left
+// unfixed, every card payment/refund got double-counted as both an expense
+// (on the checking account that sent it) AND income (on the card that
+// received it) — inflating Money In and Money Out on the Dashboard at once.
+// This only changes CATEGORY, never the stored amount or the `income` type
+// for a payment/refund landing on a credit account — see the big comment
+// inside classifyTx() below for exactly why 'refund' (not a negative
+// `expense` amount) is this app's fix for the refund case.
+//
+// Determines account TYPE ('credit' | 'depository' | 'loan' | ... | null)
+// for a transaction from the item's own `accounts` snapshot (same shape
+// insertRow/accountsGet refresh in this file and app/api/plaid/exchange
+// store: {account_id, type, subtype, ...}). `accountsById` is built once per
+// sync pass, not per transaction — see its call site below.
+function classifyTx(tx, accountsById) {
+  const desc = tx.merchant_name || tx.name || ''
+  const pfc = tx?.personal_finance_category
+  const acctType = accountsById.get(tx.account_id)?.type || null
+
+  // Unmodified fallback for a depository account, an account of unknown
+  // type (accounts not migrated/refreshed yet), or any credit-account
+  // transaction that ISN'T a negative amount (a purchase — plain 'expense',
+  // exactly as before).
+  let type = tx.amount < 0 ? 'income' : 'expense'
+  let category = mapPlaidCategory(tx, guessCategory)
+
+  if (acctType === 'credit' && tx.amount < 0) {
+    // Money moving INTO the card. Two real cases, told apart by Plaid's own
+    // PFC taxonomy first, this app's existing card-payment keyword list
+    // (lib/recurring-detect.js's isCardPaymentDescription — shared with
+    // that file's own "don't suggest this as a recurring bill" filter and
+    // lib/wescom.js's manual-import 'debt' rule) as a fallback for
+    // institutions that don't enrich a transaction with a
+    // personal_finance_category at all:
+    //   (a) a bill PAYMENT — LOAN_PAYMENTS/TRANSFER_IN primary, or a
+    //       description like "AMEX Payment Thank You"/"Capital One Autopay"
+    //       — files as 'transfer', same as this app's other internal-money-
+    //       movement rows (store.jsx's incomeIn/expensesIn/dataMonths and
+    //       every Dashboard/Charts/Budgets view already exclude cat
+    //       'transfer' from every income AND spending total).
+    //   (b) anything else — a merchant REFUND/return credited back to the
+    //       card. Genuinely not income, but this app's `amount` column
+    //       always stores a positive number (Math.abs(tx.amount) below) and
+    //       Transactions.jsx/AccountDetail.jsx hardcode
+    //       `tx.type === 'income' ? '+' : '−'` immediately before calling
+    //       fmt() on that amount — fmt() ALSO prepends its own '-' for a
+    //       negative number (lib/utils.js), so type:'expense' with a
+    //       negative amount would render as a literal double-negative
+    //       ("−-$12.34") on every transaction row, plus every other
+    //       type==='expense' sum across Charts/Budgets/recurring-detect
+    //       would need auditing for whether it tolerates a negative addend.
+    //       Simplest and safest fix, and the one this app already has
+    //       precedent for: keep type:'income' (so the stored amount stays
+    //       positive and every existing render path is untouched) and give
+    //       it its own dedicated category, 'refund', excluded from every
+    //       income total the exact same way 'transfer' already is (see
+    //       store.jsx's incomeIn and every other `cat !== 'transfer'` filter
+    //       — grep for '"refund"' to find each one this change touched).
+    const looksLikePayment = pfc?.primary === 'LOAN_PAYMENTS' || pfc?.primary === 'TRANSFER_IN' || isCardPaymentDescription(desc)
+    category = looksLikePayment ? 'transfer' : 'refund'
+    // type stays 'income' either way — see the block comment above.
+  } else if (acctType === 'depository' && tx.amount > 0 && category === 'debt' &&
+             (pfc?.detailed === 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT' || isCardPaymentDescription(desc))) {
+    // Money LEAVING checking specifically to pay off a credit card — the
+    // purchases it's covering were already counted as spending when they
+    // posted to the card, so counting the payment too would double-count
+    // the same spending twice. Only credit-card payments get this
+    // treatment: mapPlaidCategory() already maps every OTHER LOAN_PAYMENTS_*
+    // sub-type (auto/student/mortgage/personal loan) to 'debt', and those
+    // stay 'debt' here — paying down an auto loan or mortgage is real, new
+    // money leaving the household, not money that's already been spent.
+    category = 'transfer'
+  }
+  // Transfers between the user's own depository accounts (Plaid's
+  // TRANSFER_IN/TRANSFER_OUT primary, e.g. "To Share 01"/"From Share 00")
+  // already map to 'transfer' via mapPlaidCategory's PRIMARY_MAP regardless
+  // of account type — nothing to do here, just noting it's intentional.
+
+  return { type, category }
 }
 
 // Pulls new/changed/removed transactions for a single connected bank
@@ -64,6 +152,85 @@ export async function syncPlaidItem(item, opts = {}) {
     cursor = item.cursor || undefined // don't persist a partial/advanced cursor from a failed run
   }
 
+  // ---- orphaned re-import guard (production bug, 2026-09) ---------------
+  // Disconnecting a bank keeps its imported transactions by design ("stays
+  // in your account" — see app/api/account/erase's comment on the same
+  // philosophy), but re-connecting the SAME bank makes Plaid issue brand-new
+  // account_ids AND transaction_ids for the new item — there's nothing
+  // linking them back to the old ones. Left alone, every historical
+  // transaction gets inserted a SECOND time under the new ids, permanently
+  // inflating every total this app computes from `transactions` (see
+  // supabase/dedupe-orphaned-transactions.sql / POST /api/transactions/
+  // dedupe, which clean up existing duplicates after the fact — this block
+  // is the "stop making more of them" half of that fix).
+  //
+  // Instead of letting that duplicate get inserted, re-point the ALREADY-
+  // STORED row (under the dead account_id) at the new account_id/
+  // transaction_id and skip inserting the "new" row entirely. That preserves
+  // any manual edit the owner made to the old row (recategorized, renamed,
+  // logged against a recurring bill, etc.) — something a delete-then-insert
+  // would silently lose — and updating the `id` too (not just `account_id`)
+  // means a LATER `modified`/`removed` from Plaid for this transaction_id
+  // still finds the row by id instead of orphaning it a second time.
+  const repointedIds = new Set() // transaction_ids handled by re-pointing, not upserted below
+  const incoming = [...allAdded, ...allModified]
+  if (incoming.length && supabaseAdmin) {
+    try {
+      const dates = incoming.map((tx) => tx.date).filter(Boolean)
+      const minDate = dates.reduce((a, b) => (b < a ? b : a), dates[0])
+      const maxDate = dates.reduce((a, b) => (b > a ? b : a), dates[0])
+
+      // "Live" account_ids = every account any of this user's CURRENT
+      // plaid_items rows knows about (this item included — its stored
+      // snapshot, not yet refreshed below), plus every account_id this very
+      // batch just saw (covers a brand-new account on THIS item, whose
+      // `accounts` snapshot hasn't been written yet this pass).
+      const { data: siblingItems } = await supabaseAdmin.from('plaid_items').select('accounts').eq('user_id', userId)
+      const liveAccountIds = new Set()
+      for (const row of siblingItems || []) for (const a of (row.accounts || [])) if (a?.account_id) liveAccountIds.add(a.account_id)
+      for (const tx of incoming) if (tx.account_id) liveAccountIds.add(tx.account_id)
+
+      // One query for the whole batch's date range (not one per
+      // transaction) — same "query once, build a Set/Map" approach the
+      // dedupe route uses, just scoped to this pass's dates for speed.
+      const { data: candidateRows } = await supabaseAdmin
+        .from('transactions')
+        .select('id, date, amount, description, account_id')
+        .eq('user_id', userId)
+        .gte('date', minDate)
+        .lte('date', maxDate)
+
+      const orphanByKey = new Map()
+      for (const row of candidateRows || []) {
+        if (!row.account_id || liveAccountIds.has(row.account_id)) continue // not orphaned
+        const key = row.date + '|' + Number(row.amount).toFixed(2) + '|' + String(row.description || '').trim().toLowerCase()
+        if (!orphanByKey.has(key)) orphanByKey.set(key, row)
+      }
+
+      if (orphanByKey.size) {
+        for (const tx of incoming) {
+          const desc = tx.merchant_name || tx.name || ''
+          const key = tx.date + '|' + Math.abs(tx.amount).toFixed(2) + '|' + desc.trim().toLowerCase()
+          const orphan = orphanByKey.get(key)
+          if (!orphan) continue
+          orphanByKey.delete(key) // each orphaned row re-points at most one incoming transaction
+          const { error: repointErr } = await supabaseAdmin
+            .from('transactions')
+            .update({ id: 'pl_' + tx.transaction_id, account_id: tx.account_id || null })
+            .eq('user_id', userId)
+            .eq('id', orphan.id)
+          if (!repointErr) repointedIds.add(tx.transaction_id)
+        }
+      }
+    } catch (e) {
+      // Best-effort, same as the balance refresh / debt sync below — a
+      // failure here must never block the transaction sync itself. Worst
+      // case a duplicate slips through and gets cleaned up later by the
+      // dedupe route/SQL instead of being prevented up front.
+      console.error('[plaid] orphaned-transaction re-point check failed for item', item.item_id, e?.message || e)
+    }
+  }
+
   // Store pending transactions too (previously filtered out entirely) — the
   // user wants to see a charge the moment it happens, not just once it
   // settles days later, and Plaid's sync semantics make this safe without
@@ -77,19 +244,23 @@ export async function syncPlaidItem(item, opts = {}) {
   // indistinguishable from a posted one once stored — acceptable for v1
   // (this app doesn't have a "pending" badge anywhere yet); it will simply
   // get replaced/removed on the next sync once the bank settles it.
-  const upsertRows = [...allAdded, ...allModified]
-    .map((tx) => ({
-      user_id: userId,
-      id: 'pl_' + tx.transaction_id,
-      date: tx.date,
-      description: tx.merchant_name || tx.name,
-      amount: Math.abs(tx.amount),
-      // Plaid convention: a positive amount is money leaving the account.
-      type: tx.amount < 0 ? 'income' : 'expense',
-      category: mapPlaidCategory(tx, guessCategory),
-      // Lets the Accounts detail sheet / Transactions page filter by account.
-      account_id: tx.account_id || null,
-    }))
+  const accountsById = new Map((item.accounts || []).map((a) => [a.account_id, a]))
+  const upsertRows = incoming
+    .filter((tx) => !repointedIds.has(tx.transaction_id))
+    .map((tx) => {
+      const { type, category } = classifyTx(tx, accountsById)
+      return {
+        user_id: userId,
+        id: 'pl_' + tx.transaction_id,
+        date: tx.date,
+        description: tx.merchant_name || tx.name,
+        amount: Math.abs(tx.amount),
+        type,
+        category,
+        // Lets the Accounts detail sheet / Transactions page filter by account.
+        account_id: tx.account_id || null,
+      }
+    })
 
   if (upsertRows.length) {
     let { error } = await supabaseAdmin.from('transactions').upsert(upsertRows, { onConflict: 'user_id,id' })

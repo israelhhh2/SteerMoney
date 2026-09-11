@@ -1,6 +1,7 @@
 import { createSupabaseServerClient } from '@/lib/supabase-clients'
 import { plaidConfigured, supabaseAdmin, ownerIdsFor } from '@/lib/plaid-server'
 import { syncPlaidItem } from '@/lib/plaid-sync'
+import { dedupeOrphanedTransactions } from '@/lib/transactions-dedupe'
 
 // Pulls new/changed/removed transactions for every bank connected by this
 // user and mirrors them into public.transactions. Looked up via
@@ -45,6 +46,22 @@ export async function POST() {
         added += r.added
         modified += r.modified
         removed += r.removed
+
+        // Best-effort cleanup of the specific production bug this item's
+        // sync could have just re-created (a re-connected bank re-importing
+        // its own history under new account_ids — see
+        // lib/transactions-dedupe.js). syncPlaidItem's own re-point guard
+        // stops the duplicate from being INSERTED in the first place, but
+        // this catches anything that slipped through (e.g. a duplicate left
+        // over from before that guard existed) without making the caller
+        // wait on a whole extra pass over every transaction if it fails —
+        // same "never abort the sync over this" posture as the balance
+        // refresh / Debt Tracker sync inside syncPlaidItem itself.
+        try {
+          await dedupeOrphanedTransactions({ userId: item.user_id, dryRun: false })
+        } catch (e) {
+          console.error('[plaid] post-sync dedupe failed for item', item.item_id, e?.message || e)
+        }
       } catch (e) {
         console.error('[plaid] sync failed for item', item.item_id, item.institution, e?.response?.data || e?.message || e)
         itemErrors.push({ item_id: item.item_id, institution: item.institution || null, error: e?.response?.data?.error_message || e?.message || 'Sync failed' })

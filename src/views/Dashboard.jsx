@@ -83,14 +83,16 @@ export default function Dashboard() {
 
   const B = cfBounds(range, t)
   const rT = rangeTx(state, B.from, B.to)
-  const rIn = rT.filter((t) => t.type === 'income' && t.cat !== 'transfer').reduce((s, t) => s + t.amount, 0)
+  // 'refund' excluded alongside 'transfer' — see store.jsx's incomeIn for
+  // why (a credit-card refund is type:'income' but isn't real income).
+  const rIn = rT.filter((t) => t.type === 'income' && t.cat !== 'transfer' && t.cat !== 'refund').reduce((s, t) => s + t.amount, 0)
   const rOut = rT.filter((t) => t.type === 'expense' && t.cat !== 'transfer').reduce((s, t) => s + t.amount, 0)
   const rNet = rIn - rOut
 
   const breakdown = useMemo(() => {
     if (!cfView) return []
     const groups = {}
-    rT.filter((t) => (cfView === 'in' ? t.type === 'income' : t.type === 'expense') && t.cat !== 'transfer').forEach((t) => {
+    rT.filter((t) => (cfView === 'in' ? t.type === 'income' : t.type === 'expense') && t.cat !== 'transfer' && t.cat !== 'refund').forEach((t) => {
       const k = cfView === 'in' ? srcLabel(t.desc) : t.cat
       groups[k] = groups[k] || { sum: 0, n: 0 }
       groups[k].sum += t.amount; groups[k].n++
