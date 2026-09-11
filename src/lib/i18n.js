@@ -143,9 +143,13 @@ export const DICTIONARY = {
   'No duplicate or miscategorized transactions found': { es: 'No se encontraron transacciones duplicadas ni mal categorizadas' },
   'Clean up transactions?': { es: '¿Limpiar transacciones?' },
   'Found {dup} duplicate transaction{dp} from a reconnected bank, {rc} transaction{rp} miscounted as income or debt that are really card payments or refunds, and {rec} transaction{recp} Plaid can put in a better category than before. This can\'t be undone.': { es: 'Se encontraron {dup} transacción{dp} duplicada{dp} de un banco reconectado, {rc} transacción{rp} mal contada{rp} como ingreso o deuda que en realidad son pagos de tarjeta o reembolsos, y {rec} transacción{recp} que Plaid puede poner en una mejor categoría. Esto no se puede deshacer.' },
+  // Fourth-pass version (lib/debt-payments.js — automatic payment matching
+  // for manual debts) of the two strings just above.
+  'Found {dup} duplicate transaction{dp} from a reconnected bank, {rc} transaction{rp} miscounted as income or debt that are really card payments or refunds, {rec} transaction{recp} Plaid can put in a better category than before, and {pay} payment{payp} to log automatically on your manual debts. This can\'t be undone.': { es: 'Se encontraron {dup} transacción{dp} duplicada{dp} de un banco reconectado, {rc} transacción{rp} mal contada{rp} como ingreso o deuda que en realidad son pagos de tarjeta o reembolsos, {rec} transacción{recp} que Plaid puede poner en una mejor categoría, y {pay} pago{payp} para registrar automáticamente en tus deudas manuales. Esto no se puede deshacer.' },
   'Clean up': { es: 'Limpiar' },
   "Couldn't clean up transactions": { es: 'No se pudieron limpiar las transacciones' },
   'Removed {dup} duplicate transaction{dp}, fixed {rc} miscategorized transaction{rp}, and recategorized {rec} transaction{recp} using Plaid\'s own data': { es: 'Se eliminaron {dup} transacción{dp} duplicada{dp}, se corrigieron {rc} transacción{rp} mal categorizada{rp}, y se recategorizaron {rec} transacción{recp} usando los datos de Plaid' },
+  'Removed {dup} duplicate transaction{dp}, fixed {rc} miscategorized transaction{rp}, recategorized {rec} transaction{recp} using Plaid\'s own data, and logged {pay} payment{payp} toward your manual debts': { es: 'Se eliminaron {dup} transacción{dp} duplicada{dp}, se corrigieron {rc} transacción{rp} mal categorizada{rp}, se recategorizaron {rec} transacción{recp} usando los datos de Plaid, y se registraron {pay} pago{payp} en tus deudas manuales' },
   // ---- duplicate bank connection (connect-bank.jsx's DuplicateBankDialog,
   // Accounts.jsx's "connected twice" banner) ----
   'Remove the duplicate connection?': { es: '¿Eliminar la conexión duplicada?' },
@@ -719,6 +723,17 @@ export const DICTIONARY = {
   '· {count} · {total} total': { es: '· {count} · {total} total' },
   'Delete payment & restore balance': { es: 'Eliminar pago y restaurar saldo' },
   'No payments logged yet. Submit one on the left.': { es: 'Aún no hay pagos registrados. Envía uno a la izquierda.' },
+  // ---- automatic payment matching for manual debts (lib/debt-payments.js) ----
+  'auto': { es: 'auto' },
+  'Auto-matched from "{desc}"': { es: 'Coincidencia automática de "{desc}"' },
+  'Auto-matched payment': { es: 'Pago con coincidencia automática' },
+  'Balance as of': { es: 'Saldo al' },
+  "Payments dated before this don't reduce the balance.": { es: 'Los pagos con fecha anterior a esta no reducen el saldo.' },
+  'Payee match': { es: 'Coincidencia de beneficiario' },
+  'Transactions whose description matches this get logged as payments automatically (regex, case-insensitive). Example: klarna|affirm': { es: 'Las transacciones cuya descripción coincida con esto se registran como pagos automáticamente (expresión regular, sin distinguir mayúsculas/minúsculas). Ejemplo: klarna|affirm' },
+  'matches {count} past transaction{s}': { es: 'coincide con {count} transacción{s} pasada{s}' },
+  'Not a valid pattern': { es: 'No es un patrón válido' },
+  'That payee match pattern is not valid': { es: 'Ese patrón de coincidencia de beneficiario no es válido' },
   "This removes the debt and its payment history. This can't be undone.": { es: 'Esto elimina la deuda y su historial de pagos. No se puede deshacer.' },
   'Consolidation Loan Calculator': { es: 'Calculadora de Préstamo de Consolidación' },
   'would a loan help? enter amount, APR & payment per $1k to find out': { es: '¿ayudaría un préstamo? ingresa el monto, APR y pago por cada $1k para averiguarlo' },

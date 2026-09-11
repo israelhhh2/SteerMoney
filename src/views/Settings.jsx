@@ -219,21 +219,29 @@ function ConnectedBanksSection() {
     setCleanupPreviewing(true)
     try {
       const body = JSON.stringify(space?.id ? { space_id: space.id, dry_run: true } : { dry_run: true })
-      const [dedupeRes, reclassifyRes, backfillRes] = await Promise.all([
+      const [dedupeRes, reclassifyRes, backfillRes, matchRes] = await Promise.all([
         fetch('/api/transactions/dedupe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
         fetch('/api/transactions/reclassify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
         fetch('/api/transactions/backfill-categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
+        // Fourth pass — lib/debt-payments.js's matcher, dry-run: how many
+        // payments toward manual (no Plaid link) debts would get logged.
+        // Best-effort like backfill just above it: a project that hasn't run
+        // supabase/debt-payments-auto.sql yet gets a clear error back from
+        // it, not a reason to block the other three passes.
+        fetch('/api/debts/match-payments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
       ])
       const dedupeData = await dedupeRes.json().catch(() => ({}))
       const reclassifyData = await reclassifyRes.json().catch(() => ({}))
       const backfillData = await backfillRes.json().catch(() => ({}))
+      const matchData = await matchRes.json().catch(() => ({}))
       if (!dedupeRes.ok) throw new Error(dedupeData.error || t("Couldn't check for cleanup"))
       if (!reclassifyRes.ok) throw new Error(reclassifyData.error || t("Couldn't check for cleanup"))
       const duplicatesRemoved = dedupeData.duplicatesRemoved || 0
       const reclassified = reclassifyData.changed || 0
       const recategorized = backfillRes.ok ? (backfillData.recategorized || 0) + (backfillData.ruleRecategorized || 0) : 0
-      if (!duplicatesRemoved && !reclassified && !recategorized) toast(t('No duplicate or miscategorized transactions found'))
-      else setCleanupConfirm({ duplicatesRemoved, reclassified, recategorized })
+      const paymentsToLog = matchRes.ok ? (matchData.matched?.length || 0) : 0
+      if (!duplicatesRemoved && !reclassified && !recategorized && !paymentsToLog) toast(t('No duplicate or miscategorized transactions found'))
+      else setCleanupConfirm({ duplicatesRemoved, reclassified, recategorized, paymentsToLog })
     } catch (e) {
       toast(e.message, 'error')
     } finally {
@@ -260,11 +268,21 @@ function ConnectedBanksSection() {
         const backfillData = await backfillRes.json().catch(() => ({}))
         if (backfillRes.ok) recategorized = (backfillData.recategorized || 0) + (backfillData.ruleRecategorized || 0)
       } catch { /* best effort */ }
+      // Fourth pass, same best-effort posture — a missing
+      // supabase/debt-payments-auto.sql migration must never block the
+      // other three passes the user already confirmed.
+      let paymentsLogged = 0
+      try {
+        const matchRes = await fetch('/api/debts/match-payments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+        const matchData = await matchRes.json().catch(() => ({}))
+        if (matchRes.ok) paymentsLogged = matchData.matched?.length || 0
+      } catch { /* best effort */ }
       const dup = dedupeData.duplicatesRemoved || 0, rc = reclassifyData.changed || 0
-      toast(t('Removed {dup} duplicate transaction{dp}, fixed {rc} miscategorized transaction{rp}, and recategorized {rec} transaction{recp} using Plaid\'s own data', {
+      toast(t('Removed {dup} duplicate transaction{dp}, fixed {rc} miscategorized transaction{rp}, recategorized {rec} transaction{recp} using Plaid\'s own data, and logged {pay} payment{payp} toward your manual debts', {
         dup, dp: dup === 1 ? '' : 's', rc, rp: rc === 1 ? '' : 's', rec: recategorized, recp: recategorized === 1 ? '' : 's',
+        pay: paymentsLogged, payp: paymentsLogged === 1 ? '' : 's',
       }))
-      refetch() // pulls the corrected/deduped/recategorized transactions back into the store
+      refetch() // pulls the corrected/deduped/recategorized/matched transactions & debts back into the store
     } catch (e) {
       toast(e.message, 'error')
     } finally {
@@ -362,10 +380,11 @@ function ConnectedBanksSection() {
       {cleanupConfirm && (
         <ConfirmDialog
           title={t('Clean up transactions?')}
-          desc={t('Found {dup} duplicate transaction{dp} from a reconnected bank, {rc} transaction{rp} miscounted as income or debt that are really card payments or refunds, and {rec} transaction{recp} Plaid can put in a better category than before. This can\'t be undone.', {
+          desc={t('Found {dup} duplicate transaction{dp} from a reconnected bank, {rc} transaction{rp} miscounted as income or debt that are really card payments or refunds, {rec} transaction{recp} Plaid can put in a better category than before, and {pay} payment{payp} to log automatically on your manual debts. This can\'t be undone.', {
             dup: cleanupConfirm.duplicatesRemoved, dp: cleanupConfirm.duplicatesRemoved === 1 ? '' : 's',
             rc: cleanupConfirm.reclassified, rp: cleanupConfirm.reclassified === 1 ? '' : 's',
             rec: cleanupConfirm.recategorized || 0, recp: (cleanupConfirm.recategorized || 0) === 1 ? '' : 's',
+            pay: cleanupConfirm.paymentsToLog || 0, payp: (cleanupConfirm.paymentsToLog || 0) === 1 ? '' : 's',
           })}
           confirmLabel={t('Clean up')}
           busy={cleaning}

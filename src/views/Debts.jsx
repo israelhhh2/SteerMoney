@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { CreditCard, CalendarDays, CheckCircle2, Target, ChevronRight, Pencil, X, Flame, Snowflake, Plus, DollarSign, Search, Lightbulb, Landmark, AlertTriangle } from 'lucide-react'
+import { CreditCard, CalendarDays, CheckCircle2, Target, ChevronRight, Pencil, X, Flame, Snowflake, Plus, DollarSign, Search, Lightbulb, Landmark, AlertTriangle, Link2 } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -16,6 +16,7 @@ import { useToast, useCenterToast } from '@/components/toast'
 import { fmt, fmt0, today, monthLabel, prettyDate, uid } from '@/lib/utils'
 import { simulatePlan, simCardPlan, parseAPR, payoffMonths, fmtMonths, matchesBankAccount } from '@/lib/finance'
 import { deleteDebt, reconcileDebtLimits, findDuplicateDebts } from '@/lib/accounts'
+import { cleanMerchant } from '@/lib/merchant'
 import { useT } from '@/lib/i18n'
 
 const TIP = {
@@ -72,6 +73,10 @@ export default function Debts() {
   // connection banner — this is a real problem worth fixing, so it comes
   // back on reload as long as the duplicate is still sitting there.
   const duplicateDebtPairs = useMemo(() => findDuplicateDebts(state, plaidItems), [state.debts, plaidItems])
+  // Source-transaction lookup for auto-matched payments (lib/debt-payments.js
+  // — payment.txId set) — DebtCard's "auto" badge shows the source
+  // transaction's description on hover instead of just "this was automatic".
+  const txById = useMemo(() => new Map(state.transactions.map((tx) => [tx.id, tx])), [state.transactions])
   const [dismissedDupDebtIds, setDismissedDupDebtIds] = useState([])
   const [removingDupDebt, setRemovingDupDebt] = useState(null) // { keep, remove } pending the confirm dialog
   const [removingDupDebtBusy, setRemovingDupDebtBusy] = useState(false)
@@ -357,12 +362,24 @@ export default function Debts() {
 
       <div className="grid gap-3 md:grid-cols-2">
         {list.map(({ d, i }) => (
-          <DebtCard key={d.name + i} d={d} i={i} open={openDebt === d.name} plan={plan} total={total} plaidAccounts={plaidAccounts}
+          <DebtCard key={d.name + i} d={d} i={i} open={openDebt === d.name} plan={plan} total={total} plaidAccounts={plaidAccounts} txById={txById}
             onToggle={() => setOpenDebt(openDebt === d.name ? null : d.name)}
             onEdit={() => setEditIdx(i)}
             onDelete={() => deleteDebt(update, d.id)}
             onPay={submitPayment}
-            onDeletePayment={(pi) => update((s) => { const p = s.debts[i].payments.splice(pi, 1)[0]; s.debts[i].balance = +(s.debts[i].balance + p.amount).toFixed(2) })}
+            onDeletePayment={(pi) => update((s) => {
+              const p = s.debts[i].payments.splice(pi, 1)[0]
+              s.debts[i].balance = +(s.debts[i].balance + p.amount).toFixed(2)
+              // Reversing an auto-matched payment (lib/debt-payments.js —
+              // p.txId set) also unlinks the source transaction so a later
+              // sync or a re-run of "Clean up transactions" can match it
+              // again instead of it staying invisibly excluded forever by
+              // its old debt_id.
+              if (p.txId) {
+                const tx = s.transactions.find((x) => x.id === p.txId)
+                if (tx) tx.debtId = null
+              }
+            })}
           />
         ))}
       </div>
@@ -382,7 +399,7 @@ export default function Debts() {
   )
 }
 
-function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, onDelete, onPay, onDeletePayment }) {
+function DebtCard({ d, i, open, plan, total, plaidAccounts, txById, onToggle, onEdit, onDelete, onPay, onDeletePayment }) {
   const t = useT()
   const centerToast = useCenterToast()
   const [amt, setAmt] = useState(d.min || '')
@@ -521,14 +538,29 @@ function DebtCard({ d, i, open, plan, total, plaidAccounts, onToggle, onEdit, on
             </div>
             {pays.length ? (
               <div className="max-h-48 divide-y divide-border/60 overflow-y-auto pr-1">
-                {pays.map((p, pi) => (
-                  <div key={pi} className="flex items-center gap-3 py-2 text-[0.8125rem]">
-                    <span className="w-14 shrink-0 text-xs text-muted-foreground">{prettyDate(p.date)}</span>
-                    <span className="w-20 shrink-0 font-semibold text-emerald-400">{fmt(p.amount)}</span>
-                    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{p.note || ''}</span>
-                    <button onClick={() => onDeletePayment(pi)} className="shrink-0 text-muted-foreground hover:text-red-400" title={t('Delete payment & restore balance')}><X className="h-3.5 w-3.5" /></button>
-                  </div>
-                ))}
+                {pays.map((p, pi) => {
+                  // Auto-matched payment (lib/debt-payments.js) — p.txId is
+                  // the source transaction's id; look it up for a useful
+                  // hover title, but degrade gracefully if that transaction
+                  // was since deleted (the badge itself only needs p.txId).
+                  const srcTx = p.txId ? txById?.get(p.txId) : null
+                  return (
+                    <div key={pi} className="flex items-center gap-3 py-2 text-[0.8125rem]">
+                      <span className="w-14 shrink-0 text-xs text-muted-foreground">{prettyDate(p.date)}</span>
+                      <span className="w-20 shrink-0 font-semibold text-emerald-400">{fmt(p.amount)}</span>
+                      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{p.note || ''}</span>
+                      {p.txId != null && (
+                        <span
+                          className="flex shrink-0 items-center gap-0.5 rounded-full bg-sky-400/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-sky-300"
+                          title={srcTx ? t('Auto-matched from "{desc}"', { desc: srcTx.desc }) : t('Auto-matched payment')}
+                        >
+                          <Link2 className="h-2.5 w-2.5" />{t('auto')}
+                        </span>
+                      )}
+                      <button onClick={() => onDeletePayment(pi)} className="shrink-0 text-muted-foreground hover:text-red-400" title={t('Delete payment & restore balance')}><X className="h-3.5 w-3.5" /></button>
+                    </div>
+                  )
+                })}
               </div>
             ) : <p className="text-xs text-muted-foreground">{t('No payments logged yet. Submit one on the left.')}</p>}
           </div>
@@ -830,15 +862,39 @@ export function DebtDialog({ idx, onClose }) {
   const d = idx >= 0 ? state.debts[idx] : { name: '', balance: '', apr: '', min: '', dueDay: '', limit: '', note: '' }
   const [f, setF] = useState({ ...d })
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
+
+  // Live "matches N past transactions" counter for the Payee match field —
+  // same text (description + cleanMerchant'd merchant) lib/debt-payments.js's
+  // server-side matcher itself builds, over whatever's already in the store,
+  // so the owner sees instantly what a pattern would catch without waiting
+  // on a sync. Degrades to a red hint instead of throwing on a bad regex.
+  const patternPreview = useMemo(() => {
+    const pat = String(f.payeePattern || '').trim()
+    if (!pat) return { count: 0, valid: true }
+    let re
+    try { re = new RegExp(pat, 'i') } catch { return { count: 0, valid: false } }
+    const count = state.transactions.filter((tx) => tx.type === 'expense' &&
+      re.test((tx.desc || '') + ' ' + cleanMerchant(tx.merchant || tx.desc || ''))).length
+    return { count, valid: true }
+  }, [f.payeePattern, state.transactions])
+
   const save = () => {
     if (!String(f.name).trim()) return toast(t('Enter a name'), 'error')
     const bal = parseFloat(f.balance)
     if (isNaN(bal)) return toast(t('Enter a balance'), 'error')
+    if (!patternPreview.valid) return toast(t('That payee match pattern is not valid'), 'error')
     update((s) => {
       const debt = {
         name: String(f.name).trim(), balance: bal, apr: f.apr || '—', min: parseFloat(f.min) || 0,
         dueDay: parseInt(f.dueDay) || null, limit: parseFloat(f.limit) || null, note: f.note || '',
         payments: idx >= 0 ? s.debts[idx].payments || [] : [],
+        // Present-only, exactly like mappers.debts in store.jsx — omitted
+        // entirely unless the owner actually touched these two fields this
+        // session (see the "Payee match"/"Balance as of" fields below), so
+        // an edit that never opens them keeps working even before
+        // supabase/debt-payments-auto.sql has run.
+        ...(f.payeePattern !== undefined ? { payeePattern: String(f.payeePattern || '').trim() } : {}),
+        ...(f.balanceAsOf !== undefined ? { balanceAsOf: f.balanceAsOf || null } : {}),
       }
       if (idx >= 0) s.debts[idx] = debt
       else s.debts.push(debt)
@@ -847,6 +903,10 @@ export function DebtDialog({ idx, onClose }) {
     toast(idx >= 0 ? t('Debt updated') : t('Debt added'))
     onClose()
   }
+  // Plaid-linked debts have no manual-payment-matching fields at all — their
+  // balance already comes straight from Plaid (lib/plaid-debts.js), and
+  // classifyTx() already files their own card payments as transfers.
+  const isManual = !d.plaidAccountId
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
@@ -854,11 +914,30 @@ export function DebtDialog({ idx, onClose }) {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="sm:col-span-2"><Label>{t('Name')}</Label><Input value={f.name} onChange={set('name')} placeholder={t('e.g. Chase Freedom')} /></div>
           <div><Label>{t('Balance ($)')}</Label><Input type="number" step="0.01" value={f.balance} onChange={set('balance')} /></div>
+          {isManual && (
+            <div>
+              <Label>{t('Balance as of')}</Label>
+              <Input type="date" value={f.balanceAsOf || ''} onChange={set('balanceAsOf')} />
+              <p className="mt-1 text-[0.625rem] leading-snug text-muted-foreground">{t("Payments dated before this don't reduce the balance.")}</p>
+            </div>
+          )}
           <div><Label>{t('APR')}</Label><Input value={f.apr} onChange={set('apr')} placeholder={t('e.g. 24.99%')} /></div>
           <div><Label>{t('Minimum payment ($)')}</Label><Input type="number" step="0.01" value={f.min} onChange={set('min')} /></div>
           <div><Label>{t('Due day (1–31)')}</Label><Input type="number" min="1" max="31" value={f.dueDay || ''} onChange={set('dueDay')} /></div>
           <div><Label>{t('Credit limit ($)')}</Label><Input type="number" value={f.limit || ''} onChange={set('limit')} placeholder={t('leave blank for loans')} /></div>
-          <div><Label>{t('Note (optional)')}</Label><Input value={f.note} onChange={set('note')} /></div>
+          <div className={isManual ? '' : 'sm:col-span-2'}><Label>{t('Note (optional)')}</Label><Input value={f.note} onChange={set('note')} /></div>
+          {isManual && (
+            <div className="sm:col-span-2">
+              <Label>{t('Payee match')}</Label>
+              <Input value={f.payeePattern || ''} onChange={set('payeePattern')} placeholder="klarna|affirm" />
+              <p className="mt-1 text-[0.625rem] leading-snug text-muted-foreground">{t('Transactions whose description matches this get logged as payments automatically (regex, case-insensitive). Example: klarna|affirm')}</p>
+              {String(f.payeePattern || '').trim() && (
+                patternPreview.valid
+                  ? <p className="mt-1 text-[0.625rem] font-medium text-emerald-400">{t('matches {count} past transaction{s}', { count: patternPreview.count, s: patternPreview.count === 1 ? '' : 's' })}</p>
+                  : <p className="mt-1 text-[0.625rem] font-medium text-red-400">{t('Not a valid pattern')}</p>
+              )}
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>{t('Cancel')}</Button>

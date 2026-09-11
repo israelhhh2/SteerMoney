@@ -15,6 +15,20 @@ const mappers = {
       user_id: userId, id: d.id, name: d.name, balance: d.balance,
       apr: d.apr ?? null, min_payment: d.min ?? 0, due_day: d.dueDay ?? null,
       credit_limit: d.limit ?? null, note: d.note ?? null, position: d.position ?? 0,
+      // `payeePattern`/`balanceAsOf` (lib/debt-payments.js's automatic
+      // payment matching for manual debts — supabase/debt-payments-auto.sql)
+      // follow the same "only include the key when already present" degrade
+      // convention as transactions.accountId/recurring.accountId below:
+      // omitting the key entirely (rather than sending null/'') keeps every
+      // OTHER field on this row saving normally even before that migration
+      // has run, as long as the owner never actually types into the new
+      // "Payee match"/"Balance as of" fields (views/Debts.jsx's DebtDialog)
+      // on THIS debt. The moment they do, `f.payeePattern`/`f.balanceAsOf`
+      // become real strings and this key is sent — which needs the
+      // migration, same tradeoff already accepted for every other
+      // optional-column field in this app.
+      ...(d.payeePattern !== undefined ? { payee_pattern: d.payeePattern } : {}),
+      ...(d.balanceAsOf !== undefined ? { balance_as_of: d.balanceAsOf } : {}),
     }),
     fromRow: (r) => ({
       id: r.id, name: r.name, balance: Number(r.balance), apr: r.apr ?? '—',
@@ -27,14 +41,30 @@ const mappers = {
       // the "Synced from Plaid" badge in views/Debts.jsx.
       ...(r.plaid_account_id !== undefined ? { plaidAccountId: r.plaid_account_id } : {}),
       ...(r.plaid_item_id !== undefined ? { plaidItemId: r.plaid_item_id } : {}),
+      // Editable client-side (DebtDialog, Plaid-linked debts hidden) — see
+      // the toRow comment above and lib/debt-payments.js, which reads these
+      // two columns server-side to decide what/when to auto-match.
+      ...(r.payee_pattern !== undefined ? { payeePattern: r.payee_pattern } : {}),
+      ...(r.balance_as_of !== undefined ? { balanceAsOf: r.balance_as_of } : {}),
     }),
   },
   payments: {
     toRow: (p, userId, debtId) => ({
       user_id: userId, id: p.id, debt_id: debtId, date: p.date,
       amount: p.amount, note: p.note ?? null,
+      // The transactions.id this payment was auto-logged from (see
+      // lib/debt-payments.js) — undefined/omitted for every manually-entered
+      // payment (Debts.jsx's "Log payment"), so this round-trips fine before
+      // supabase/debt-payments-auto.sql has run.
+      ...(p.txId !== undefined ? { tx_id: p.txId } : {}),
     }),
-    fromRow: (r) => ({ id: r.id, date: r.date, amount: Number(r.amount), note: r.note ?? '' }),
+    fromRow: (r) => ({
+      id: r.id, date: r.date, amount: Number(r.amount), note: r.note ?? '',
+      // Present (and non-null) only for a payment lib/debt-payments.js
+      // logged automatically — drives the "auto" badge in Debts.jsx's
+      // payment history list.
+      ...(r.tx_id !== undefined ? { txId: r.tx_id } : {}),
+    }),
   },
   budgets: {
     toRow: (b, userId) => ({ user_id: userId, id: b.id, name: b.name, monthly_limit: b.limit ?? 0, position: b.position ?? 0 }),
@@ -83,6 +113,13 @@ const mappers = {
       ...(t.pfcPrimary !== undefined ? { pfc_primary: t.pfcPrimary } : {}),
       ...(t.pfcDetailed !== undefined ? { pfc_detailed: t.pfcDetailed } : {}),
       ...(t.catSource !== undefined ? { cat_source: t.catSource } : {}),
+      // Which manual debt this transaction paid (lib/debt-payments.js sets
+      // this server-side the moment it auto-matches a payment; Debts.jsx's
+      // onDeletePayment sets it back to null client-side if that auto-match
+      // is reversed) — same present-only convention as every other optional
+      // column here, so this round-trips fine before
+      // supabase/debt-payments-auto.sql has run.
+      ...(t.debtId !== undefined ? { debt_id: t.debtId } : {}),
     }),
     fromRow: (r) => ({
       id: r.id, date: r.date, desc: r.description, amount: Number(r.amount), type: r.type, cat: r.category,
@@ -91,6 +128,7 @@ const mappers = {
       ...(r.pfc_primary !== undefined ? { pfcPrimary: r.pfc_primary } : {}),
       ...(r.pfc_detailed !== undefined ? { pfcDetailed: r.pfc_detailed } : {}),
       ...(r.cat_source !== undefined ? { catSource: r.cat_source } : {}),
+      ...(r.debt_id !== undefined ? { debtId: r.debt_id } : {}),
     }),
   },
   goals: {

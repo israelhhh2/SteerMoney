@@ -3,6 +3,7 @@ import { mapPlaidCategory } from '@/lib/plaid-categories'
 import { syncDebtsFromPlaid } from '@/lib/plaid-debts'
 import { isCardPaymentDescription } from '@/lib/recurring-detect'
 import { cleanMerchant } from '@/lib/merchant'
+import { matchPaymentsForUser } from '@/lib/debt-payments'
 
 // Keyword map from Plaid's merchant/transaction name to this app's category
 // ids — a defensive fallback for the rare transaction Plaid doesn't enrich
@@ -381,6 +382,27 @@ export async function syncPlaidItem(item, opts = {}) {
       ;({ error } = await supabaseAdmin.from('transactions').upsert(rows, { onConflict: 'user_id,id' }))
     }
     if (error) throw error
+  }
+
+  // ---- automatic payment matching for MANUAL (no Plaid link) debts ----
+  // Best-effort, same posture as the balance refresh / Debt Tracker sync
+  // below: a failure here (migration not run yet, a transient query error)
+  // must never block the transaction sync itself. Scoped to just this
+  // batch's transaction ids (see lib/debt-payments.js's `transactions` param)
+  // rather than re-scanning this user's whole history on every sync — the
+  // manual "Clean up transactions" backfill (POST /api/debts/match-payments)
+  // covers the full 24-month catch-up separately.
+  if (upsertRows.length) {
+    try {
+      const result = await matchPaymentsForUser({ userId, transactions: upsertRows })
+      if (!result?.ok) {
+        console.warn('[debt-payments] auto-match skipped for item', item.item_id, '—', result?.error)
+      } else if (result.matched.length || result.ambiguous.length) {
+        console.log(`[debt-payments] item ${item.item_id}: auto-matched ${result.matched.length} payment(s), ${result.ambiguous.length} ambiguous`)
+      }
+    } catch (e) {
+      console.error('[debt-payments] auto-match failed for item', item.item_id, e?.message || e)
+    }
   }
 
   const added = allAdded.length
