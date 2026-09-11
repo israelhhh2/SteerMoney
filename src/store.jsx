@@ -252,6 +252,20 @@ export function AppProvider({ children }) {
   }, [supabase, user?.id, space?.id])
 
   const userId = viewAs?.id || space?.id || user?.id
+  // Which user/space the UI is showing RIGHT NOW, readable from inside an
+  // async fetch that started under a possibly-older render. The initial-load
+  // effect below used a per-run `cancelled` flag for this, flipped by the
+  // effect's cleanup — but that cleanup also fires on every unrelated
+  // re-run of the effect (it depends on `state`, so the cache-hydration
+  // setState, or any edit, "cancels" the in-flight fetch). The cancelled run
+  // then skipped BOTH applying its data AND markLoaded(), while still having
+  // committed freshFor.current — so no later run would ever fetch again and
+  // the full-page loader never lifted (reproduced live: all ten Supabase
+  // reads returned 200 and the app sat on "Loading your finances…" forever).
+  // The only thing a finished fetch actually needs to know is whether it's
+  // still for the user being shown — compare against this ref instead.
+  const userIdRef = useRef(userId)
+  userIdRef.current = userId
 
   const [state, setState] = useState(null)
   const [syncError, setSyncError] = useState(null)
@@ -326,7 +340,8 @@ export function AppProvider({ children }) {
     if (!supabase || !userId) return
     if (freshFor.current === userId || loadingFor.current === userId) return
     loadingFor.current = userId
-    let cancelled = false
+    // true while the user/space this fetch was started for is still the one on screen
+    const stillCurrent = () => userIdRef.current === userId
     ;(async () => {
       const [de, pa, bu, re, go, tx, se, acc, tg, cl] = await Promise.all([
         supabase.from('debts').select('*').eq('user_id', userId).order('position'),
@@ -341,11 +356,11 @@ export function AppProvider({ children }) {
         supabase.from('account_colors').select('*').eq('user_id', userId),
       ])
       const err = [de, pa, bu, re, tx, se].find((r) => r.error)
-      if (err) { if (!cancelled) { setSyncError(err.error.message); markLoaded(userId) } return }
+      if (err) { if (stillCurrent()) { setSyncError(err.error.message); markLoaded(userId) } return }
       // goals shipped after the other tables — if goals.sql hasn't been run yet, keep the app usable
-      if (go.error && !cancelled) setSyncError('Goals need setup: run supabase/goals.sql in the Supabase SQL editor (' + go.error.message + ')')
+      if (go.error && stillCurrent()) setSyncError('Goals need setup: run supabase/goals.sql in the Supabase SQL editor (' + go.error.message + ')')
       // accounts shipped after the other tables — if accounts.sql hasn't been run yet, keep the app usable
-      if (acc.error && !cancelled) setSyncError('Accounts need setup: run supabase/accounts.sql in the Supabase SQL editor (' + acc.error.message + ')')
+      if (acc.error && stillCurrent()) setSyncError('Accounts need setup: run supabase/accounts.sql in the Supabase SQL editor (' + acc.error.message + ')')
       // account_tags is the newest table (see CLAUDE.md 2026-08-08 (10)) — never blocks the app,
       // and deliberately doesn't even set syncError (tags are a nicety, not core data; a
       // console warning is enough until the migration is run).
@@ -360,13 +375,13 @@ export function AppProvider({ children }) {
           s = { ...freshState(), budgets: [] }
           freshFor.current = userId
           lastLoadAt.current = Date.now()
-          if (!cancelled) { synced.current = s; setState(s); markLoaded(userId) }
+          if (stillCurrent()) { synced.current = s; setState(s); markLoaded(userId) }
           return
         }
         // brand-new user: start fresh (default categories only, no data)
         s = freshState()
         const { error } = await supabase.from('budgets').insert(s.budgets.map((b) => mappers.budgets.toRow(b, userId)))
-        if (error) { if (!cancelled) { setSyncError(error.message); markLoaded(userId) } return }
+        if (error) { if (stillCurrent()) { setSyncError(error.message); markLoaded(userId) } return }
         await supabase.from('settings').upsert({ user_id: userId, sim: s.sim, m_sim: s.mSim })
       } else {
         const byDebt = {}
@@ -388,13 +403,16 @@ export function AppProvider({ children }) {
       lastLoadAt.current = Date.now()
       if (!viewAs) writeCache(userId, s)
       // don't clobber edits the user made on top of the cached copy while we fetched
-      if (!cancelled) {
+      if (stillCurrent()) {
         if (!dirty.current) { synced.current = s; setState(s) }
         markLoaded(userId) // the load itself succeeded regardless of the dirty-edit guard above
       }
-    })().catch((e) => { if (!cancelled) { setSyncError(String(e?.message || e)); markLoaded(userId) } })
+    })().catch((e) => { if (stillCurrent()) { setSyncError(String(e?.message || e)); markLoaded(userId) } })
       .finally(() => { if (loadingFor.current === userId) loadingFor.current = null })
-    return () => { cancelled = true }
+    // No cleanup: this effect re-runs on every `state` change and a cleanup
+    // here used to "cancel" the in-flight fetch for reasons that had nothing
+    // to do with the user changing (see userIdRef above). The fetch guards
+    // itself with stillCurrent() instead.
   }, [supabase, userId, state])
 
   // ---- manual refetch (Sync now / balance Refresh / focus-staleness below) ----

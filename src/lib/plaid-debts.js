@@ -41,6 +41,39 @@ function isMissingColumnError(error) {
   return /plaid_account_id|plaid_item_id/i.test(error.message || '')
 }
 
+// Builds the Debt Tracker display name for a Plaid account. Naively joining
+// institution + account name + mask produced things like "Target Circle Card
+// Target Circle Card 4658", "Nordstrom Credit Card Nordstrom Visa Platinum
+// credit card 1913" and "Wells Fargo WELLS FARGO ACTIVE CASH VISA\uFFFD\uFFFD CARD
+// ...7349 7349" (seen live) — issuers often bake their own name into the
+// account name, some append the mask themselves, and one ships a mangled
+// ® as replacement characters. Rules, in order: drop replacement/control
+// chars and a trailing "...1234"/"…1234"/"x1234" mask the issuer added; if
+// the account name already mentions the institution's first word, don't
+// prefix the institution again; shout-case names get title-cased; the mask
+// is appended once, and never when it's the all-zeros placeholder some
+// credit unions report for loans. Falls back to "Loan"/"Credit card" if
+// everything got stripped.
+export function debtDisplayName(institution, a, isLoan) {
+  const inst = String(institution || '').trim()
+  let n = String(a?.name || '')
+    .replace(/[\uFFFD\u0000-\u001F]/g, '')
+    .replace(/\s*(?:\.{2,}|…|[xX*]{2,})\s*\d{2,6}\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (n && n === n.toUpperCase() && /[A-Z]/.test(n)) {
+    n = n.toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase())
+  }
+  const instFirst = inst.split(/\s+/)[0]?.toLowerCase()
+  const nameMentionsInst = instFirst && n.toLowerCase().includes(instFirst)
+  const parts = []
+  if (inst && !nameMentionsInst) parts.push(inst)
+  if (n) parts.push(n)
+  const mask = String(a?.mask || '').trim()
+  if (mask && !/^0+$/.test(mask) && !parts.join(' ').endsWith(mask)) parts.push(mask)
+  return parts.join(' ').trim() || (isLoan ? 'Loan' : 'Credit card')
+}
+
 export async function syncDebtsFromPlaid({ userId, itemId, institution, accessToken, accounts }) {
   if (!supabaseAdmin || !userId) {
     console.warn('[plaid] syncDebtsFromPlaid skipped: missing supabaseAdmin or userId', { hasAdmin: Boolean(supabaseAdmin), userId })
@@ -158,7 +191,7 @@ export async function syncDebtsFromPlaid({ userId, itemId, institution, accessTo
     // such concept and reporting anything for them would be made up.
     const limit = a.limit ?? creditLiability?.limit ?? creditLiability?.credit_limit ?? null
     const isLoan = a.type === 'loan' || /loan|mortgage|student|auto|line of credit|home equity/.test(String(a.subtype || '').toLowerCase())
-    const name = [institution, a.name, a.mask].filter(Boolean).join(' ').trim() || (isLoan ? 'Loan' : 'Credit card')
+    const name = debtDisplayName(institution, a, isLoan)
 
     const id = `pl_${a.account_id}`
     // Either a pure Plaid-created row (found by its deterministic id) or a
