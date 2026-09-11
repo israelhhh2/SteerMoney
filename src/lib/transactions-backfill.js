@@ -12,9 +12,10 @@ import { cleanMerchant } from '@/lib/merchant'
 // synced back when this app only ever mapped Plaid's data onto 6 categories.
 //
 // SAFETY RULES (the whole point of this file, so read before changing it):
-//   1. A row's category is NEVER touched when its cat_source is 'manual' or
-//      'rule' — those are a person's own edit / a deliberate keyword-rule
-//      categorization elsewhere, never Plaid's automatic guess.
+//   1. A row's category is NEVER touched when its cat_source is 'manual',
+//      'rule', or 'ai' — those are a person's own edit, a deliberate
+//      keyword-rule categorization, or a Claude categorization
+//      (POST /api/ai/categorize) elsewhere, never Plaid's automatic guess.
 //   2. cat_source 'plaid' (or, defensively, missing/undefined on a project
 //      that hasn't run categories-v2.sql yet — see below) is always safe to
 //      recategorize: it's Plaid's own guess, and this is a BETTER guess from
@@ -130,7 +131,7 @@ export async function backfillCategoriesFromPlaid({ userId, dryRun = false }) {
         matched++
 
         const catSource = existing.cat_source
-        if (catSource === 'manual' || catSource === 'rule') continue // rule #1 — never touched
+        if (catSource === 'manual' || catSource === 'rule' || catSource === 'ai') continue // rule #1 — never touched
 
         const { category: newCategory } = classifyTx(tx, accountsById)
         const pfc = tx?.personal_finance_category

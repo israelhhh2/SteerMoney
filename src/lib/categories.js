@@ -73,6 +73,21 @@ export const CAT_COLORS = {
   refund: '#94a3b8',
 }
 
+// Category id -> display name, without needing React/useApp() — mirrors
+// store.jsx's `catInfo(id).name` fallback chain (a budgets row's own name,
+// else one of the four fixed non-budget ids, else the raw id) as a plain
+// function so server code (app/api/reports/*, which has no store to read)
+// can resolve names the exact same way the client does. Kept here, not next
+// to catInfo itself, since this file is already the taxonomy's single source
+// of truth and — unlike store.jsx — has no 'use client' directive, so it's
+// safe to import from a Route Handler.
+const FIXED_CAT_NAMES = { debt: 'Debt Payment', income: 'Income', transfer: 'Transfer', refund: 'Refund' }
+export function catNameFromBudgets(budgets, id) {
+  const row = (budgets || []).find((b) => b.id === id)
+  if (row) return row.name
+  return FIXED_CAT_NAMES[id] || id || 'Other'
+}
+
 export const CAT_EMOJI = {
   housing: '🏡', utilities: '💡', groceries: '🥑', dining: '🍔',
   auto: '🚗', transport: '🚌', shopping: '🛍️', entertainment: '🎬',

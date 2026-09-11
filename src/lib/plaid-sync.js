@@ -4,46 +4,16 @@ import { syncDebtsFromPlaid } from '@/lib/plaid-debts'
 import { isCardPaymentDescription } from '@/lib/recurring-detect'
 import { cleanMerchant } from '@/lib/merchant'
 import { matchPaymentsForUser } from '@/lib/debt-payments'
-
-// Keyword map from Plaid's merchant/transaction name to this app's category
-// ids — a defensive fallback for the rare transaction Plaid doesn't enrich
-// with a `personal_finance_category` at all (the primary categorization path
-// is mapPlaidCategory(), which reads Plaid's actual PFC taxonomy instead of
-// guessing from the name), and also the ONLY categorizer available for
-// imported/manual transactions that never went through Plaid at all (see
-// lib/transactions-backfill.js's second pass). Extended to the full
-// lib/categories.js taxonomy alongside mapPlaidCategory's PFC table — order
-// matters (first match wins), and borrows some vocabulary from
-// lib/wescom.js's own EXPENSE_RULES (that file's rules stay merchant-name
-// specific to Wescom's CSV export; these stay generic enough for any
-// institution's Plaid `name`/`merchant_name`).
-export const CATEGORY_RULES = [
-  ['housing', /\brent\b|mortgage|\bhoa\b/i],
-  ['groceries', /grocery|market|supermarket|trader joe|whole foods|costco whse|vons|ralphs|albertsons|sprouts/i],
-  ['dining', /restaurant|starbucks|coffee|pizza|mcdonald|chipotle|doordash|grubhub|\bcafe\b/i],
-  ['transport', /\buber\b|\blyft\b|transit|\bmetro\b|amtrak|bike share|scooter/i],
-  ['auto', /\bgas station\b|\bfuel\b|auto repair|chevron|\bshell\b|\barco\b|\bmobil\b|parking|\btoll/i],
-  ['utilities', /electric|internet|\bcable\b|phone bill|utility|t-mobile|verizon|at&t|comcast/i],
-  ['subscriptions', /netflix|\bhulu\b|spotify|disney\+|apple\.com\/bill|icloud|patreon|audible/i],
-  ['entertainment', /cinema|movie|\bamc\b|regal |fandango|casino|amusement|museum/i],
-  ['health', /pharmacy|\bcvs\b|walgreens|medical|clinic|doctor|dental|veterinary|\bvet\b/i],
-  ['personal', /\bsalon\b|\bspa\b|barber|nails|beauty/i],
-  ['household', /home depot|lowe.?s|\bikea\b|hardware|storage/i],
-  ['kids', /daycare|childcare|toys.?r.?us/i],
-  ['family', /\bgift\b|\bzelle\b|\bvenmo\b/i],
-  ['travel', /airline|\bhotel\b|airbnb|expedia|\bdelta\b|united air|southwest/i],
-  ['education', /tuition|\bschool\b|university|college/i],
-  ['fees', /overdraft|late fee|interest charge|service fee|\birs\b|tax payment/i],
-  ['cash', /\batm\b|cash withdrawal/i],
-  ['business', /shipping|postage|legal services|accounting/i],
-  ['shopping', /amazon|\btarget\b|walmart|\bebay\b/i],
-]
-
-export function guessCategory(tx) {
-  const text = [tx.merchant_name, tx.name].filter(Boolean).join(' ')
-  for (const [cat, re] of CATEGORY_RULES) if (re.test(text)) return cat
-  return 'other'
-}
+// CATEGORY_RULES/guessCategory moved to lib/category-rules.js (pure, no
+// server imports) so a 'use client' component (components/statement-
+// upload.jsx) can use the exact same keyword guesser without pulling in this
+// file's server-only imports (plaid-server.js's service-role Supabase
+// client + the `plaid` SDK) into the browser bundle. Re-exported here
+// unchanged so every existing importer of these two names from
+// '@/lib/plaid-sync' (lib/transactions-backfill.js, this file's own
+// classifyTx below) keeps working without touching its own import line.
+export { CATEGORY_RULES, guessCategory } from '@/lib/category-rules'
+import { guessCategory } from '@/lib/category-rules'
 
 // PM/CLAUDE.md note (production data, 2026-09): Plaid's own convention —
 // `type: tx.amount < 0 ? 'income' : 'expense'` — is right for a depository
@@ -277,8 +247,20 @@ export async function syncPlaidItem(item, opts = {}) {
   // (this app doesn't have a "pending" badge anywhere yet); it will simply
   // get replaced/removed on the next sync once the bank settles it.
   const accountsById = new Map((item.accounts || []).map((a) => [a.account_id, a]))
+  // ---- $0 informational rows (production hygiene, 2026-09) ----
+  // Some institutions (seen on Target's Mastercard) send statement-memo lines
+  // through as ordinary transactions with amount 0 — "YOUR TARGET
+  // MASTERCARD REWARDS SUMMARY", "PREVIOUS REWARDS BALANCE: $", "REWARDS
+  // EARNED: $", "REWARDS REDEEMED: $" — nothing was actually charged or
+  // paid, so these are pure noise on every list/total in this app. Skipped
+  // before classifyTx() even runs (there's no meaningful category for "not a
+  // transaction"); a $0 row that predates this fix and is already stored
+  // gets swept up by lib/transactions-dedupe.js's zeroAmountRemoved pass
+  // instead.
+  const zeroAmountSkipped = incoming.filter((tx) => !repointedIds.has(tx.transaction_id) && tx.amount === 0).length
+  if (zeroAmountSkipped) console.log(`[plaid] item ${item.item_id}: skipped ${zeroAmountSkipped} $0 informational row(s)`)
   const upsertRows = incoming
-    .filter((tx) => !repointedIds.has(tx.transaction_id))
+    .filter((tx) => !repointedIds.has(tx.transaction_id) && tx.amount !== 0)
     .map((tx) => {
       const { type, category } = classifyTx(tx, accountsById)
       const pfc = tx?.personal_finance_category
@@ -351,7 +333,12 @@ export async function syncPlaidItem(item, opts = {}) {
         catSourceProtectionAvailable = false
         break
       }
-      for (const row of data || []) if (row.cat_source === 'manual' || row.cat_source === 'rule') catSourceById.set(row.id, row)
+      // 'ai' (POST /api/ai/categorize) is protected here the same as
+      // 'manual'/'rule' — a routine Plaid re-sync must never quietly revert
+      // a category Claude assigned. It's still overwritable by a person
+      // picking a category by hand (that write path sets cat_source:'manual'
+      // directly, without going through this protection check at all).
+      for (const row of data || []) if (row.cat_source === 'manual' || row.cat_source === 'rule' || row.cat_source === 'ai') catSourceById.set(row.id, row)
     }
   }
   if (catSourceProtectionAvailable && catSourceById.size) {

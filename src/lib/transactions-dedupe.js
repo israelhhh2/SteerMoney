@@ -29,6 +29,31 @@ import { supabaseAdmin } from '@/lib/plaid-server'
 export async function dedupeOrphanedTransactions({ userId, dryRun = false }) {
   if (!supabaseAdmin) return { ok: false, error: 'Supabase admin client not configured' }
 
+  // ---- $0 informational rows (production hygiene, 2026-09) ----
+  // lib/plaid-sync.js now skips inserting these going forward (statement-memo
+  // lines like "PREVIOUS REWARDS BALANCE: $" that some institutions —
+  // Target's Mastercard, seen in production — send through as ordinary
+  // Plaid transactions with amount 0), but ~72 already-imported rows exist
+  // for real accounts. Scoped to 'pl_%' ids only — a manually-entered $0
+  // transaction (rare, but not impossible: e.g. logging a fully-refunded
+  // purchase) was typed on purpose and must never be swept up here.
+  const { data: zeroRows, error: zeroErr } = await supabaseAdmin
+    .from('transactions')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('amount', 0)
+    .like('id', 'pl_%')
+  if (zeroErr) return { ok: false, error: zeroErr.message }
+  const zeroIds = (zeroRows || []).map((r) => r.id)
+  if (!dryRun && zeroIds.length) {
+    const ZERO_CHUNK = 100
+    for (let i = 0; i < zeroIds.length; i += ZERO_CHUNK) {
+      const chunk = zeroIds.slice(i, i + ZERO_CHUNK)
+      const { error } = await supabaseAdmin.from('transactions').delete().eq('user_id', userId).in('id', chunk)
+      if (error) return { ok: false, error: error.message }
+    }
+  }
+
   const { data: items, error: itemsErr } = await supabaseAdmin.from('plaid_items').select('accounts').eq('user_id', userId)
   if (itemsErr) return { ok: false, error: itemsErr.message }
 
@@ -94,5 +119,6 @@ export async function dedupeOrphanedTransactions({ userId, dryRun = false }) {
     duplicatesRemoved: dupIds.length,
     orphanedKept: orphaned.length - dupIds.length,
     byAccount: [...byAccount.values()],
+    zeroAmountRemoved: zeroIds.length,
   }
 }

@@ -20,9 +20,10 @@ import { isCardPaymentDescription } from '@/lib/recurring-detect'
 // a Plaid-imported row the owner already recategorized by hand used to be
 // fair game for this pass too (still keeping its 'pl_' id, with no way to
 // tell it apart from one never touched) — this now also skips any row whose
-// `cat_source` is 'manual' (a person picked it in the UI) or 'rule' (the
-// keyword-backfill set it), the same protection lib/plaid-sync.js's sync
-// upsert and lib/transactions-backfill.js apply. Degrades to no protection
+// `cat_source` is 'manual' (a person picked it in the UI), 'rule' (the
+// keyword-backfill set it), or 'ai' (POST /api/ai/categorize set it), the
+// same protection lib/plaid-sync.js's sync upsert and
+// lib/transactions-backfill.js apply. Degrades to no protection
 // at all (same behavior as before this column existed) on a project that
 // hasn't run categories-v2.sql yet — see hasCatSource below.
 export async function reclassifyPlaidTransactions({ userId, dryRun = false }) {
@@ -66,7 +67,7 @@ export async function reclassifyPlaidTransactions({ userId, dryRun = false }) {
   const byReason = { creditCardPayment: 0, creditRefund: 0, depositoryCardPayment: 0 }
 
   for (const row of all) {
-    if (row.cat_source === 'manual' || row.cat_source === 'rule') continue // never override a person's own pick or a rule-backfill's result
+    if (row.cat_source === 'manual' || row.cat_source === 'rule' || row.cat_source === 'ai') continue // never override a person's own pick, a rule-backfill's result, or a Claude categorization
     const acctType = accountType.get(row.account_id)
     if (!acctType) continue // account not found in any current plaid_items row — leave alone
 

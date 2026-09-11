@@ -158,6 +158,19 @@ function ConnectedBanksSection() {
   const [cleanupPreviewing, setCleanupPreviewing] = useState(false)
   const [cleanupConfirm, setCleanupConfirm] = useState(null) // { duplicatesRemoved, reclassified, recategorized } once previewed
   const [cleaning, setCleaning] = useState(false)
+  // Optional fifth pass: "Also ask Claude to categorize the rest" — only
+  // offered once GET /api/ai/status confirms the owner has set
+  // ANTHROPIC_API_KEY in Vercel (see lib/claude.js). Off by default (it's
+  // the only pass here that spends the owner's own API budget), and the
+  // checkbox's value at the moment "Clean up transactions" was clicked is
+  // frozen into `cleanupConfirm.aiRequested` so toggling it after the
+  // preview never silently changes what Confirm actually does.
+  const [aiConfigured, setAiConfigured] = useState(false)
+  const [useAi, setUseAi] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/ai/status').then((r) => r.json()).then((d) => { if (d?.configured) setAiConfigured(true) }).catch(() => {})
+  }, [])
 
   const loadItems = async () => {
     try {
@@ -217,9 +230,13 @@ function ConnectedBanksSection() {
   // whatever dedupe/reclassify already reported.
   const previewCleanup = async () => {
     setCleanupPreviewing(true)
+    // Frozen at click time — see the state comment above for why the
+    // checkbox's later value must never retroactively change what an
+    // already-shown preview promised.
+    const aiRequested = aiConfigured && useAi
     try {
       const body = JSON.stringify(space?.id ? { space_id: space.id, dry_run: true } : { dry_run: true })
-      const [dedupeRes, reclassifyRes, backfillRes, matchRes] = await Promise.all([
+      const [dedupeRes, reclassifyRes, backfillRes, matchRes, aiRes] = await Promise.all([
         fetch('/api/transactions/dedupe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
         fetch('/api/transactions/reclassify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
         fetch('/api/transactions/backfill-categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
@@ -229,19 +246,31 @@ function ConnectedBanksSection() {
         // supabase/debt-payments-auto.sql yet gets a clear error back from
         // it, not a reason to block the other three passes.
         fetch('/api/debts/match-payments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
+        // Fifth pass, opt-in only — dry_run here is FREE (no Claude call at
+        // all, see lib/ai-categorize.js), so this costs nothing to include
+        // even when unchecked; only fired when the checkbox was actually on.
+        aiRequested
+          ? fetch('/api/ai/categorize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+          : Promise.resolve(null),
       ])
       const dedupeData = await dedupeRes.json().catch(() => ({}))
       const reclassifyData = await reclassifyRes.json().catch(() => ({}))
       const backfillData = await backfillRes.json().catch(() => ({}))
       const matchData = await matchRes.json().catch(() => ({}))
+      const aiData = aiRes ? await aiRes.json().catch(() => ({})) : null
       if (!dedupeRes.ok) throw new Error(dedupeData.error || t("Couldn't check for cleanup"))
       if (!reclassifyRes.ok) throw new Error(reclassifyData.error || t("Couldn't check for cleanup"))
       const duplicatesRemoved = dedupeData.duplicatesRemoved || 0
+      const zeroAmountRemoved = dedupeData.zeroAmountRemoved || 0
       const reclassified = reclassifyData.changed || 0
       const recategorized = backfillRes.ok ? (backfillData.recategorized || 0) + (backfillData.ruleRecategorized || 0) : 0
       const paymentsToLog = matchRes.ok ? (matchData.matched?.length || 0) : 0
-      if (!duplicatesRemoved && !reclassified && !recategorized && !paymentsToLog) toast(t('No duplicate or miscategorized transactions found'))
-      else setCleanupConfirm({ duplicatesRemoved, reclassified, recategorized, paymentsToLog })
+      const aiMerchantCount = aiRequested && aiRes?.ok ? (aiData.merchantCount || 0) : 0
+      if (!duplicatesRemoved && !zeroAmountRemoved && !reclassified && !recategorized && !paymentsToLog && !aiMerchantCount) {
+        toast(t('No duplicate or miscategorized transactions found'))
+      } else {
+        setCleanupConfirm({ duplicatesRemoved, zeroAmountRemoved, reclassified, recategorized, paymentsToLog, aiRequested, aiMerchantCount })
+      }
     } catch (e) {
       toast(e.message, 'error')
     } finally {
@@ -277,9 +306,25 @@ function ConnectedBanksSection() {
         const matchData = await matchRes.json().catch(() => ({}))
         if (matchRes.ok) paymentsLogged = matchData.matched?.length || 0
       } catch { /* best effort */ }
+      // Fifth pass, opt-in — only fired when the checkbox was on at preview
+      // time (cleanupConfirm.aiRequested, frozen so a later toggle can't
+      // change what Confirm actually does). Same best-effort posture as
+      // backfill/match-payments: a Claude/API hiccup never blocks the other
+      // four passes the user already confirmed.
+      let aiApplied = 0
+      if (cleanupConfirm?.aiRequested) {
+        try {
+          const aiRes = await fetch('/api/ai/categorize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+          const aiData = await aiRes.json().catch(() => ({}))
+          if (aiRes.ok) aiApplied = aiData.applied || 0
+        } catch { /* best effort */ }
+      }
       const dup = dedupeData.duplicatesRemoved || 0, rc = reclassifyData.changed || 0
-      toast(t('Removed {dup} duplicate transaction{dp}, fixed {rc} miscategorized transaction{rp}, recategorized {rec} transaction{recp} using Plaid\'s own data, and logged {pay} payment{payp} toward your manual debts', {
-        dup, dp: dup === 1 ? '' : 's', rc, rp: rc === 1 ? '' : 's', rec: recategorized, recp: recategorized === 1 ? '' : 's',
+      const zero = dedupeData.zeroAmountRemoved || 0
+      toast(t('Removed {dup} duplicate transaction{dp} and {zero} zero-amount row{zp}, fixed {rc} miscategorized transaction{rp}, recategorized {rec} transaction{recp} using Plaid\'s own data{aiPart}, and logged {pay} payment{payp} toward your manual debts', {
+        dup, dp: dup === 1 ? '' : 's', zero, zp: zero === 1 ? '' : 's',
+        rc, rp: rc === 1 ? '' : 's', rec: recategorized, recp: recategorized === 1 ? '' : 's',
+        aiPart: cleanupConfirm?.aiRequested ? ` (+${aiApplied} via Claude)` : '',
         pay: paymentsLogged, payp: paymentsLogged === 1 ? '' : 's',
       }))
       refetch() // pulls the corrected/deduped/recategorized/matched transactions & debts back into the store
@@ -370,9 +415,22 @@ function ConnectedBanksSection() {
               only worth offering once there's at least one connection to
               clean up. */}
           {items && items.length > 0 ? (
-            <Button variant="outline" size="sm" disabled={cleanupPreviewing} onClick={previewCleanup}>
-              {cleanupPreviewing ? <Loader2 className="animate-spin" /> : <Sparkles />}{t('Clean up transactions')}
-            </Button>
+            <div className="flex flex-col gap-1.5">
+              <Button variant="outline" size="sm" disabled={cleanupPreviewing} onClick={previewCleanup} className="self-start">
+                {cleanupPreviewing ? <Loader2 className="animate-spin" /> : <Sparkles />}{t('Clean up transactions')}
+              </Button>
+              {/* Optional fifth pass — only shown once GET /api/ai/status
+                  confirms ANTHROPIC_API_KEY is set in Vercel (lib/claude.js).
+                  Off by default: this is the only pass here that spends the
+                  owner's own Anthropic API budget, so it's opt-in every time
+                  rather than bundled into the free deterministic passes above. */}
+              {aiConfigured && (
+                <label className="flex items-center gap-1.5 pl-0.5 text-[0.6875rem] text-muted-foreground">
+                  <input type="checkbox" className="h-3 w-3 accent-emerald-500" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} />
+                  {t('Also ask Claude to categorize the rest (uses your API key)')}
+                </label>
+              )}
+            </div>
           ) : <span />}
           <ConnectBankButton size="sm" onDone={async () => { await loadItems(); setTimeout(() => window.location.reload(), 1200) }} />
         </div>
@@ -380,12 +438,20 @@ function ConnectedBanksSection() {
       {cleanupConfirm && (
         <ConfirmDialog
           title={t('Clean up transactions?')}
-          desc={t('Found {dup} duplicate transaction{dp} from a reconnected bank, {rc} transaction{rp} miscounted as income or debt that are really card payments or refunds, {rec} transaction{recp} Plaid can put in a better category than before, and {pay} payment{payp} to log automatically on your manual debts. This can\'t be undone.', {
-            dup: cleanupConfirm.duplicatesRemoved, dp: cleanupConfirm.duplicatesRemoved === 1 ? '' : 's',
-            rc: cleanupConfirm.reclassified, rp: cleanupConfirm.reclassified === 1 ? '' : 's',
-            rec: cleanupConfirm.recategorized || 0, recp: (cleanupConfirm.recategorized || 0) === 1 ? '' : 's',
-            pay: cleanupConfirm.paymentsToLog || 0, payp: (cleanupConfirm.paymentsToLog || 0) === 1 ? '' : 's',
-          })}
+          desc={
+            t('Found {dup} duplicate transaction{dp} from a reconnected bank, {zero} zero-amount informational row{zp}, {rc} transaction{rp} miscounted as income or debt that are really card payments or refunds, {rec} transaction{recp} Plaid can put in a better category than before, and {pay} payment{payp} to log automatically on your manual debts. This can\'t be undone.', {
+              dup: cleanupConfirm.duplicatesRemoved, dp: cleanupConfirm.duplicatesRemoved === 1 ? '' : 's',
+              zero: cleanupConfirm.zeroAmountRemoved || 0, zp: (cleanupConfirm.zeroAmountRemoved || 0) === 1 ? '' : 's',
+              rc: cleanupConfirm.reclassified, rp: cleanupConfirm.reclassified === 1 ? '' : 's',
+              rec: cleanupConfirm.recategorized || 0, recp: (cleanupConfirm.recategorized || 0) === 1 ? '' : 's',
+              pay: cleanupConfirm.paymentsToLog || 0, payp: (cleanupConfirm.paymentsToLog || 0) === 1 ? '' : 's',
+            })
+            + (cleanupConfirm.aiRequested
+              ? ' ' + t('{n} merchant{np} will also be sent to Claude for categorization.', {
+                  n: cleanupConfirm.aiMerchantCount || 0, np: (cleanupConfirm.aiMerchantCount || 0) === 1 ? '' : 's',
+                })
+              : '')
+          }
           confirmLabel={t('Clean up')}
           busy={cleaning}
           onConfirm={runCleanup}

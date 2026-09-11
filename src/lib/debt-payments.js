@@ -284,11 +284,11 @@ export async function matchPaymentsForUser({ userId, transactions, dryRun = fals
     if (debtErr) errors.push({ txId: tx.id, debtId: chosen.id, error: `payment logged but balance update failed: ${debtErr.message}` })
 
     // debt_id always gets set; category/cat_source only when the owner
-    // hasn't already hand-picked a category for this row — same
-    // never-clobber-a-manual-pick posture as lib/plaid-sync.js's own
-    // cat_source protection.
+    // hasn't already hand-picked a category for this row (or Claude already
+    // categorized it — POST /api/ai/categorize) — same never-clobber-a-
+    // manual-pick posture as lib/plaid-sync.js's own cat_source protection.
     const txPatch = { debt_id: chosen.id }
-    if (tx.cat_source !== 'manual') { txPatch.category = 'debt'; txPatch.cat_source = 'rule' }
+    if (tx.cat_source !== 'manual' && tx.cat_source !== 'ai') { txPatch.category = 'debt'; txPatch.cat_source = 'rule' }
     const { error: txErr } = await supabaseAdmin.from('transactions').update(txPatch).eq('user_id', userId).eq('id', tx.id)
     if (txErr) errors.push({ txId: tx.id, debtId: chosen.id, error: `payment logged but linking the transaction failed: ${txErr.message}` })
   }

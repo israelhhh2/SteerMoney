@@ -307,6 +307,28 @@ export function buildAccountInventory(state, plaidItems) {
 export const debtUrlId = (debtId) => `debt_${debtId}`
 export const manualAcctUrlId = (accountRowId) => `acc_${accountRowId}`
 
+// ---- the transactions.account_id an account's OWN transactions live under ----
+// Every merged-inventory row already carries a `key` ('debt:<id>' for a debt,
+// 'acct:<id>' for a manual account, 'plaid:<acctKey>' for an unmatched Plaid
+// account — see buildAccountInventory above) — but `account.account_id` (the
+// REAL Plaid account_id, only ever set when this row is actually backed by a
+// connected Plaid account) is what transactions synced from Plaid are
+// already filed under. Statement-upload transactions (components/
+// statement-upload.jsx) need a stable accountId to write for EVERY row type,
+// including a manual, never-connected debt or manual account, which has no
+// Plaid account_id at all — this is that: the real Plaid account_id when one
+// exists, else the row's own synthetic `key` (so a manual debt's imported
+// transactions live under 'debt:<id>' and a manual account's under
+// 'acct:<id>', both already unique/stable, and both already recognized by
+// AccountDetail's own transaction list — see its accountTx computation).
+// Deliberately NOT used for `account_id` shown via SourceBadge (which reads
+// `account.account_id` directly and treats any truthy value as "Plaid
+// linked") — this key is only for matching transactions to an account, never
+// for deciding whether an account is Plaid-backed.
+export function accountTxKey(account) {
+  return account?.account_id || account?.key || null
+}
+
 export function accountUrlId(row) {
   if (row.source === 'debt') return debtUrlId(row.debtId)
   if (row.source === 'manual') return manualAcctUrlId(row.accountRowId)

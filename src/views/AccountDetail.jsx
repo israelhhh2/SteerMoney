@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Loader2, Trash2, Link2Off, RotateCw, Pencil, Plus } from 'lucide-react'
+import { Loader2, Trash2, Link2Off, RotateCw, Pencil, Plus, FileUp } from 'lucide-react'
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Segmented } from '@/components/ui/segmented'
 import { Select } from '@/components/ui/select'
@@ -14,7 +14,7 @@ import { fmt, fmt0, prettyDate, today } from '@/lib/utils'
 import { matchesBankAccount } from '@/lib/finance'
 import {
   RANGE_KEYS, typeLabel, pctChange30, relTime, accountHistorySeries,
-  usePlaidItems, findAccountByUrlId, deleteManualAccount, deleteDebt, backToAccounts, colorForAccount,
+  usePlaidItems, findAccountByUrlId, deleteManualAccount, deleteDebt, backToAccounts, colorForAccount, accountTxKey,
 } from '@/lib/accounts'
 // Reused, not rebuilt: the exact same APR/credit-limit/minimum-payment/due-day
 // edit dialog Debts.jsx's own "Edit" button opens. Importing it here (instead
@@ -22,6 +22,10 @@ import {
 // modal and one made on the Debt Tracker page land on the identical
 // state.debts row — see the "Card summary" section below.
 import { DebtDialog } from '@/views/Debts'
+// Statement upload (PDF/CSV → Claude extraction, see app/api/statements/parse) —
+// same component Transactions.jsx's Import menu uses, just with this
+// account/debt preselected as the target. See its own file for the full flow.
+import { StatementUpload } from '@/components/statement-upload'
 
 // Same wording lib/recurring-detect.js's EXCLUDE_PATTERNS already treats as
 // "not a subscription, it's interest" — reused here (not imported, it's not
@@ -190,7 +194,15 @@ export default function AccountDetail({ id }) {
   const changePct = pctChange30(account.history, account.balance)
   const lineColor = isCredit ? '#e08a3d' : '#5b9df9'
 
-  const txHref = account.account_id ? `/transactions?account=${encodeURIComponent(account.account_id)}` : '/transactions'
+  // The accountId this account's OWN transactions are filed under — the real
+  // Plaid account_id when this account is Plaid-linked, else its synthetic
+  // 'debt:<id>'/'acct:<id>' key (lib/accounts.js's accountTxKey) — so a
+  // manual debt or manual account, which has no Plaid account_id at all,
+  // still has a stable key its statement-imported transactions (below) live
+  // under and this page's own transaction list (accountTx, further down)
+  // recognizes.
+  const txKey = accountTxKey(account)
+  const txHref = txKey ? `/transactions?account=${encodeURIComponent(txKey)}` : '/transactions'
   const manageHref = account.source === 'debt' ? '/debts' : account.source === 'plaid' ? '/settings' : null
   const manageLabel = account.source === 'manual' ? t('Edit account') : account.source === 'debt' ? t('Manage in Debt Tracker') : t('Manage connection')
 
@@ -322,8 +334,8 @@ export default function AccountDetail({ id }) {
     })
   }
 
-  const accountTx = account.account_id
-    ? state.transactions.filter((t) => t.accountId === account.account_id).slice().sort((a, b) => b.date.localeCompare(a.date))
+  const accountTx = txKey
+    ? state.transactions.filter((t) => t.accountId === txKey).slice().sort((a, b) => b.date.localeCompare(a.date))
     : []
   const byDate = {}
   accountTx.forEach((t) => { (byDate[t.date] = byDate[t.date] || []).push(t) })
@@ -419,6 +431,27 @@ export default function AccountDetail({ id }) {
             )}
           </div>
         )}
+        {/* Statement upload — every account type (debt-backed, plain manual,
+            AND Plaid-synced) gets this, right below Refresh: a manual/debt
+            row has no other way to get its history in at all, and a
+            Plaid-synced card benefits just as much (Capital One's Plaid
+            integration only backfills ~90 days — this is how the owner fills
+            in the rest). Label calls that out only for the Plaid-backed case;
+            everywhere else it'd just be confusing ("fill history" implies
+            there's a live feed already covering *some* of it). */}
+        <StatementUpload hint={account.name} defaultTargetKey={txKey}>
+          {(open, parsing) => (
+            <button
+              type="button"
+              onClick={open}
+              disabled={parsing}
+              className="flex items-center gap-1.5 rounded-full border border-border bg-secondary/60 px-3 py-1 text-[0.6875rem] font-bold text-foreground/80 transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <FileUp className={`h-3 w-3 ${parsing ? 'animate-pulse' : ''}`} />
+              {hasPlaidItem ? t('Upload statement (fill history)') : t('Upload statement')}
+            </button>
+          )}
+        </StatementUpload>
       </div>
 
       {/* Card summary: APR/minimum payment/due day/credit-limit/balance/
@@ -615,7 +648,7 @@ export default function AccountDetail({ id }) {
           <div className="rounded-xl border p-6 text-center text-[0.78125rem] text-muted-foreground">
             {account.account_id
               ? t('No transactions linked to this account yet — older synced transactions may predate account linkage.')
-              : t("Manual accounts don't have linked transactions.")}
+              : t('No transactions yet — upload a statement above to add this account\'s history.')}
           </div>
         )}
       </div>

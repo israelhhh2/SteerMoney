@@ -72,6 +72,36 @@
   .no-scrollbar::-webkit-scrollbar { display: none; }
 }
 
+/* ---- print (views/Reports.jsx's "Save as PDF" -> window.print()) ----
+   `.no-print` hides the app chrome (sidebar/header/bottom nav — see
+   app/(app)/layout.jsx — and Reports.jsx's own controls Card); `.report-card`
+   keeps a card from being cut in half across a page break; `.report-scroll`
+   drops the on-screen max-height/overflow clipping so a long table prints in
+   full instead of just whatever fit in the little scrollable box. Redefining
+   the theme's CSS variables (not just `body`'s background) is what actually
+   prevents a dark-mode print from coming out as a near-black page — every
+   `bg-card`/`text-foreground`/`border` etc. Tailwind class in this app
+   already resolves through these same custom properties, so overriding them
+   here recolors the whole page for print with no per-component changes. */
+@media print {
+  .no-print { display: none !important; }
+  .print-header { display: block !important; margin-bottom: 12px; font-size: 0.8125rem; font-weight: 700; color: #111; }
+  .report-card { break-inside: avoid; page-break-inside: avoid; box-shadow: none !important; }
+  .report-scroll { max-height: none !important; overflow: visible !important; }
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 20% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 20% 12%;
+    --secondary: 220 20% 94%;
+    --secondary-foreground: 222 20% 20%;
+    --muted: 220 20% 94%;
+    --muted-foreground: 220 10% 40%;
+    --border: 220 15% 82%;
+  }
+  body { background: #fff !important; color: #111 !important; }
+}
+
 /* Themed thin scrollbars — the default OS scrollbar renders as a chunky
    white bar over the dark card content (e.g. Dashboard's Budgets list). */
 * { scrollbar-width: thin; scrollbar-color: hsl(240 5% 26%) transparent; }

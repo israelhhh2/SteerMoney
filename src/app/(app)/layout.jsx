@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuthUser, useSignOut } from '@/components/auth-provider'
-import { Eye, LayoutDashboard, Wallet, CreditCard, Repeat, Target, Flag, BarChart3, FlaskConical, Receipt, CloudOff, Loader2, ShieldCheck, Link2, Menu, Settings, LogOut } from 'lucide-react'
+import { Eye, LayoutDashboard, Wallet, CreditCard, Repeat, Target, Flag, BarChart3, FlaskConical, Receipt, FileBarChart, CloudOff, Loader2, ShieldCheck, Link2, Menu, Settings, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Select } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
@@ -29,10 +29,12 @@ const NAV = [
   ['/charts', BarChart3, 'Charts'],
   ['/simulator', FlaskConical, 'Simulator'],
   ['/transactions', Receipt, 'Transactions'],
+  ['/reports', FileBarChart, 'Reports'],
 ]
 const TITLES = {
   '/': 'Dashboard', '/accounts': 'Accounts', '/debts': 'Debt Tracker', '/recurring': 'Recurring Payments',
   '/budgets': 'Budgets', '/goals': 'Goals', '/charts': 'Charts & Trends', '/simulator': 'Monthly Simulator', '/transactions': 'Transactions',
+  '/reports': 'Reports',
   '/admin': 'Admin Portal', '/settings': 'Settings', '/plaid-oauth': 'Connecting your bank',
 }
 
@@ -58,6 +60,7 @@ function BottomNav({ isAdmin }) {
     ['/recurring', Repeat, 'Recurring'],
     ['/charts', BarChart3, 'Charts'],
     ['/simulator', FlaskConical, 'Simulator'],
+    ['/reports', FileBarChart, 'Reports'],
     ['/settings', Settings, 'Settings'],
     ...(isAdmin ? [['/admin', ShieldCheck, 'Admin']] : []),
   ]
@@ -67,7 +70,7 @@ function BottomNav({ isAdmin }) {
   return (
     <>
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-border/60 bg-background/90 backdrop-blur-md md:hidden"
+        className="no-print fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-border/60 bg-background/90 backdrop-blur-md md:hidden"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         {primary.map(([href, Icon, label]) => {
@@ -290,7 +293,7 @@ function Frame({ children, modal }) {
   return (
     <div className="flex min-h-screen">
       {/* Desktop sidebar */}
-      <aside className="sticky top-0 z-40 hidden h-screen w-60 shrink-0 flex-col gap-1 border-r border-border/60 bg-[hsl(225_60%_3%)] p-3 md:flex">
+      <aside className="no-print sticky top-0 z-40 hidden h-screen w-60 shrink-0 flex-col gap-1 border-r border-border/60 bg-[hsl(225_60%_3%)] p-3 md:flex">
         <div className="mb-2 flex items-center gap-2.5 px-2 py-4">
           <Logo className="h-8 w-8" />
           <div className="leading-tight">
@@ -344,7 +347,7 @@ function Frame({ children, modal }) {
         )}
 
         {/* Mobile header: wordmark left, space switcher centered */}
-        <div className="sticky top-0 z-30 border-b border-border/60 bg-background/90 backdrop-blur-md md:hidden">
+        <div className="no-print sticky top-0 z-30 border-b border-border/60 bg-background/90 backdrop-blur-md md:hidden">
           <div className="grid h-14 grid-cols-[1fr_auto_1fr] items-center gap-2 px-4">
             <div className="flex min-w-0 items-center gap-1.5">
               <Logo className="h-5 w-5 shrink-0" />
@@ -365,7 +368,7 @@ function Frame({ children, modal }) {
         </div>
 
         {/* Desktop header */}
-        <header className="sticky top-0 z-30 hidden h-14 items-center border-b border-border/60 bg-background/85 px-4 backdrop-blur-md sm:px-8 md:flex">
+        <header className="no-print sticky top-0 z-30 hidden h-14 items-center border-b border-border/60 bg-background/85 px-4 backdrop-blur-md sm:px-8 md:flex">
           <div className="mx-auto flex w-full max-w-6xl items-center gap-3">
             <h1 className="mr-auto text-[0.9375rem] font-extrabold tracking-tight">{t(TITLES[pathname] || 'Finances')}</h1>
             {!syncError && updatedAt ? (

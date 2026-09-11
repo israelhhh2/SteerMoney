@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Scopes ESM (import/export) interpretation to src/lib for plain `node --test` runs (see __tests__/snapshots.test.mjs) without touching the root package.json — Next.js's own bundler ignores this field entirely and keeps compiling every file under src/ the same way regardless."
+}

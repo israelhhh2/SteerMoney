@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, FilterX, Landmark, Pencil, Plus, Repeat, Search, Upload, X } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, FilterX, Landmark, Pencil, Plus, Repeat, Search, Upload, X } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ import { fmt, fmt0, today, ymLabel, prettyDate, uid } from '@/lib/utils'
 import { cleanDisplayName } from '@/lib/tx-display'
 import { parseWescomCSV, guessCat } from '@/lib/wescom'
 import { usePlaidItems } from '@/lib/accounts'
+import { StatementUpload } from '@/components/statement-upload'
 import { useIsMobile } from '@/lib/useMediaQuery'
 import { useT } from '@/lib/i18n'
 
@@ -76,6 +77,7 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
   }
   const [editing, setEditing] = useState(undefined) // undefined closed · null new · id edit
   const [importRows, setImportRows] = useState(null) // null closed · [] -> preview dialog
+  const [importMenuOpen, setImportMenuOpen] = useState(false) // Import button's "Wescom CSV" / "Any statement" menu
   const [confirmDelId, setConfirmDelId] = useState(null) // transaction id pending delete confirmation
   const [deleting, setDeleting] = useState(false)
   const [sheetTxId, setSheetTxId] = useState(null) // mobile row tap -> detail bottom sheet, holds a transaction id
@@ -239,7 +241,41 @@ export default function Transactions({ accountFilter, setAccountFilter, catFilte
           <Badge>{t('Net')} <b className={inc - exp >= 0 ? 'text-emerald-400' : 'text-red-400'}>{fmt0(inc - exp)}</b></Badge>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2">
-          <Button variant="outline" size="sm" onClick={() => fileRef.current.click()}><Upload />{t('Import')}</Button>
+          {/* Import: "Wescom CSV" is the original single-purpose button
+              (lib/wescom.js's parser, unchanged) — "Any statement (PDF/CSV)"
+              is the new Claude-powered path (components/statement-upload.jsx)
+              that reads any credit card/loan/bank statement, not just
+              Wescom's own export. */}
+          <div className="relative">
+            <Button variant="outline" size="sm" className="w-full" onClick={() => setImportMenuOpen((v) => !v)}>
+              <Upload />{t('Import')}<ChevronDown className="h-3 w-3" />
+            </Button>
+            {importMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setImportMenuOpen(false)} />
+                <div className="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-lg border bg-card py-1 shadow-lg">
+                  <button
+                    type="button"
+                    className="block w-full px-3 py-1.5 text-left text-xs hover:bg-secondary/60"
+                    onClick={() => { setImportMenuOpen(false); fileRef.current.click() }}
+                  >
+                    {t('Wescom CSV')}
+                  </button>
+                  <StatementUpload hint={filterAccount?.name || null} defaultTargetKey={account || null}>
+                    {(open) => (
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-1.5 text-left text-xs hover:bg-secondary/60"
+                        onClick={() => { setImportMenuOpen(false); open() }}
+                      >
+                        {t('Any statement (PDF/CSV)')}
+                      </button>
+                    )}
+                  </StatementUpload>
+                </div>
+              </>
+            )}
+          </div>
           <Button size="sm" onClick={() => setEditing(null)}><Plus />{t('Add')}</Button>
         </div>
       </Card>
