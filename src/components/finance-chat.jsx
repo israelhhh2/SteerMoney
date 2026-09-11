@@ -12,7 +12,7 @@
 // `fin-chat-<userId>` purely as a "survive an accidental refresh" nicety,
 // never as a durable record.
 import { useEffect, useRef, useState } from 'react'
-import { Sparkles, X, Send, Square, Loader2 } from 'lucide-react'
+import { Sparkles, X, Send, Square, Loader2, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthUser } from '@/components/auth-provider'
 import { useApp } from '@/store'
@@ -89,13 +89,19 @@ function saveHistory(userId, messages) {
   try { sessionStorage.setItem(`fin-chat-${userId}`, JSON.stringify(messages.slice(-40))) } catch { /* best effort */ }
 }
 
-export function FinanceChat() {
+// `mode`: 'floating' (default — FAB + popover panel, mounted in the app
+// layout) or 'page' (the /chat nav route — same conversation, same
+// sessionStorage history, rendered as a full-height card with no FAB/close).
+// The layout hides the floating instance while the /chat route is on screen
+// so the two never show the same conversation twice.
+export function FinanceChat({ mode = 'floating' }) {
+  const isPage = mode === 'page'
   const t = useT()
   const { user } = useAuthUser()
   const app = useApp()
   const space = app?.space
 
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(isPage)
   const [messages, setMessages] = useState([]) // [{role:'user'|'assistant', content}]
   const [draft, setDraft] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -221,9 +227,157 @@ export function FinanceChat() {
     abortRef.current?.abort()
   }
 
+  function clearChat() {
+    if (streaming) return
+    setMessages([])
+    setError('')
+  }
+
   if (!user) return null
 
   const toolLabel = toolName ? t(TOOL_LABELS[toolName] || 'Thinking…') : null
+
+  const panelBody = (
+    <>
+    <div className="flex shrink-0 items-center justify-between border-b border-border/60 px-4 py-3">
+      <div className="flex items-center gap-2">
+        <Sparkles className="h-4 w-4 text-primary" />
+        <h3 className="text-[0.9375rem] font-extrabold tracking-tight">{t('Ask about your money')}</h3>
+      </div>
+      <div className="flex items-center gap-3">
+        {messages.length ? (
+          <button
+            type="button"
+            onClick={clearChat}
+            disabled={streaming}
+            aria-label={t('New chat')}
+            title={t('New chat')}
+            className="inline-flex items-center gap-1 text-[0.75rem] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-40"
+          >
+            <RotateCcw className="h-3.5 w-3.5" /> {t('New chat')}
+          </button>
+        ) : null}
+        {!isPage ? (
+          <button
+            type="button"
+            onClick={() => !streaming && setOpen(false)}
+            aria-label={t('Close chat')}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : null}
+      </div>
+    </div>
+
+    <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      {messages.length === 0 ? (
+        <div className="flex h-full flex-col justify-center gap-3">
+          <p className="text-center text-[0.8125rem] text-muted-foreground">{t('Try asking:')}</p>
+          <div className="flex flex-wrap justify-center gap-1.5">
+            {SUGGESTIONS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => send(s)}
+                className="rounded-full border border-border/60 bg-secondary/50 px-2.5 py-1.5 text-left text-[0.75rem] font-medium text-foreground/90 transition hover:bg-secondary"
+              >
+                {t(s)}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2.5">
+          {messages.map((m, i) => (
+            <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+              <div
+                className={cn(
+                  'max-w-[85%] rounded-2xl px-3 py-2 text-[0.8125rem] leading-snug',
+                  m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-secondary/70 text-foreground'
+                )}
+              >
+                {m.role === 'assistant' && !m.content && streaming && i === messages.length - 1 && !toolLabel ? (
+                  <span className="inline-flex items-center gap-1 text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" /> {t('Thinking…')}
+                  </span>
+                ) : (
+                  <>
+                    {renderLite(m.content)}
+                    {streaming && i === messages.length - 1 && m.role === 'assistant' ? (
+                      <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse bg-current align-middle" />
+                    ) : null}
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+          {toolLabel ? (
+            <div className="flex justify-start">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-secondary/40 px-2.5 py-1 text-[0.6875rem] font-medium text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" /> {toolLabel}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+
+    {error ? <p className="shrink-0 px-4 pb-1 text-[0.75rem] font-semibold text-red-400">{error}</p> : null}
+
+    <div className="shrink-0 border-t border-border/60 p-3" style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
+      <div className="flex items-end gap-2">
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder={t('Ask about your spending, budgets, debts, or bills…')}
+          disabled={streaming}
+          className="max-h-40 min-h-[2.25rem] flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60 [color-scheme:dark]"
+        />
+        {streaming ? (
+          <button
+            type="button"
+            onClick={stop}
+            aria-label={t('Stop')}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border/60 bg-secondary text-foreground transition hover:opacity-90"
+          >
+            <Square className="h-3.5 w-3.5 fill-current" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => send(draft)}
+            disabled={!draft.trim()}
+            aria-label={t('Send')}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition hover:opacity-90 disabled:opacity-40"
+          >
+            <Send className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      {usage && Number.isFinite(usage.remaining) ? (
+        <p className="mt-1.5 text-center text-[0.625rem] text-muted-foreground">
+          {t('Answers use only your SteerMoney data · {remaining} tokens left today', { remaining: usage.remaining.toLocaleString() })}
+        </p>
+      ) : null}
+    </div>
+    </>
+  )
+
+  if (isPage) {
+    return (
+      <div
+        role="region"
+        aria-label={t('Ask about your money')}
+        className="fade-in flex h-[calc(100dvh-13.5rem)] min-h-[24rem] flex-col overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm md:h-[calc(100dvh-8.5rem)]"
+      >
+        {panelBody}
+      </div>
+    )
+  }
 
   return (
     <>
@@ -252,115 +406,7 @@ export function FinanceChat() {
               'md:inset-auto md:bottom-24 md:right-4 md:h-[35rem] md:w-[23.75rem] md:rounded-2xl md:border'
             )}
           >
-            <div className="flex shrink-0 items-center justify-between border-b border-border/60 px-4 py-3">
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-primary" />
-                <h3 className="text-[0.9375rem] font-extrabold tracking-tight">{t('Ask about your money')}</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => !streaming && setOpen(false)}
-                aria-label={t('Close chat')}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-              {messages.length === 0 ? (
-                <div className="flex h-full flex-col justify-center gap-3">
-                  <p className="text-center text-[0.8125rem] text-muted-foreground">{t('Try asking:')}</p>
-                  <div className="flex flex-wrap justify-center gap-1.5">
-                    {SUGGESTIONS.map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => send(s)}
-                        className="rounded-full border border-border/60 bg-secondary/50 px-2.5 py-1.5 text-left text-[0.75rem] font-medium text-foreground/90 transition hover:bg-secondary"
-                      >
-                        {t(s)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2.5">
-                  {messages.map((m, i) => (
-                    <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
-                      <div
-                        className={cn(
-                          'max-w-[85%] rounded-2xl px-3 py-2 text-[0.8125rem] leading-snug',
-                          m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-secondary/70 text-foreground'
-                        )}
-                      >
-                        {m.role === 'assistant' && !m.content && streaming && i === messages.length - 1 && !toolLabel ? (
-                          <span className="inline-flex items-center gap-1 text-muted-foreground">
-                            <Loader2 className="h-3 w-3 animate-spin" /> {t('Thinking…')}
-                          </span>
-                        ) : (
-                          <>
-                            {renderLite(m.content)}
-                            {streaming && i === messages.length - 1 && m.role === 'assistant' ? (
-                              <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse bg-current align-middle" />
-                            ) : null}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {toolLabel ? (
-                    <div className="flex justify-start">
-                      <div className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-secondary/40 px-2.5 py-1 text-[0.6875rem] font-medium text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" /> {toolLabel}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              )}
-            </div>
-
-            {error ? <p className="shrink-0 px-4 pb-1 text-[0.75rem] font-semibold text-red-400">{error}</p> : null}
-
-            <div className="shrink-0 border-t border-border/60 p-3" style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
-              <div className="flex items-end gap-2">
-                <textarea
-                  ref={textareaRef}
-                  rows={1}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={onKeyDown}
-                  placeholder={t('Ask about your spending, budgets, debts, or bills…')}
-                  disabled={streaming}
-                  className="max-h-40 min-h-[2.25rem] flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60 [color-scheme:dark]"
-                />
-                {streaming ? (
-                  <button
-                    type="button"
-                    onClick={stop}
-                    aria-label={t('Stop')}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border/60 bg-secondary text-foreground transition hover:opacity-90"
-                  >
-                    <Square className="h-3.5 w-3.5 fill-current" />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => send(draft)}
-                    disabled={!draft.trim()}
-                    aria-label={t('Send')}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition hover:opacity-90 disabled:opacity-40"
-                  >
-                    <Send className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-              {usage && Number.isFinite(usage.remaining) ? (
-                <p className="mt-1.5 text-center text-[0.625rem] text-muted-foreground">
-                  {t('Answers use only your SteerMoney data · {remaining} tokens left today', { remaining: usage.remaining.toLocaleString() })}
-                </p>
-              ) : null}
-            </div>
+            {panelBody}
           </div>
         </>
       ) : null}

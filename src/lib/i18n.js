@@ -885,6 +885,8 @@ export const DICTIONARY = {
   'Ask about your money': { es: 'Pregunta sobre tu dinero' },
   'Open finance chat': { es: 'Abrir chat financiero' },
   'Close chat': { es: 'Cerrar chat' },
+  'Ask Claude': { es: 'Pregúntale a Claude' },
+  'New chat': { es: 'Nuevo chat' },
   'Ask about your spending, budgets, debts, or bills…': { es: 'Pregunta sobre tus gastos, presupuestos, deudas o facturas…' },
   'Stop': { es: 'Detener' },
   'Try asking:': { es: 'Intenta preguntar:' },

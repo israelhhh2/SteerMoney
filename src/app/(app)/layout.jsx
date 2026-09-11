@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuthUser, useSignOut } from '@/components/auth-provider'
-import { Eye, LayoutDashboard, Wallet, CreditCard, Repeat, Target, Flag, BarChart3, FlaskConical, Receipt, FileBarChart, CloudOff, Loader2, ShieldCheck, Link2, Menu, Settings, LogOut } from 'lucide-react'
+import { Eye, LayoutDashboard, Wallet, CreditCard, Repeat, Target, Flag, BarChart3, FlaskConical, Receipt, FileBarChart, Sparkles, CloudOff, Loader2, ShieldCheck, Link2, Menu, Settings, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Select } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
@@ -31,11 +31,12 @@ const NAV = [
   ['/simulator', FlaskConical, 'Simulator'],
   ['/transactions', Receipt, 'Transactions'],
   ['/reports', FileBarChart, 'Reports'],
+  ['/chat', Sparkles, 'Ask Claude'],
 ]
 const TITLES = {
   '/': 'Dashboard', '/accounts': 'Accounts', '/debts': 'Debt Tracker', '/recurring': 'Recurring Payments',
   '/budgets': 'Budgets', '/goals': 'Goals', '/charts': 'Charts & Trends', '/simulator': 'Monthly Simulator', '/transactions': 'Transactions',
-  '/reports': 'Reports',
+  '/reports': 'Reports', '/chat': 'Ask Claude',
   '/admin': 'Admin Portal', '/settings': 'Settings', '/plaid-oauth': 'Connecting your bank',
 }
 
@@ -62,6 +63,7 @@ function BottomNav({ isAdmin }) {
     ['/charts', BarChart3, 'Charts'],
     ['/simulator', FlaskConical, 'Simulator'],
     ['/reports', FileBarChart, 'Reports'],
+    ['/chat', Sparkles, 'Ask Claude'],
     ['/settings', Settings, 'Settings'],
     ...(isAdmin ? [['/admin', ShieldCheck, 'Admin']] : []),
   ]
@@ -411,7 +413,8 @@ function Frame({ children, modal }) {
         />
       )}
       {inviteUrl && <InviteLinkDialog url={inviteUrl} onClose={() => setInviteUrl(null)} />}
-      {state ? <FinanceChat /> : null}
+      {/* /chat renders the same conversation full-page — don't double it with the bubble there */}
+      {state && pathname !== '/chat' ? <FinanceChat /> : null}
       {state ? <FeedbackWidget /> : null}
       {modal}
     </div>
